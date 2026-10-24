@@ -65,3 +65,19 @@ export function changeOf(
 		...(draft.thinkingLevel === undefined ? {} : { thinkingLevel: draft.thinkingLevel }),
 	};
 }
+
+/** Models whose id starts with this are the ones worth choosing from by default; the rest are the catalog's long tail. */
+export const CURATED_MODEL_PREFIX = "gpt-6";
+
+export const isCurated = (model: ModelOption): boolean => model.modelId.startsWith(CURATED_MODEL_PREFIX);
+
+/**
+ * The models a picker lists. By default only the curated ones (`gpt-6...`), plus the agent's current model if it is
+ * not one of them, so the select never shows a model the agent is not using. A server with no curated model at all
+ * (the scripted dev model) lists everything, because an empty picker would be useless. `showAll` lists the whole catalog.
+ */
+export function offeredModels(models: readonly ModelOption[], selectedKey: string, showAll: boolean): ModelOption[] {
+	const curated = models.filter(isCurated);
+	if (showAll || curated.length === 0) return [...models];
+	return models.filter((model) => isCurated(model) || modelKey(model) === selectedKey);
+}

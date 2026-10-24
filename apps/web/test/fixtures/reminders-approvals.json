@@ -1,0 +1,1687 @@
+{
+	"description": "A task with a reminder, the reminder firing (a zero-token write), then a deletion proposed and approved with the button. The second connection is a reload and holds only its snapshot.",
+	"connections": [
+		[
+			[
+				{
+					"type": "snapshot",
+					"tools": [],
+					"nestedTools": [],
+					"compactions": [],
+					"inbox": [],
+					"usage": {
+						"models": {},
+						"tools": {}
+					},
+					"agent": {
+						"model": {
+							"provider": "faux",
+							"modelId": "faux-1"
+						},
+						"thinkingLevel": "medium",
+						"extensions": ["profile", "tasks", "approvals"]
+					},
+					"entries": [],
+					"hasEarlier": false,
+					"unanswered": []
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "user",
+						"content": "/tool add_task {\"title\":\"Pay rent\",\"remind_in_minutes\":1}",
+						"timestamp": 1792915200000
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "user",
+								"content": "/tool add_task {\"title\":\"Pay rent\",\"remind_in_minutes\":1}",
+								"timestamp": 1792915200000
+							}
+						],
+						"kind": "pi.user",
+						"id": 30,
+						"conversationId": 2
+					}
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 2,
+						"requestId": "fixture-rem-1",
+						"type": "input",
+						"status": "placed",
+						"entry": 30,
+						"id": 31
+					}
+				},
+				{
+					"type": "run_start",
+					"inputs": [31]
+				},
+				{
+					"type": "turn_start"
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "toolCall",
+								"id": "dev-095a0b44ad81",
+								"name": "add_task",
+								"arguments": {
+									"title": "Pay rent",
+									"remind_in_minutes": 1
+								}
+							}
+						],
+						"api": "faux:1792882263672:b1b12cw82rn",
+						"provider": "faux",
+						"model": "faux-1",
+						"usage": {
+							"input": 1827,
+							"output": 13,
+							"cacheRead": 0,
+							"cacheWrite": 1827,
+							"totalTokens": 3667,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "toolUse",
+						"timestamp": 1792882263697,
+						"durationMs": 10
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "assistant",
+								"content": [
+									{
+										"type": "toolCall",
+										"id": "dev-095a0b44ad81",
+										"name": "add_task",
+										"arguments": {
+											"title": "Pay rent",
+											"remind_in_minutes": 1
+										}
+									}
+								],
+								"api": "faux:1792882263672:b1b12cw82rn",
+								"provider": "faux",
+								"model": "faux-1",
+								"usage": {
+									"input": 1827,
+									"output": 13,
+									"cacheRead": 0,
+									"cacheWrite": 1827,
+									"totalTokens": 3667,
+									"cost": {
+										"input": 0,
+										"output": 0,
+										"cacheRead": 0,
+										"cacheWrite": 0,
+										"total": 0
+									}
+								},
+								"stopReason": "toolUse",
+								"timestamp": 1792882263697,
+								"durationMs": 10
+							}
+						],
+						"kind": "pi.assistant",
+						"id": 34,
+						"conversationId": 2,
+						"byTaskId": 32
+					}
+				},
+				{
+					"type": "usage_changed",
+					"usage": {
+						"models": {
+							"faux/faux-1": {
+								"input": 1827,
+								"output": 13,
+								"cacheRead": 0,
+								"cacheWrite": 1827,
+								"totalTokens": 3667,
+								"cost": {
+									"input": 0,
+									"output": 0,
+									"cacheRead": 0,
+									"cacheWrite": 0,
+									"total": 0
+								}
+							}
+						},
+						"tools": {}
+					}
+				}
+			],
+			[
+				{
+					"type": "tool_execution_start",
+					"toolCallId": "dev-095a0b44ad81",
+					"toolName": "add_task",
+					"taskId": 35,
+					"args": {
+						"title": "Pay rent",
+						"remind_in_minutes": 1
+					}
+				}
+			],
+			[
+				{
+					"type": "tool_execution_end",
+					"toolCallId": "dev-095a0b44ad81",
+					"toolName": "add_task",
+					"taskId": 35,
+					"entry": {
+						"model": [
+							{
+								"role": "toolResult",
+								"toolCallId": "dev-095a0b44ad81",
+								"toolName": "add_task",
+								"content": [
+									{
+										"type": "text",
+										"text": "Saved t_14a51721 “Pay rent” — open; reminder 2026-10-25T14:01:00+06:00"
+									}
+								],
+								"details": {
+									"type": "task",
+									"event": "created",
+									"task": {
+										"id": "t_14a51721",
+										"title": "Pay rent",
+										"status": "open",
+										"remindAt": 1792915260000,
+										"remindText": "Sun 25 Oct 2026, 14:01"
+									}
+								},
+								"isError": false,
+								"durationMs": 8,
+								"timestamp": 1792915200000
+							}
+						],
+						"data": {
+							"diagnostics": []
+						},
+						"kind": "pi.tool-result",
+						"id": 37,
+						"conversationId": 2,
+						"byTaskId": 35
+					}
+				},
+				{
+					"type": "message_start",
+					"message": {
+						"role": "toolResult",
+						"toolCallId": "dev-095a0b44ad81",
+						"toolName": "add_task",
+						"content": [
+							{
+								"type": "text",
+								"text": "Saved t_14a51721 “Pay rent” — open; reminder 2026-10-25T14:01:00+06:00"
+							}
+						],
+						"details": {
+							"type": "task",
+							"event": "created",
+							"task": {
+								"id": "t_14a51721",
+								"title": "Pay rent",
+								"status": "open",
+								"remindAt": 1792915260000,
+								"remindText": "Sun 25 Oct 2026, 14:01"
+							}
+						},
+						"isError": false,
+						"durationMs": 8,
+						"timestamp": 1792915200000
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "toolResult",
+								"toolCallId": "dev-095a0b44ad81",
+								"toolName": "add_task",
+								"content": [
+									{
+										"type": "text",
+										"text": "Saved t_14a51721 “Pay rent” — open; reminder 2026-10-25T14:01:00+06:00"
+									}
+								],
+								"details": {
+									"type": "task",
+									"event": "created",
+									"task": {
+										"id": "t_14a51721",
+										"title": "Pay rent",
+										"status": "open",
+										"remindAt": 1792915260000,
+										"remindText": "Sun 25 Oct 2026, 14:01"
+									}
+								},
+								"isError": false,
+								"durationMs": 8,
+								"timestamp": 1792915200000
+							}
+						],
+						"data": {
+							"diagnostics": []
+						},
+						"kind": "pi.tool-result",
+						"id": 37,
+						"conversationId": 2,
+						"byTaskId": 35
+					}
+				}
+			],
+			[
+				{
+					"type": "turn_end"
+				},
+				{
+					"type": "turn_start"
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "Faux model (dev mode): add_task returned:\n\nSaved t_14a51721 “Pay rent” — open; reminder 2026-10-25T14:01:00+06:00"
+							}
+						],
+						"api": "faux:1792882263672:b1b12cw82rn",
+						"provider": "faux",
+						"model": "faux-1",
+						"usage": {
+							"input": 56,
+							"output": 29,
+							"cacheRead": 1827,
+							"cacheWrite": 56,
+							"totalTokens": 1968,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1792882263731,
+						"durationMs": 22
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "assistant",
+								"content": [
+									{
+										"type": "text",
+										"text": "Faux model (dev mode): add_task returned:\n\nSaved t_14a51721 “Pay rent” — open; reminder 2026-10-25T14:01:00+06:00"
+									}
+								],
+								"api": "faux:1792882263672:b1b12cw82rn",
+								"provider": "faux",
+								"model": "faux-1",
+								"usage": {
+									"input": 56,
+									"output": 29,
+									"cacheRead": 1827,
+									"cacheWrite": 56,
+									"totalTokens": 1968,
+									"cost": {
+										"input": 0,
+										"output": 0,
+										"cacheRead": 0,
+										"cacheWrite": 0,
+										"total": 0
+									}
+								},
+								"stopReason": "stop",
+								"timestamp": 1792882263731,
+								"durationMs": 22
+							}
+						],
+						"kind": "pi.assistant",
+						"id": 40,
+						"conversationId": 2,
+						"byTaskId": 38
+					}
+				},
+				{
+					"type": "turn_end"
+				},
+				{
+					"type": "run_end",
+					"inputs": [31]
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 2,
+						"requestId": "fixture-rem-1",
+						"type": "input",
+						"status": "done",
+						"entry": 30,
+						"id": 31,
+						"answer": 40
+					}
+				},
+				{
+					"type": "usage_changed",
+					"usage": {
+						"models": {
+							"faux/faux-1": {
+								"input": 1883,
+								"output": 42,
+								"cacheRead": 1827,
+								"cacheWrite": 1883,
+								"totalTokens": 5635,
+								"cost": {
+									"input": 0,
+									"output": 0,
+									"cacheRead": 0,
+									"cacheWrite": 0,
+									"total": 0
+								}
+							}
+						},
+						"tools": {}
+					}
+				}
+			],
+			[
+				{
+					"type": "entry_appended",
+					"entry": {
+						"kind": "app.reminder",
+						"data": {
+							"taskId": "t_14a51721",
+							"title": "Pay rent",
+							"remindAt": 1792915260000,
+							"remindAtText": "Sun 25 Oct 2026, 14:01",
+							"firedAt": 1792915260000
+						},
+						"id": 41,
+						"conversationId": 2
+					}
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 2,
+						"requestId": "reminder:t_14a51721:1",
+						"type": "write",
+						"status": "done",
+						"entry": 41,
+						"id": 42
+					}
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "user",
+						"content": "/tool add_task {\"title\":\"Old report\"}",
+						"timestamp": 1792915260000
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "user",
+								"content": "/tool add_task {\"title\":\"Old report\"}",
+								"timestamp": 1792915260000
+							}
+						],
+						"kind": "pi.user",
+						"id": 43,
+						"conversationId": 2
+					}
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 2,
+						"requestId": "fixture-rem-2",
+						"type": "input",
+						"status": "placed",
+						"entry": 43,
+						"id": 44
+					}
+				},
+				{
+					"type": "run_start",
+					"inputs": [44]
+				},
+				{
+					"type": "turn_start"
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "toolCall",
+								"id": "dev-62fec60a6bff",
+								"name": "add_task",
+								"arguments": {
+									"title": "Old report"
+								}
+							}
+						],
+						"api": "faux:1792882263672:b1b12cw82rn",
+						"provider": "faux",
+						"model": "faux-1",
+						"usage": {
+							"input": 114,
+							"output": 8,
+							"cacheRead": 1883,
+							"cacheWrite": 114,
+							"totalTokens": 2119,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "toolUse",
+						"timestamp": 1792882264262,
+						"durationMs": 5
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "assistant",
+								"content": [
+									{
+										"type": "toolCall",
+										"id": "dev-62fec60a6bff",
+										"name": "add_task",
+										"arguments": {
+											"title": "Old report"
+										}
+									}
+								],
+								"api": "faux:1792882263672:b1b12cw82rn",
+								"provider": "faux",
+								"model": "faux-1",
+								"usage": {
+									"input": 114,
+									"output": 8,
+									"cacheRead": 1883,
+									"cacheWrite": 114,
+									"totalTokens": 2119,
+									"cost": {
+										"input": 0,
+										"output": 0,
+										"cacheRead": 0,
+										"cacheWrite": 0,
+										"total": 0
+									}
+								},
+								"stopReason": "toolUse",
+								"timestamp": 1792882264262,
+								"durationMs": 5
+							}
+						],
+						"kind": "pi.assistant",
+						"id": 47,
+						"conversationId": 2,
+						"byTaskId": 45
+					}
+				},
+				{
+					"type": "usage_changed",
+					"usage": {
+						"models": {
+							"faux/faux-1": {
+								"input": 1997,
+								"output": 50,
+								"cacheRead": 3710,
+								"cacheWrite": 1997,
+								"totalTokens": 7754,
+								"cost": {
+									"input": 0,
+									"output": 0,
+									"cacheRead": 0,
+									"cacheWrite": 0,
+									"total": 0
+								}
+							}
+						},
+						"tools": {}
+					}
+				}
+			],
+			[
+				{
+					"type": "tool_execution_start",
+					"toolCallId": "dev-62fec60a6bff",
+					"toolName": "add_task",
+					"taskId": 48,
+					"args": {
+						"title": "Old report"
+					}
+				}
+			],
+			[
+				{
+					"type": "tool_execution_end",
+					"toolCallId": "dev-62fec60a6bff",
+					"toolName": "add_task",
+					"taskId": 48,
+					"entry": {
+						"model": [
+							{
+								"role": "toolResult",
+								"toolCallId": "dev-62fec60a6bff",
+								"toolName": "add_task",
+								"content": [
+									{
+										"type": "text",
+										"text": "Saved t_4531b1b7 “Old report” — open"
+									}
+								],
+								"details": {
+									"type": "task",
+									"event": "created",
+									"task": {
+										"id": "t_4531b1b7",
+										"title": "Old report",
+										"status": "open"
+									}
+								},
+								"isError": false,
+								"durationMs": 7,
+								"timestamp": 1792915260000
+							}
+						],
+						"data": {
+							"diagnostics": []
+						},
+						"kind": "pi.tool-result",
+						"id": 49,
+						"conversationId": 2,
+						"byTaskId": 48
+					}
+				},
+				{
+					"type": "message_start",
+					"message": {
+						"role": "toolResult",
+						"toolCallId": "dev-62fec60a6bff",
+						"toolName": "add_task",
+						"content": [
+							{
+								"type": "text",
+								"text": "Saved t_4531b1b7 “Old report” — open"
+							}
+						],
+						"details": {
+							"type": "task",
+							"event": "created",
+							"task": {
+								"id": "t_4531b1b7",
+								"title": "Old report",
+								"status": "open"
+							}
+						},
+						"isError": false,
+						"durationMs": 7,
+						"timestamp": 1792915260000
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "toolResult",
+								"toolCallId": "dev-62fec60a6bff",
+								"toolName": "add_task",
+								"content": [
+									{
+										"type": "text",
+										"text": "Saved t_4531b1b7 “Old report” — open"
+									}
+								],
+								"details": {
+									"type": "task",
+									"event": "created",
+									"task": {
+										"id": "t_4531b1b7",
+										"title": "Old report",
+										"status": "open"
+									}
+								},
+								"isError": false,
+								"durationMs": 7,
+								"timestamp": 1792915260000
+							}
+						],
+						"data": {
+							"diagnostics": []
+						},
+						"kind": "pi.tool-result",
+						"id": 49,
+						"conversationId": 2,
+						"byTaskId": 48
+					}
+				}
+			],
+			[
+				{
+					"type": "turn_end"
+				},
+				{
+					"type": "turn_start"
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "Faux model (dev mode): add_task returned:\n\nSaved t_4531b1b7 “Old report” — open"
+							}
+						],
+						"api": "faux:1792882263672:b1b12cw82rn",
+						"provider": "faux",
+						"model": "faux-1",
+						"usage": {
+							"input": 96,
+							"output": 20,
+							"cacheRead": 1997,
+							"cacheWrite": 97,
+							"totalTokens": 2210,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1792882264283,
+						"durationMs": 14
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "assistant",
+								"content": [
+									{
+										"type": "text",
+										"text": "Faux model (dev mode): add_task returned:\n\nSaved t_4531b1b7 “Old report” — open"
+									}
+								],
+								"api": "faux:1792882263672:b1b12cw82rn",
+								"provider": "faux",
+								"model": "faux-1",
+								"usage": {
+									"input": 96,
+									"output": 20,
+									"cacheRead": 1997,
+									"cacheWrite": 97,
+									"totalTokens": 2210,
+									"cost": {
+										"input": 0,
+										"output": 0,
+										"cacheRead": 0,
+										"cacheWrite": 0,
+										"total": 0
+									}
+								},
+								"stopReason": "stop",
+								"timestamp": 1792882264283,
+								"durationMs": 14
+							}
+						],
+						"kind": "pi.assistant",
+						"id": 52,
+						"conversationId": 2,
+						"byTaskId": 50
+					}
+				},
+				{
+					"type": "turn_end"
+				},
+				{
+					"type": "run_end",
+					"inputs": [44]
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 2,
+						"requestId": "fixture-rem-2",
+						"type": "input",
+						"status": "done",
+						"entry": 43,
+						"id": 44,
+						"answer": 52
+					}
+				},
+				{
+					"type": "usage_changed",
+					"usage": {
+						"models": {
+							"faux/faux-1": {
+								"input": 2093,
+								"output": 70,
+								"cacheRead": 5707,
+								"cacheWrite": 2094,
+								"totalTokens": 9964,
+								"cost": {
+									"input": 0,
+									"output": 0,
+									"cacheRead": 0,
+									"cacheWrite": 0,
+									"total": 0
+								}
+							}
+						},
+						"tools": {}
+					}
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "user",
+						"content": "/tool propose_delete_task {\"task_id\":\"t_4531b1b7\"}",
+						"timestamp": 1792915260000
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "user",
+								"content": "/tool propose_delete_task {\"task_id\":\"t_4531b1b7\"}",
+								"timestamp": 1792915260000
+							}
+						],
+						"kind": "pi.user",
+						"id": 53,
+						"conversationId": 2
+					}
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 2,
+						"requestId": "fixture-rem-3",
+						"type": "input",
+						"status": "placed",
+						"entry": 53,
+						"id": 54
+					}
+				},
+				{
+					"type": "run_start",
+					"inputs": [54]
+				},
+				{
+					"type": "turn_start"
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "toolCall",
+								"id": "dev-c4671dd924ee",
+								"name": "propose_delete_task",
+								"arguments": {
+									"task_id": "t_4531b1b7"
+								}
+							}
+						],
+						"api": "faux:1792882263672:b1b12cw82rn",
+						"provider": "faux",
+						"model": "faux-1",
+						"usage": {
+							"input": 37,
+							"output": 11,
+							"cacheRead": 2093,
+							"cacheWrite": 37,
+							"totalTokens": 2178,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "toolUse",
+						"timestamp": 1792882264305,
+						"durationMs": 5
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "assistant",
+								"content": [
+									{
+										"type": "toolCall",
+										"id": "dev-c4671dd924ee",
+										"name": "propose_delete_task",
+										"arguments": {
+											"task_id": "t_4531b1b7"
+										}
+									}
+								],
+								"api": "faux:1792882263672:b1b12cw82rn",
+								"provider": "faux",
+								"model": "faux-1",
+								"usage": {
+									"input": 37,
+									"output": 11,
+									"cacheRead": 2093,
+									"cacheWrite": 37,
+									"totalTokens": 2178,
+									"cost": {
+										"input": 0,
+										"output": 0,
+										"cacheRead": 0,
+										"cacheWrite": 0,
+										"total": 0
+									}
+								},
+								"stopReason": "toolUse",
+								"timestamp": 1792882264305,
+								"durationMs": 5
+							}
+						],
+						"kind": "pi.assistant",
+						"id": 56,
+						"conversationId": 2,
+						"byTaskId": 55
+					}
+				},
+				{
+					"type": "usage_changed",
+					"usage": {
+						"models": {
+							"faux/faux-1": {
+								"input": 2130,
+								"output": 81,
+								"cacheRead": 7800,
+								"cacheWrite": 2131,
+								"totalTokens": 12142,
+								"cost": {
+									"input": 0,
+									"output": 0,
+									"cacheRead": 0,
+									"cacheWrite": 0,
+									"total": 0
+								}
+							}
+						},
+						"tools": {}
+					}
+				}
+			],
+			[
+				{
+					"type": "tool_execution_start",
+					"toolCallId": "dev-c4671dd924ee",
+					"toolName": "propose_delete_task",
+					"taskId": 57,
+					"args": {
+						"task_id": "t_4531b1b7"
+					}
+				}
+			],
+			[
+				{
+					"type": "tool_execution_end",
+					"toolCallId": "dev-c4671dd924ee",
+					"toolName": "propose_delete_task",
+					"taskId": 57,
+					"entry": {
+						"model": [
+							{
+								"role": "toolResult",
+								"toolCallId": "dev-c4671dd924ee",
+								"toolName": "propose_delete_task",
+								"content": [
+									{
+										"type": "text",
+										"text": "Approval requested (ap_c29f2bae): Delete task “Old report”. Nothing is deleted yet. Tell the owner to tap Approve on the card. Do not say it is deleted until they have answered; list_tasks shows whether it went through."
+									}
+								],
+								"details": {
+									"type": "approval",
+									"actionId": "ap_c29f2bae",
+									"summary": "Delete task “Old report”",
+									"expiresAt": 1793001660000
+								},
+								"isError": false,
+								"durationMs": 2,
+								"timestamp": 1792915260000
+							}
+						],
+						"data": {
+							"diagnostics": []
+						},
+						"kind": "pi.tool-result",
+						"id": 58,
+						"conversationId": 2,
+						"byTaskId": 57
+					}
+				},
+				{
+					"type": "message_start",
+					"message": {
+						"role": "toolResult",
+						"toolCallId": "dev-c4671dd924ee",
+						"toolName": "propose_delete_task",
+						"content": [
+							{
+								"type": "text",
+								"text": "Approval requested (ap_c29f2bae): Delete task “Old report”. Nothing is deleted yet. Tell the owner to tap Approve on the card. Do not say it is deleted until they have answered; list_tasks shows whether it went through."
+							}
+						],
+						"details": {
+							"type": "approval",
+							"actionId": "ap_c29f2bae",
+							"summary": "Delete task “Old report”",
+							"expiresAt": 1793001660000
+						},
+						"isError": false,
+						"durationMs": 2,
+						"timestamp": 1792915260000
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "toolResult",
+								"toolCallId": "dev-c4671dd924ee",
+								"toolName": "propose_delete_task",
+								"content": [
+									{
+										"type": "text",
+										"text": "Approval requested (ap_c29f2bae): Delete task “Old report”. Nothing is deleted yet. Tell the owner to tap Approve on the card. Do not say it is deleted until they have answered; list_tasks shows whether it went through."
+									}
+								],
+								"details": {
+									"type": "approval",
+									"actionId": "ap_c29f2bae",
+									"summary": "Delete task “Old report”",
+									"expiresAt": 1793001660000
+								},
+								"isError": false,
+								"durationMs": 2,
+								"timestamp": 1792915260000
+							}
+						],
+						"data": {
+							"diagnostics": []
+						},
+						"kind": "pi.tool-result",
+						"id": 58,
+						"conversationId": 2,
+						"byTaskId": 57
+					}
+				}
+			],
+			[
+				{
+					"type": "turn_end"
+				},
+				{
+					"type": "turn_start"
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "Faux model (dev mode): propose_delete_task returned:\n\nApproval requested (ap_c29f2bae): Delete task “Old report”. Nothing is deleted yet. Tell the owner to tap Approve on the card. Do not say it is deleted until they have answered; list_tasks shows whether it went through."
+							}
+						],
+						"api": "faux:1792882263672:b1b12cw82rn",
+						"provider": "faux",
+						"model": "faux-1",
+						"usage": {
+							"input": 77,
+							"output": 69,
+							"cacheRead": 2130,
+							"cacheWrite": 77,
+							"totalTokens": 2353,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1792882264321,
+						"durationMs": 57
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "assistant",
+								"content": [
+									{
+										"type": "text",
+										"text": "Faux model (dev mode): propose_delete_task returned:\n\nApproval requested (ap_c29f2bae): Delete task “Old report”. Nothing is deleted yet. Tell the owner to tap Approve on the card. Do not say it is deleted until they have answered; list_tasks shows whether it went through."
+									}
+								],
+								"api": "faux:1792882263672:b1b12cw82rn",
+								"provider": "faux",
+								"model": "faux-1",
+								"usage": {
+									"input": 77,
+									"output": 69,
+									"cacheRead": 2130,
+									"cacheWrite": 77,
+									"totalTokens": 2353,
+									"cost": {
+										"input": 0,
+										"output": 0,
+										"cacheRead": 0,
+										"cacheWrite": 0,
+										"total": 0
+									}
+								},
+								"stopReason": "stop",
+								"timestamp": 1792882264321,
+								"durationMs": 57
+							}
+						],
+						"kind": "pi.assistant",
+						"id": 60,
+						"conversationId": 2,
+						"byTaskId": 59
+					}
+				},
+				{
+					"type": "turn_end"
+				},
+				{
+					"type": "run_end",
+					"inputs": [54]
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 2,
+						"requestId": "fixture-rem-3",
+						"type": "input",
+						"status": "done",
+						"entry": 53,
+						"id": 54,
+						"answer": 60
+					}
+				},
+				{
+					"type": "usage_changed",
+					"usage": {
+						"models": {
+							"faux/faux-1": {
+								"input": 2207,
+								"output": 150,
+								"cacheRead": 9930,
+								"cacheWrite": 2208,
+								"totalTokens": 14495,
+								"cost": {
+									"input": 0,
+									"output": 0,
+									"cacheRead": 0,
+									"cacheWrite": 0,
+									"total": 0
+								}
+							}
+						},
+						"tools": {}
+					}
+				}
+			],
+			[
+				{
+					"type": "entry_appended",
+					"entry": {
+						"kind": "app.notice",
+						"data": {
+							"text": "Deleted task “Old report”.",
+							"level": "info",
+							"approval": {
+								"actionId": "ap_c29f2bae",
+								"outcome": "executed",
+								"via": "button"
+							}
+						},
+						"id": 61,
+						"conversationId": 2
+					}
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 2,
+						"requestId": "approval:ap_c29f2bae",
+						"type": "write",
+						"status": "done",
+						"entry": 61,
+						"id": 62
+					}
+				}
+			]
+		],
+		[
+			[
+				{
+					"type": "snapshot",
+					"tools": [],
+					"nestedTools": [],
+					"compactions": [],
+					"inbox": [],
+					"usage": {
+						"models": {
+							"faux/faux-1": {
+								"input": 2207,
+								"output": 150,
+								"cacheRead": 9930,
+								"cacheWrite": 2208,
+								"totalTokens": 14495,
+								"cost": {
+									"input": 0,
+									"output": 0,
+									"cacheRead": 0,
+									"cacheWrite": 0,
+									"total": 0
+								}
+							}
+						},
+						"tools": {}
+					},
+					"agent": {
+						"model": {
+							"provider": "faux",
+							"modelId": "faux-1"
+						},
+						"thinkingLevel": "medium",
+						"extensions": ["profile", "tasks", "approvals"]
+					},
+					"entries": [
+						{
+							"model": [
+								{
+									"role": "user",
+									"content": "/tool add_task {\"title\":\"Pay rent\",\"remind_in_minutes\":1}",
+									"timestamp": 1792915200000
+								}
+							],
+							"kind": "pi.user",
+							"id": 30,
+							"conversationId": 2
+						},
+						{
+							"model": [
+								{
+									"role": "assistant",
+									"content": [
+										{
+											"type": "toolCall",
+											"id": "dev-095a0b44ad81",
+											"name": "add_task",
+											"arguments": {
+												"title": "Pay rent",
+												"remind_in_minutes": 1
+											}
+										}
+									],
+									"api": "faux:1792882263672:b1b12cw82rn",
+									"provider": "faux",
+									"model": "faux-1",
+									"usage": {
+										"input": 1827,
+										"output": 13,
+										"cacheRead": 0,
+										"cacheWrite": 1827,
+										"totalTokens": 3667,
+										"cost": {
+											"input": 0,
+											"output": 0,
+											"cacheRead": 0,
+											"cacheWrite": 0,
+											"total": 0
+										}
+									},
+									"stopReason": "toolUse",
+									"timestamp": 1792882263697,
+									"durationMs": 10
+								}
+							],
+							"kind": "pi.assistant",
+							"id": 34,
+							"conversationId": 2,
+							"byTaskId": 32
+						},
+						{
+							"model": [
+								{
+									"role": "toolResult",
+									"toolCallId": "dev-095a0b44ad81",
+									"toolName": "add_task",
+									"content": [
+										{
+											"type": "text",
+											"text": "Saved t_14a51721 “Pay rent” — open; reminder 2026-10-25T14:01:00+06:00"
+										}
+									],
+									"details": {
+										"type": "task",
+										"event": "created",
+										"task": {
+											"id": "t_14a51721",
+											"title": "Pay rent",
+											"status": "open",
+											"remindAt": 1792915260000,
+											"remindText": "Sun 25 Oct 2026, 14:01"
+										}
+									},
+									"isError": false,
+									"durationMs": 8,
+									"timestamp": 1792915200000
+								}
+							],
+							"data": {
+								"diagnostics": []
+							},
+							"kind": "pi.tool-result",
+							"id": 37,
+							"conversationId": 2,
+							"byTaskId": 35
+						},
+						{
+							"model": [
+								{
+									"role": "assistant",
+									"content": [
+										{
+											"type": "text",
+											"text": "Faux model (dev mode): add_task returned:\n\nSaved t_14a51721 “Pay rent” — open; reminder 2026-10-25T14:01:00+06:00"
+										}
+									],
+									"api": "faux:1792882263672:b1b12cw82rn",
+									"provider": "faux",
+									"model": "faux-1",
+									"usage": {
+										"input": 56,
+										"output": 29,
+										"cacheRead": 1827,
+										"cacheWrite": 56,
+										"totalTokens": 1968,
+										"cost": {
+											"input": 0,
+											"output": 0,
+											"cacheRead": 0,
+											"cacheWrite": 0,
+											"total": 0
+										}
+									},
+									"stopReason": "stop",
+									"timestamp": 1792882263731,
+									"durationMs": 22
+								}
+							],
+							"kind": "pi.assistant",
+							"id": 40,
+							"conversationId": 2,
+							"byTaskId": 38
+						},
+						{
+							"kind": "app.reminder",
+							"data": {
+								"taskId": "t_14a51721",
+								"title": "Pay rent",
+								"remindAt": 1792915260000,
+								"remindAtText": "Sun 25 Oct 2026, 14:01",
+								"firedAt": 1792915260000
+							},
+							"id": 41,
+							"conversationId": 2
+						},
+						{
+							"model": [
+								{
+									"role": "user",
+									"content": "/tool add_task {\"title\":\"Old report\"}",
+									"timestamp": 1792915260000
+								}
+							],
+							"kind": "pi.user",
+							"id": 43,
+							"conversationId": 2
+						},
+						{
+							"model": [
+								{
+									"role": "assistant",
+									"content": [
+										{
+											"type": "toolCall",
+											"id": "dev-62fec60a6bff",
+											"name": "add_task",
+											"arguments": {
+												"title": "Old report"
+											}
+										}
+									],
+									"api": "faux:1792882263672:b1b12cw82rn",
+									"provider": "faux",
+									"model": "faux-1",
+									"usage": {
+										"input": 114,
+										"output": 8,
+										"cacheRead": 1883,
+										"cacheWrite": 114,
+										"totalTokens": 2119,
+										"cost": {
+											"input": 0,
+											"output": 0,
+											"cacheRead": 0,
+											"cacheWrite": 0,
+											"total": 0
+										}
+									},
+									"stopReason": "toolUse",
+									"timestamp": 1792882264262,
+									"durationMs": 5
+								}
+							],
+							"kind": "pi.assistant",
+							"id": 47,
+							"conversationId": 2,
+							"byTaskId": 45
+						},
+						{
+							"model": [
+								{
+									"role": "toolResult",
+									"toolCallId": "dev-62fec60a6bff",
+									"toolName": "add_task",
+									"content": [
+										{
+											"type": "text",
+											"text": "Saved t_4531b1b7 “Old report” — open"
+										}
+									],
+									"details": {
+										"type": "task",
+										"event": "created",
+										"task": {
+											"id": "t_4531b1b7",
+											"title": "Old report",
+											"status": "open"
+										}
+									},
+									"isError": false,
+									"durationMs": 7,
+									"timestamp": 1792915260000
+								}
+							],
+							"data": {
+								"diagnostics": []
+							},
+							"kind": "pi.tool-result",
+							"id": 49,
+							"conversationId": 2,
+							"byTaskId": 48
+						},
+						{
+							"model": [
+								{
+									"role": "assistant",
+									"content": [
+										{
+											"type": "text",
+											"text": "Faux model (dev mode): add_task returned:\n\nSaved t_4531b1b7 “Old report” — open"
+										}
+									],
+									"api": "faux:1792882263672:b1b12cw82rn",
+									"provider": "faux",
+									"model": "faux-1",
+									"usage": {
+										"input": 96,
+										"output": 20,
+										"cacheRead": 1997,
+										"cacheWrite": 97,
+										"totalTokens": 2210,
+										"cost": {
+											"input": 0,
+											"output": 0,
+											"cacheRead": 0,
+											"cacheWrite": 0,
+											"total": 0
+										}
+									},
+									"stopReason": "stop",
+									"timestamp": 1792882264283,
+									"durationMs": 14
+								}
+							],
+							"kind": "pi.assistant",
+							"id": 52,
+							"conversationId": 2,
+							"byTaskId": 50
+						},
+						{
+							"model": [
+								{
+									"role": "user",
+									"content": "/tool propose_delete_task {\"task_id\":\"t_4531b1b7\"}",
+									"timestamp": 1792915260000
+								}
+							],
+							"kind": "pi.user",
+							"id": 53,
+							"conversationId": 2
+						},
+						{
+							"model": [
+								{
+									"role": "assistant",
+									"content": [
+										{
+											"type": "toolCall",
+											"id": "dev-c4671dd924ee",
+											"name": "propose_delete_task",
+											"arguments": {
+												"task_id": "t_4531b1b7"
+											}
+										}
+									],
+									"api": "faux:1792882263672:b1b12cw82rn",
+									"provider": "faux",
+									"model": "faux-1",
+									"usage": {
+										"input": 37,
+										"output": 11,
+										"cacheRead": 2093,
+										"cacheWrite": 37,
+										"totalTokens": 2178,
+										"cost": {
+											"input": 0,
+											"output": 0,
+											"cacheRead": 0,
+											"cacheWrite": 0,
+											"total": 0
+										}
+									},
+									"stopReason": "toolUse",
+									"timestamp": 1792882264305,
+									"durationMs": 5
+								}
+							],
+							"kind": "pi.assistant",
+							"id": 56,
+							"conversationId": 2,
+							"byTaskId": 55
+						},
+						{
+							"model": [
+								{
+									"role": "toolResult",
+									"toolCallId": "dev-c4671dd924ee",
+									"toolName": "propose_delete_task",
+									"content": [
+										{
+											"type": "text",
+											"text": "Approval requested (ap_c29f2bae): Delete task “Old report”. Nothing is deleted yet. Tell the owner to tap Approve on the card. Do not say it is deleted until they have answered; list_tasks shows whether it went through."
+										}
+									],
+									"details": {
+										"type": "approval",
+										"actionId": "ap_c29f2bae",
+										"summary": "Delete task “Old report”",
+										"expiresAt": 1793001660000
+									},
+									"isError": false,
+									"durationMs": 2,
+									"timestamp": 1792915260000
+								}
+							],
+							"data": {
+								"diagnostics": []
+							},
+							"kind": "pi.tool-result",
+							"id": 58,
+							"conversationId": 2,
+							"byTaskId": 57
+						},
+						{
+							"model": [
+								{
+									"role": "assistant",
+									"content": [
+										{
+											"type": "text",
+											"text": "Faux model (dev mode): propose_delete_task returned:\n\nApproval requested (ap_c29f2bae): Delete task “Old report”. Nothing is deleted yet. Tell the owner to tap Approve on the card. Do not say it is deleted until they have answered; list_tasks shows whether it went through."
+										}
+									],
+									"api": "faux:1792882263672:b1b12cw82rn",
+									"provider": "faux",
+									"model": "faux-1",
+									"usage": {
+										"input": 77,
+										"output": 69,
+										"cacheRead": 2130,
+										"cacheWrite": 77,
+										"totalTokens": 2353,
+										"cost": {
+											"input": 0,
+											"output": 0,
+											"cacheRead": 0,
+											"cacheWrite": 0,
+											"total": 0
+										}
+									},
+									"stopReason": "stop",
+									"timestamp": 1792882264321,
+									"durationMs": 57
+								}
+							],
+							"kind": "pi.assistant",
+							"id": 60,
+							"conversationId": 2,
+							"byTaskId": 59
+						},
+						{
+							"kind": "app.notice",
+							"data": {
+								"text": "Deleted task “Old report”.",
+								"level": "info",
+								"approval": {
+									"actionId": "ap_c29f2bae",
+									"outcome": "executed",
+									"via": "button"
+								}
+							},
+							"id": 61,
+							"conversationId": 2
+						}
+					],
+					"hasEarlier": false,
+					"unanswered": []
+				}
+			]
+		]
+	]
+}

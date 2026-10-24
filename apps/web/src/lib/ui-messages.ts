@@ -1,10 +1,21 @@
-import type { AssistantChatMessage, EntryRecord } from "@assistant/shared";
+import {
+	type ApprovalOutcome,
+	type AssistantChatMessage,
+	type EntryRecord,
+	NOTICE_ENTRY_KIND,
+	type NoticeEntryData,
+	REMINDER_ENTRY_KIND,
+	type ReminderEntryData,
+	type TaskCard,
+	type TaskListCard,
+	toolCardOf,
+} from "@assistant/shared";
 import { explainUnanswered, type ThreadState } from "./thread-state.ts";
 
 /**
- * What the thread shows, one item per bubble. Derived from `ThreadState`; assistant-ui gets it through
- * `convertMessage`. Only chat messages appear here: system-prompt entries never reach the client, and other entry
- * kinds (reminders, notices, tool results) are ignored until their milestones render them.
+ * What the thread shows, one item per bubble or card. Derived from `ThreadState`; assistant-ui gets it through
+ * `convertMessage`. Chat messages (`pi.user`, `pi.assistant`) become bubbles; reminders, notices and the typed results
+ * of tools become cards; system-prompt entries never reach the client and every other kind is ignored.
  */
 
 export type UiPart = { type: "text"; text: string } | { type: "reasoning"; text: string };
@@ -18,6 +29,21 @@ export type UiAssistantStatus =
 	| { type: "cut-off" }
 	| { type: "error"; message: string };
 
+/** How an approval card stands, worked out from the notices that came after it. */
+export type ApprovalCardState =
+	| { status: "pending" }
+	/** Its 24 hours passed without an answer. The server refuses a late answer. */
+	| { status: "expired" }
+	| { status: Exclude<ApprovalOutcome, "expired">; text: string; via: "button" | "yes" | "timeout" };
+
+/** A non-chat item of the thread. */
+export type UiCard =
+	| { type: "reminder"; data: ReminderEntryData }
+	| { type: "notice"; data: NoticeEntryData }
+	| TaskListCard
+	| TaskCard
+	| { type: "approval"; actionId: string; summary: string; expiresAt: number; state: ApprovalCardState };
+
 export type UiMessage =
 	| {
 			id: string;
@@ -27,12 +53,19 @@ export type UiMessage =
 			/** Why this message was never answered, when it was not: shown under it, also after a reload. */
 			notAnswered?: string;
 	  }
-	| { id: string; role: "assistant"; createdAt: number; parts: UiPart[]; status: UiAssistantStatus };
+	| { id: string; role: "assistant"; createdAt: number; parts: UiPart[]; status: UiAssistantStatus }
+	| { id: string; role: "system"; createdAt: number; card: UiCard };
 
 const cache = new WeakMap<EntryRecord, UiMessage | null>();
 
-/** All messages of a thread, oldest first, the one being written last. */
-export function toUiMessages(state: Pick<ThreadState, "entries" | "draft" | "unanswered">): UiMessage[] {
+/**
+ * All messages of a thread, oldest first, the one being written last. `now` decides which approval requests have
+ * expired (their entries are immutable, so the card cannot say so itself).
+ */
+export function toUiMessages(
+	state: Pick<ThreadState, "entries" | "draft" | "unanswered">,
+	now: number = Date.now(),
+): UiMessage[] {
 	const explanations = explanationsByEntry(state.unanswered);
 	const messages: UiMessage[] = [];
 	const seen = new Set<string>();
@@ -45,7 +78,33 @@ export function toUiMessages(state: Pick<ThreadState, "entries" | "draft" | "una
 	};
 	for (const entry of state.entries) push(withExplanation(entryToMessage(entry), explanations.get(entry.id)));
 	if (state.draft !== undefined) push(assistantToMessage(state.draft, { type: "running" }, "draft"));
-	return markInterrupted(messages);
+	return resolveApprovals(markInterrupted(messages), approvalOutcomes(state.entries), now);
+}
+
+type Decided = Exclude<ApprovalCardState, { status: "pending" | "expired" }>;
+
+/** The outcome notices of the thread, by the approval request they answer. The newest one for a request wins. */
+function approvalOutcomes(entries: readonly EntryRecord[]): Map<string, Decided> {
+	const outcomes = new Map<string, Decided>();
+	for (const entry of entries) {
+		if (entry.kind !== NOTICE_ENTRY_KIND) continue;
+		const data = entry.data as Partial<NoticeEntryData> | undefined;
+		const approval = data?.approval;
+		if (approval === undefined || approval.outcome === "expired" || typeof data?.text !== "string") continue;
+		outcomes.set(approval.actionId, { status: approval.outcome, text: data.text, via: approval.via });
+	}
+	return outcomes;
+}
+
+/** Give each approval card the state the thread says it is in: answered, expired, or still waiting. */
+function resolveApprovals(messages: UiMessage[], outcomes: Map<string, Decided>, now: number): UiMessage[] {
+	return messages.map((message) => {
+		if (message.role !== "system" || message.card.type !== "approval") return message;
+		const decided = outcomes.get(message.card.actionId);
+		const state: ApprovalCardState =
+			decided ?? (message.card.expiresAt <= now ? { status: "expired" } : { status: "pending" });
+		return { ...message, card: { ...message.card, state } };
+	});
 }
 
 function explanationsByEntry(unanswered: ThreadState["unanswered"]): Map<number, string> {
@@ -91,6 +150,8 @@ function entryToMessage(entry: EntryRecord): UiMessage | null {
  * summary is stored as a user message, a reset may carry a handoff note) but are context for the model, not chat.
  */
 function convertEntry(entry: EntryRecord): UiMessage | null {
+	const card = cardOf(entry);
+	if (card !== undefined) return { id: `card-${entry.id}`, role: "system", createdAt: cardTime(entry), card };
 	const message = entry.model?.[0];
 	if (entry.kind === "pi.user" && message?.role === "user") {
 		const text =
@@ -103,6 +164,32 @@ function convertEntry(entry: EntryRecord): UiMessage | null {
 		return assistantToMessage(message, statusOf(message), String(entry.id));
 	}
 	return null;
+}
+
+/** The card an entry shows, if it is one: a reminder, a notice, or a tool result that carries a typed card. */
+function cardOf(entry: EntryRecord): UiCard | undefined {
+	if (entry.kind === REMINDER_ENTRY_KIND) {
+		const data = entry.data as Partial<ReminderEntryData> | undefined;
+		return typeof data?.title === "string" ? { type: "reminder", data: data as ReminderEntryData } : undefined;
+	}
+	if (entry.kind === NOTICE_ENTRY_KIND) {
+		const data = entry.data as Partial<NoticeEntryData> | undefined;
+		return typeof data?.text === "string" ? { type: "notice", data: data as NoticeEntryData } : undefined;
+	}
+	const message = entry.model?.[0];
+	if (entry.kind !== "pi.tool-result" || message?.role !== "toolResult") return undefined;
+	const card = toolCardOf(message.details);
+	if (card === undefined) return undefined;
+	// Until the notices say otherwise, a request is waiting; `resolveApprovals` settles it.
+	return card.type === "approval" ? { ...card, state: { status: "pending" } } : card;
+}
+
+/** When the card happened: a reminder's own firing time, otherwise the entry's message time. */
+function cardTime(entry: EntryRecord): number {
+	const data = entry.data as { firedAt?: unknown } | undefined;
+	if (entry.kind === REMINDER_ENTRY_KIND && typeof data?.firedAt === "number") return data.firedAt;
+	const timestamp = entry.model?.[0]?.timestamp;
+	return typeof timestamp === "number" ? timestamp : 0;
 }
 
 function statusOf(message: AssistantChatMessage): UiAssistantStatus {

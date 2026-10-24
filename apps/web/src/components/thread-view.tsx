@@ -16,7 +16,8 @@ import { useStore } from "zustand";
 import { convertMessage } from "../lib/convert-message.ts";
 import type { Notice } from "../lib/thread-state.ts";
 import { threadFor } from "../lib/thread-store.ts";
-import { toUiMessages, type UiMessage } from "../lib/ui-messages.ts";
+import { toUiMessages, type UiCard, type UiMessage } from "../lib/ui-messages.ts";
+import { CardView } from "./cards.tsx";
 import { useChat } from "./chat-context.tsx";
 
 export function ThreadView({ agent }: { agent: AgentSummary }) {
@@ -44,7 +45,15 @@ export function ThreadView({ agent }: { agent: AgentSummary }) {
 							<EmptyThread agent={agent} />
 						</ThreadPrimitive.Empty>
 						<ThreadPrimitive.Messages>
-							{({ message }) => (message.role === "user" ? <UserMessage /> : <AssistantMessage agent={agent} />)}
+							{({ message }) =>
+								message.role === "user" ? (
+									<UserMessage />
+								) : message.role === "system" ? (
+									<CardMessage />
+								) : (
+									<AssistantMessage agent={agent} />
+								)
+							}
 						</ThreadPrimitive.Messages>
 						<WaitingForAnswer agent={agent} />
 					</div>
@@ -137,6 +146,17 @@ function UserMessage() {
 				<MessagePrimitive.Parts components={{ Text: PlainText }} />
 			</div>
 			{typeof notAnswered === "string" ? <p className="status status--error msg__unanswered">{notAnswered}</p> : null}
+		</MessagePrimitive.Root>
+	);
+}
+
+/** A reminder, notice or tool card. It is a message of the thread so that it sits where it happened. */
+function CardMessage() {
+	const card = useAuiState((state) => state.message.metadata.custom.card) as UiCard | undefined;
+	if (card === undefined) return null;
+	return (
+		<MessagePrimitive.Root className="msg msg--card">
+			<CardView card={card} />
 		</MessagePrimitive.Root>
 	);
 }

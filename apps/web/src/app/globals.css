@@ -559,3 +559,161 @@ button {
 		margin-top: 0;
 	}
 }
+
+/* Cards: reminders, notices, tasks and approval requests sit in the thread where they happened */
+
+.msg--card {
+	display: flex;
+	justify-content: flex-start;
+	padding-left: 40px;
+}
+
+.card {
+	max-width: min(100%, 520px);
+	margin: 0;
+	padding: 10px 14px;
+	border: 1px solid var(--border);
+	border-radius: 14px;
+	background: var(--bg-subtle);
+	font-size: 15px;
+}
+
+.card__head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	color: var(--text-muted);
+}
+
+.card__title {
+	margin: 4px 0 0;
+	font-weight: 600;
+}
+
+.card__muted {
+	margin: 2px 0 0;
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+.card--reminder {
+	border-left: 4px solid var(--accent);
+}
+
+.card--notice {
+	background: transparent;
+	border-style: dashed;
+	color: var(--text-muted);
+	font-size: 14px;
+}
+
+.card--error {
+	border-color: var(--danger);
+	color: var(--danger);
+}
+
+.card--approval {
+	background: var(--warn-bg);
+}
+
+.card--executed,
+.card--denied,
+.card--expired,
+.card--failed {
+	background: var(--bg-subtle);
+}
+
+.card__actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.card__button {
+	min-height: 40px;
+	padding: 0 16px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--bg);
+	color: var(--text);
+	cursor: pointer;
+}
+
+.card__button--primary {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--accent-text);
+}
+
+.card__button:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.card__outcome {
+	margin: 6px 0 0;
+	font-weight: 600;
+}
+
+.card__error {
+	margin: 8px 0 0;
+	font-size: 13px;
+	color: var(--danger);
+}
+
+.tasks {
+	margin: 6px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.task {
+	display: flex;
+	gap: 8px;
+	padding: 3px 0;
+}
+
+.task__mark {
+	flex: none;
+	width: 1.2em;
+	color: var(--text-muted);
+}
+
+.task--done .task__title {
+	text-decoration: line-through;
+	color: var(--text-muted);
+}
+
+.banner__retry {
+	margin-left: 12px;
+	padding: 2px 12px;
+	border: 1px solid currentColor;
+	border-radius: 999px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.banner__retry:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+/* Notifications and model list in settings */
+
+.settings-card__hint {
+	margin: 0;
+	font-size: 14px;
+	color: var(--text-muted);
+}
+
+.settings-card__check {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 0 12px;
+	font-size: 14px;
+}

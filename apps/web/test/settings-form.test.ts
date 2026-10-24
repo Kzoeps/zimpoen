@@ -1,6 +1,14 @@
 import type { AgentSettings, ModelOption } from "@assistant/shared";
 import { describe, expect, it } from "vitest";
-import { changeOf, chooseThinkingLevel, draftOf, modelKey, withModel } from "../src/lib/settings-form.ts";
+import {
+	changeOf,
+	chooseThinkingLevel,
+	draftOf,
+	isCurated,
+	modelKey,
+	offeredModels,
+	withModel,
+} from "../src/lib/settings-form.ts";
 
 const faux: ModelOption = {
 	provider: "faux",
@@ -88,5 +96,32 @@ describe("the settings form", () => {
 			model: { provider: "faux", modelId: "faux-1" },
 			thinkingLevel: "medium",
 		});
+	});
+});
+
+describe("offeredModels", () => {
+	const mini: ModelOption = { provider: "openai", modelId: "gpt-5-mini", name: "GPT-5 mini", thinkingLevels: ["low"] };
+	const terra: ModelOption = {
+		provider: "openai",
+		modelId: "gpt-6-terra",
+		name: "GPT-6 Terra",
+		thinkingLevels: ["low"],
+	};
+	const claude: ModelOption = { provider: "anthropic", modelId: "claude-x", name: "Claude X", thinkingLevels: ["low"] };
+	const catalog = [mini, sol, terra, claude];
+
+	it("offers only the gpt-6 models by default, and everything on request", () => {
+		expect(catalog.filter(isCurated)).toStrictEqual([sol, terra]);
+		expect(offeredModels(catalog, modelKey(sol), false)).toStrictEqual([sol, terra]);
+		expect(offeredModels(catalog, modelKey(sol), true)).toStrictEqual(catalog);
+	});
+
+	it("keeps the agent's current model in the list even when it is not curated, so the select never lies", () => {
+		expect(offeredModels(catalog, modelKey(mini), false)).toStrictEqual([mini, sol, terra]);
+	});
+
+	it("offers everything when no model is curated (the scripted dev model), because an empty list is useless", () => {
+		expect(offeredModels([faux], modelKey(faux), false)).toStrictEqual([faux]);
+		expect(offeredModels([mini, claude], "", false)).toStrictEqual([mini, claude]);
 	});
 });

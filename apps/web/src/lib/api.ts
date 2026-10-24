@@ -3,7 +3,12 @@ import type {
 	AgentsResponse,
 	AllAgentSettingsResponse,
 	ApiErrorBody,
+	ApprovalDecision,
+	ApprovalState,
 	MessagesPage,
+	PushConfigResponse,
+	PushSubscribeRequest,
+	RetryTaskResponse,
 	SendMessageRequest,
 	SendMessageResponse,
 	UpdateAgentSettingsRequest,
@@ -75,6 +80,20 @@ export const abortRun = (conversationId: number): Promise<{ ok: boolean }> =>
 
 export const fetchEarlier = (conversationId: number, before: number, limit = 50): Promise<MessagesPage> =>
 	request(`/api/conversations/${conversationId}/messages?before=${before}&limit=${limit}`);
+
+export const decideApproval = (actionId: string, decision: ApprovalDecision): Promise<ApprovalState> =>
+	request(`/api/approvals/${encodeURIComponent(actionId)}`, json({ decision }));
+
+export const retryTask = (taskId: number): Promise<RetryTaskResponse> =>
+	request(`/api/admin/tasks/${taskId}/retry`, json({}));
+
+export const fetchPushConfig = (): Promise<PushConfigResponse> => request("/api/push/config");
+
+export const subscribePush = (subscription: PushSubscribeRequest): Promise<{ ok: boolean }> =>
+	request("/api/push/subscribe", json(subscription));
+
+export const unsubscribePush = (endpoint: string): Promise<{ removed: boolean }> =>
+	request("/api/push/subscribe", json({ endpoint }, "DELETE"));
 
 export const streamUrl = (conversationId: number): string => `/api/conversations/${conversationId}/stream`;
 

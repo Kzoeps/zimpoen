@@ -4,7 +4,16 @@ import type { AgentSettings, AllAgentSettingsResponse, ModelOption } from "@assi
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { ApiRequestError, fetchAgentSettings, updateAgentSettings } from "../lib/api.ts";
-import { changeOf, draftOf, findModel, modelKey, type SettingsDraft, withModel } from "../lib/settings-form.ts";
+import {
+	changeOf,
+	draftOf,
+	findModel,
+	modelKey,
+	offeredModels,
+	type SettingsDraft,
+	withModel,
+} from "../lib/settings-form.ts";
+import { NotificationsCard } from "./notifications-card.tsx";
 
 const messageOf = (error: unknown, fallback: string): string =>
 	error instanceof ApiRequestError ? error.message : fallback;
@@ -13,6 +22,7 @@ const messageOf = (error: unknown, fallback: string): string =>
 export function SettingsView() {
 	const [data, setData] = useState<AllAgentSettingsResponse>();
 	const [error, setError] = useState<string>();
+	const [showAll, setShowAll] = useState(false);
 
 	useEffect(() => {
 		fetchAgentSettings().then(setData, (failure: unknown) =>
@@ -35,16 +45,31 @@ export function SettingsView() {
 						{error}
 					</p>
 				) : null}
+				<NotificationsCard />
 				{data === undefined && error === undefined ? <p className="placeholder">Loading…</p> : null}
+				{data !== undefined && offeredModels(data.models, "", false).length < data.models.length ? (
+					<label className="settings-card__check">
+						<input type="checkbox" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} /> Show all
+						models ({data.models.length})
+					</label>
+				) : null}
 				{data?.agents.map((agent) => (
-					<AgentSettingsCard key={agent.id} initial={agent} models={data.models} />
+					<AgentSettingsCard key={agent.id} initial={agent} models={data.models} showAll={showAll} />
 				))}
 			</div>
 		</div>
 	);
 }
 
-function AgentSettingsCard({ initial, models }: { initial: AgentSettings; models: ModelOption[] }) {
+function AgentSettingsCard({
+	initial,
+	models,
+	showAll,
+}: {
+	initial: AgentSettings;
+	models: ModelOption[];
+	showAll: boolean;
+}) {
 	const [settings, setSettings] = useState(initial);
 	const [draft, setDraft] = useState<SettingsDraft>(() => draftOf(initial));
 	const [saving, setSaving] = useState(false);
@@ -102,7 +127,7 @@ function AgentSettingsCard({ initial, models }: { initial: AgentSettings; models
 							Choose a model…
 						</option>
 					) : null}
-					{models.map((model) => (
+					{offeredModels(models, draft.model, showAll).map((model) => (
 						<option key={modelKey(model)} value={modelKey(model)}>
 							{model.name}
 						</option>

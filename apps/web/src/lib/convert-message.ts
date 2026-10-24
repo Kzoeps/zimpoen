@@ -1,8 +1,19 @@
 import type { ThreadMessageLike } from "@assistant-ui/react";
+import { cardSummary } from "./card-text.ts";
 import type { UiAssistantStatus, UiMessage } from "./ui-messages.ts";
 
 /** `convertMessage` of assistant-ui's external store runtime: our message to its shape. */
 export function convertMessage(message: UiMessage): ThreadMessageLike {
+	if (message.role === "system") {
+		// A card has no words of its own for assistant-ui; the view reads it from the message metadata.
+		return {
+			role: "system",
+			id: message.id,
+			createdAt: new Date(message.createdAt),
+			content: [{ type: "text", text: cardSummary(message.card) }],
+			metadata: { custom: { card: message.card } },
+		};
+	}
 	if (message.role === "user") {
 		return {
 			role: "user",

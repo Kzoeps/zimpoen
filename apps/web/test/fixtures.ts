@@ -1,6 +1,7 @@
 import type { StreamBatch } from "@assistant/shared";
 import chatTurns from "./fixtures/chat-turns.json" with { type: "json" };
 import noModel from "./fixtures/no-model.json" with { type: "json" };
+import reminders from "./fixtures/reminders-approvals.json" with { type: "json" };
 import restartResume from "./fixtures/restart-resume.json" with { type: "json" };
 import stopMidway from "./fixtures/stop-midway.json" with { type: "json" };
 
@@ -12,4 +13,5 @@ export const recordings = {
 	stopMidway: stopMidway as unknown as Recording,
 	restartResume: restartResume as unknown as Recording,
 	noModel: noModel as unknown as Recording,
+	remindersAndApprovals: reminders as unknown as Recording,
 };

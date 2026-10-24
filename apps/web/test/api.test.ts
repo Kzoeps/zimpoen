@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiRequestError, fetchAgents, sendMessage, updateAgentSettings } from "../src/lib/api.ts";
+import {
+	ApiRequestError,
+	decideApproval,
+	fetchAgents,
+	retryTask,
+	sendMessage,
+	unsubscribePush,
+	updateAgentSettings,
+} from "../src/lib/api.ts";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -70,5 +78,60 @@ describe("saving agent settings", () => {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ thinkingLevel: "high" }),
 		});
+	});
+});
+
+describe("the M2 calls", () => {
+	const lastCall = (): [string, RequestInit] => {
+		const calls = vi.mocked(fetch).mock.calls;
+		return calls[calls.length - 1] as unknown as [string, RequestInit];
+	};
+
+	it("answers an approval with a JSON POST that names the request and the decision", async () => {
+		stubFetch(() => Response.json({ id: "ap_1", status: "executed", summary: "x", expiresAt: 1 }));
+
+		const state = await decideApproval("ap_1", "approve");
+
+		const [url, init] = lastCall();
+		expect(url).toBe("/api/approvals/ap_1");
+		expect(init).toMatchObject({ method: "POST", headers: { "content-type": "application/json" } });
+		expect(JSON.parse(init.body as string)).toStrictEqual({ decision: "approve" });
+		expect(state.status).toBe("executed");
+	});
+
+	it("shows the server's reason when an approval is refused as already answered or expired", async () => {
+		stubFetch(() =>
+			Response.json(
+				{ error: { code: "conflict", message: "This request expired: nothing was changed." } },
+				{ status: 409 },
+			),
+		);
+
+		await expect(decideApproval("ap_1", "approve")).rejects.toMatchObject({
+			status: 409,
+			code: "conflict",
+			message: "This request expired: nothing was changed.",
+		});
+	});
+
+	it("unsubscribes with DELETE and a JSON body, which the server's guards require for every write", async () => {
+		stubFetch(() => Response.json({ removed: true }));
+
+		await unsubscribePush("https://push.example/abc");
+
+		const [url, init] = lastCall();
+		expect(url).toBe("/api/push/subscribe");
+		expect(init).toMatchObject({ method: "DELETE", headers: { "content-type": "application/json" } });
+		expect(JSON.parse(init.body as string)).toStrictEqual({ endpoint: "https://push.example/abc" });
+	});
+
+	it("retries a parked task by id", async () => {
+		stubFetch(() => Response.json({ ok: true }));
+
+		await retryTask(17);
+
+		const [url, init] = lastCall();
+		expect(url).toBe("/api/admin/tasks/17/retry");
+		expect(init.method).toBe("POST");
 	});
 });
