@@ -1,0 +1,140 @@
+{
+	"description": "The agent's model is not served by this process: the submission ends unanswered with reason no_model. The second connection is a reload and holds only its snapshot.",
+	"connections": [
+		[
+			[
+				{
+					"type": "snapshot",
+					"tools": [],
+					"nestedTools": [],
+					"compactions": [],
+					"inbox": [],
+					"usage": {
+						"models": {},
+						"tools": {}
+					},
+					"agent": {
+						"model": {
+							"provider": "openai",
+							"modelId": "not-registered-in-faux-mode"
+						},
+						"thinkingLevel": "low",
+						"extensions": ["profile"]
+					},
+					"entries": [],
+					"hasEarlier": false,
+					"unanswered": []
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "user",
+						"content": "Split 900 between three people",
+						"timestamp": 1792872026472
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "user",
+								"content": "Split 900 between three people",
+								"timestamp": 1792872026472
+							}
+						],
+						"kind": "pi.user",
+						"id": 30,
+						"conversationId": 23
+					}
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 23,
+						"requestId": "fixture-nomodel-1",
+						"type": "input",
+						"status": "placed",
+						"entry": 30,
+						"id": 31
+					}
+				},
+				{
+					"type": "run_start",
+					"inputs": [31]
+				},
+				{
+					"type": "turn_start"
+				}
+			],
+			[
+				{
+					"type": "turn_end"
+				},
+				{
+					"type": "run_end",
+					"inputs": [31]
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 23,
+						"requestId": "fixture-nomodel-1",
+						"type": "input",
+						"status": "unanswered",
+						"entry": 30,
+						"id": 31,
+						"reason": "no_model"
+					}
+				}
+			]
+		],
+		[
+			[
+				{
+					"type": "snapshot",
+					"tools": [],
+					"nestedTools": [],
+					"compactions": [],
+					"inbox": [],
+					"usage": {
+						"models": {},
+						"tools": {}
+					},
+					"agent": {
+						"model": {
+							"provider": "openai",
+							"modelId": "not-registered-in-faux-mode"
+						},
+						"thinkingLevel": "low",
+						"extensions": ["profile"]
+					},
+					"entries": [
+						{
+							"model": [
+								{
+									"role": "user",
+									"content": "Split 900 between three people",
+									"timestamp": 1792872026472
+								}
+							],
+							"kind": "pi.user",
+							"id": 30,
+							"conversationId": 23
+						}
+					],
+					"hasEarlier": false,
+					"unanswered": [
+						{
+							"submissionId": 31,
+							"entry": 30,
+							"reason": "no_model"
+						}
+					]
+				}
+			]
+		]
+	]
+}

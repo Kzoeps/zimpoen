@@ -1,0 +1,331 @@
+{
+	"description": "Stop pressed mid-answer: the partial is kept as an aborted message, the submission ends unanswered/aborted.",
+	"connections": [
+		[
+			[
+				{
+					"type": "snapshot",
+					"tools": [],
+					"nestedTools": [],
+					"compactions": [],
+					"inbox": [],
+					"usage": {
+						"models": {},
+						"tools": {}
+					},
+					"agent": {
+						"model": {
+							"provider": "faux",
+							"modelId": "faux-1"
+						},
+						"thinkingLevel": "low",
+						"extensions": ["profile"]
+					},
+					"entries": [],
+					"hasEarlier": false,
+					"unanswered": []
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "user",
+						"content": "Write something long",
+						"timestamp": 1792872023231
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "user",
+								"content": "Write something long",
+								"timestamp": 1792872023231
+							}
+						],
+						"kind": "pi.user",
+						"id": 30,
+						"conversationId": 9
+					}
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 9,
+						"requestId": "fixture-stop-1",
+						"type": "input",
+						"status": "placed",
+						"entry": 30,
+						"id": 31
+					}
+				},
+				{
+					"type": "run_start",
+					"inputs": [31]
+				},
+				{
+					"type": "turn_start"
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "thinking",
+								"thinking": "Reading your"
+							}
+						],
+						"api": "faux:1792872023208:nvt15qr00x",
+						"provider": "faux",
+						"model": "faux-1",
+						"usage": {
+							"input": 213,
+							"output": 100,
+							"cacheRead": 0,
+							"cacheWrite": 213,
+							"totalTokens": 526,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "pending",
+						"timestamp": 1792872023236
+					}
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 213,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 213,
+						"totalTokens": 526,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "thinking_delta",
+							"contentIndex": 0,
+							"delta": " message and writing"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 213,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 213,
+						"totalTokens": 526,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_start",
+							"contentIndex": 1,
+							"block": {
+								"type": "text",
+								"text": ""
+							}
+						},
+						{
+							"type": "thinking_delta",
+							"contentIndex": 0,
+							"delta": " an echo."
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 213,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 213,
+						"totalTokens": 526,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "Faux model (dev "
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 213,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 213,
+						"totalTokens": 526,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "mode): this reply is"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 213,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 213,
+						"totalTokens": 526,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": " scripted, nothi"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "assistant",
+								"content": [
+									{
+										"type": "thinking",
+										"thinking": "Reading your message and writing an echo."
+									},
+									{
+										"type": "text",
+										"text": "Faux model (dev mode): this reply is scripted, nothi"
+									}
+								],
+								"api": "faux:1792872023208:nvt15qr00x",
+								"provider": "faux",
+								"model": "faux-1",
+								"usage": {
+									"input": 213,
+									"output": 100,
+									"cacheRead": 0,
+									"cacheWrite": 213,
+									"totalTokens": 526,
+									"cost": {
+										"input": 0,
+										"output": 0,
+										"cacheRead": 0,
+										"cacheWrite": 0,
+										"total": 0
+									}
+								},
+								"stopReason": "aborted",
+								"timestamp": 1792872023236
+							}
+						],
+						"kind": "pi.assistant",
+						"id": 34,
+						"conversationId": 9,
+						"byTaskId": 32
+					}
+				},
+				{
+					"type": "turn_end"
+				},
+				{
+					"type": "run_end",
+					"inputs": [31]
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 9,
+						"requestId": "fixture-stop-1",
+						"type": "input",
+						"status": "unanswered",
+						"entry": 30,
+						"id": 31,
+						"reason": "aborted"
+					}
+				},
+				{
+					"type": "usage_changed",
+					"usage": {
+						"models": {
+							"faux/faux-1": {
+								"input": 213,
+								"output": 100,
+								"cacheRead": 0,
+								"cacheWrite": 213,
+								"totalTokens": 526,
+								"cost": {
+									"input": 0,
+									"output": 0,
+									"cacheRead": 0,
+									"cacheWrite": 0,
+									"total": 0
+								}
+							}
+						},
+						"tools": {}
+					}
+				}
+			]
+		]
+	]
+}

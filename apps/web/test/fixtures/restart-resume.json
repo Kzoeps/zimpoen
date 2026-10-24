@@ -1,0 +1,759 @@
+{
+	"description": "Server restarted mid-answer: first connection is cut, the second starts with a snapshot and the resumed run completes.",
+	"connections": [
+		[
+			[
+				{
+					"type": "snapshot",
+					"tools": [],
+					"nestedTools": [],
+					"compactions": [],
+					"inbox": [],
+					"usage": {
+						"models": {},
+						"tools": {}
+					},
+					"agent": {
+						"model": {
+							"provider": "faux",
+							"modelId": "faux-1"
+						},
+						"thinkingLevel": "low",
+						"extensions": ["profile"]
+					},
+					"entries": [],
+					"hasEarlier": false,
+					"unanswered": []
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "user",
+						"content": "Tell me about my week",
+						"timestamp": 1792872024024
+					}
+				},
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "user",
+								"content": "Tell me about my week",
+								"timestamp": 1792872024024
+							}
+						],
+						"kind": "pi.user",
+						"id": 30,
+						"conversationId": 16
+					}
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 16,
+						"requestId": "fixture-restart-1",
+						"type": "input",
+						"status": "placed",
+						"entry": 30,
+						"id": 31
+					}
+				},
+				{
+					"type": "run_start",
+					"inputs": [31]
+				},
+				{
+					"type": "turn_start"
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "thinking",
+								"thinking": "Reading "
+							}
+						],
+						"api": "faux:1792872023984:l4zm58xe6q",
+						"provider": "faux",
+						"model": "faux-1",
+						"usage": {
+							"input": 180,
+							"output": 100,
+							"cacheRead": 0,
+							"cacheWrite": 180,
+							"totalTokens": 460,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "pending",
+						"timestamp": 1792872024032
+					}
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "thinking_delta",
+							"contentIndex": 0,
+							"delta": "your message and"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "thinking_delta",
+							"contentIndex": 0,
+							"delta": " writing an "
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_start",
+							"contentIndex": 1,
+							"block": {
+								"type": "text",
+								"text": "Faux mod"
+							}
+						},
+						{
+							"type": "thinking_delta",
+							"contentIndex": 0,
+							"delta": "echo."
+						}
+					]
+				}
+			]
+		],
+		[
+			[
+				{
+					"type": "snapshot",
+					"run": {
+						"inputs": [31]
+					},
+					"generation": {
+						"attempt": 1
+					},
+					"tools": [],
+					"nestedTools": [],
+					"compactions": [],
+					"inbox": [],
+					"usage": {
+						"models": {
+							"faux/faux-1": {
+								"input": 180,
+								"output": 100,
+								"cacheRead": 0,
+								"cacheWrite": 180,
+								"totalTokens": 460,
+								"cost": {
+									"input": 0,
+									"output": 0,
+									"cacheRead": 0,
+									"cacheWrite": 0,
+									"total": 0
+								}
+							}
+						},
+						"tools": {}
+					},
+					"agent": {
+						"model": {
+							"provider": "faux",
+							"modelId": "faux-1"
+						},
+						"thinkingLevel": "low",
+						"extensions": ["profile"]
+					},
+					"entries": [
+						{
+							"model": [
+								{
+									"role": "user",
+									"content": "Tell me about my week",
+									"timestamp": 1792872024024
+								}
+							],
+							"kind": "pi.user",
+							"id": 30,
+							"conversationId": 16
+						},
+						{
+							"model": [
+								{
+									"role": "assistant",
+									"content": [
+										{
+											"type": "thinking",
+											"thinking": "Reading your message and writing an echo."
+										},
+										{
+											"type": "text",
+											"text": "Faux mod"
+										}
+									],
+									"api": "faux:1792872023984:l4zm58xe6q",
+									"provider": "faux",
+									"model": "faux-1",
+									"usage": {
+										"input": 180,
+										"output": 100,
+										"cacheRead": 0,
+										"cacheWrite": 180,
+										"totalTokens": 460,
+										"cost": {
+											"input": 0,
+											"output": 0,
+											"cacheRead": 0,
+											"cacheWrite": 0,
+											"total": 0
+										}
+									},
+									"stopReason": "aborted",
+									"timestamp": 1792872024032
+								}
+							],
+							"kind": "pi.assistant",
+							"id": 34,
+							"conversationId": 16,
+							"byTaskId": 32
+						}
+					],
+					"hasEarlier": false,
+					"unanswered": []
+				}
+			],
+			[
+				{
+					"type": "message_start",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "thinking",
+								"thinking": "Reading your message"
+							}
+						],
+						"api": "faux:1792872024748:9zh58qd80x",
+						"provider": "faux",
+						"model": "faux-1",
+						"usage": {
+							"input": 180,
+							"output": 100,
+							"cacheRead": 0,
+							"cacheWrite": 180,
+							"totalTokens": 460,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "pending",
+						"timestamp": 1792872024758
+					}
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_start",
+							"contentIndex": 1,
+							"block": {
+								"type": "text",
+								"text": "Faux"
+							}
+						},
+						{
+							"type": "thinking_delta",
+							"contentIndex": 0,
+							"delta": " and writing an echo."
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": " model (dev mode): this reply is"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": " scripted, nothing here come"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "s from a real model.\n\nYou said: "
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "“Tell me about my week”\n\nTha"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "t is message 1 of this conve"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "rsation as the model sees it.\n\nS"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "treaming check: this paragra"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "ph arrives a few characters "
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "at a time, the way a rea"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "l model's answer would, so you c"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "an watch the text gr"
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_update",
+					"usage": {
+						"input": 180,
+						"output": 100,
+						"cacheRead": 0,
+						"cacheWrite": 180,
+						"totalTokens": 460,
+						"cost": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"total": 0
+						}
+					},
+					"changes": [
+						{
+							"type": "text_delta",
+							"contentIndex": 1,
+							"delta": "ow while the reply is still "
+						}
+					]
+				}
+			],
+			[
+				{
+					"type": "message_end",
+					"entry": {
+						"model": [
+							{
+								"role": "assistant",
+								"content": [
+									{
+										"type": "thinking",
+										"thinking": "Reading your message and writing an echo."
+									},
+									{
+										"type": "text",
+										"text": "Faux model (dev mode): this reply is scripted, nothing here comes from a real model.\n\nYou said: “Tell me about my week”\n\nThat is message 1 of this conversation as the model sees it.\n\nStreaming check: this paragraph arrives a few characters at a time, the way a real model's answer would, so you can watch the text grow while the reply is still being written."
+									}
+								],
+								"api": "faux:1792872024748:9zh58qd80x",
+								"provider": "faux",
+								"model": "faux-1",
+								"usage": {
+									"input": 180,
+									"output": 100,
+									"cacheRead": 0,
+									"cacheWrite": 180,
+									"totalTokens": 460,
+									"cost": {
+										"input": 0,
+										"output": 0,
+										"cacheRead": 0,
+										"cacheWrite": 0,
+										"total": 0
+									}
+								},
+								"stopReason": "stop",
+								"timestamp": 1792872024758,
+								"durationMs": 1670
+							}
+						],
+						"kind": "pi.assistant",
+						"id": 35,
+						"conversationId": 16,
+						"byTaskId": 32
+					}
+				},
+				{
+					"type": "turn_end"
+				},
+				{
+					"type": "run_end",
+					"inputs": [31]
+				},
+				{
+					"type": "submission",
+					"record": {
+						"conversationId": 16,
+						"requestId": "fixture-restart-1",
+						"type": "input",
+						"status": "done",
+						"entry": 30,
+						"id": 31,
+						"answer": 35
+					}
+				},
+				{
+					"type": "usage_changed",
+					"usage": {
+						"models": {
+							"faux/faux-1": {
+								"input": 360,
+								"output": 200,
+								"cacheRead": 0,
+								"cacheWrite": 360,
+								"totalTokens": 920,
+								"cost": {
+									"input": 0,
+									"output": 0,
+									"cacheRead": 0,
+									"cacheWrite": 0,
+									"total": 0
+								}
+							}
+						},
+						"tools": {}
+					}
+				}
+			]
+		]
+	]
+}
