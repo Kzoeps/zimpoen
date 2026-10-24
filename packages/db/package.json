@@ -1,0 +1,13 @@
+{
+	"name": "@assistant/db",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "app.sqlite access: node:sqlite wrapper and ordered, idempotent migration runner",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	}
+}
