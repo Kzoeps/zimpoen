@@ -1,0 +1,24 @@
+{
+	"name": "assistant",
+	"private": true,
+	"type": "module",
+	"description": "Personal assistant: themed agents on Pi Durable, reached over Tailscale from a web chat UI",
+	"packageManager": "pnpm@10.15.1",
+	"engines": {
+		"node": ">=24.0.0"
+	},
+	"scripts": {
+		"dev": "pnpm -r --parallel --stream dev",
+		"build": "pnpm -r build",
+		"start": "pnpm --filter @assistant/server start",
+		"typecheck": "pnpm -r typecheck",
+		"test": "vitest run",
+		"lint": "biome check ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.6.3",
+		"@types/node": "24.19.2",
+		"typescript": "7.0.2",
+		"vitest": "5.0.5"
+	}
+}
