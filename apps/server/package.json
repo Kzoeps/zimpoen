@@ -1,0 +1,26 @@
+{
+	"name": "@assistant/server",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Long-running Node process: Durable Harness, app.sqlite, HTTP API and SSE",
+	"scripts": {
+		"dev": "cd ../.. && env ASSISTANT_AUTH=${ASSISTANT_AUTH:-off} node --watch apps/server/src/main.ts",
+		"build": "node scripts/build.mjs",
+		"start": "cd ../.. && env NODE_ENV=production node apps/server/dist/main.js",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@assistant/db": "workspace:*",
+		"@assistant/extensions": "workspace:*",
+		"@assistant/shared": "workspace:*",
+		"@earendil-works/chord": "1.4.0",
+		"@earendil-works/pi-ai": "1.4.0",
+		"@earendil-works/pi-durable": "1.4.0",
+		"@hono/node-server": "2.1.5",
+		"hono": "4.13.13"
+	},
+	"devDependencies": {
+		"esbuild": "0.28.2"
+	}
+}
