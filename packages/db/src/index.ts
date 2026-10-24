@@ -8,10 +8,14 @@ export {
 export {
 	type AgentRow,
 	coreMigrations,
+	deletePushSubscription,
 	getAgentRow,
 	getAgentRowByConversation,
 	insertAgentRow,
 	listAgentRows,
+	listPushSubscriptions,
+	type PushSubscriptionRow,
+	upsertPushSubscription,
 } from "./core.ts";
 export {
 	type MigrateOptions,

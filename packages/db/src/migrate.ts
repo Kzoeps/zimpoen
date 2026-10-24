@@ -6,8 +6,12 @@ import { type AppDb, isPromiseLike } from "./app-db.ts";
  * `up` runs inside a transaction together with the bookkeeping insert, so a migration is all-or-nothing. It must be
  * synchronous and must not use statements SQLite forbids in a transaction (`VACUUM`, changing `PRAGMA foreign_keys`).
  *
- * Ids are global across every domain. Prefix them with the domain so they stay unique and sort sensibly, for example
- * `core/001_agents` or `tasks/001_items`. Never edit or reorder a migration that has shipped: add a new one.
+ * Ids are `<module>/<sequence>[_<name>]`, for example `core/001_agents` or `tasks/002_call_ledger`. The module is the
+ * domain that owns the tables (`core`, `tasks`, `approvals`, ...); the sequence is three or more digits. Ordering is a
+ * rule **within one module only**: a module's migrations must be declared in ascending sequence, and what a database
+ * has recorded for a module must be a prefix of what the module declares. Different modules are independent, so adding a
+ * module anywhere in the list never disturbs another. Never edit or reorder a migration that has shipped: add a new one
+ * with the next sequence number.
  */
 export type Migration = {
 	id: string;
@@ -44,11 +48,12 @@ export type MigrateOptions = {
 };
 
 /**
- * Bring `db` up to date with `migrations`, in array order.
+ * Bring `db` up to date with `migrations`, in array order (modules do not reorder each other; see {@link Migration}).
  *
  * Idempotent: ids already recorded are skipped, so calling it on every start is the normal way to use it. It refuses to
  * run when the database records a migration this build does not know, because that means older code is looking at a
- * newer schema.
+ * newer schema, and when a module's recorded migrations are not a prefix of the ones it declares, because that means a
+ * migration was inserted before one that had already shipped.
  */
 export function migrate(db: AppDb, migrations: readonly Migration[], options: MigrateOptions = {}): MigrationReport {
 	const now = options.now ?? Date.now;
@@ -67,6 +72,7 @@ export function migrate(db: AppDb, migrations: readonly Migration[], options: Mi
 			{ migrationId: unknown[0] },
 		);
 	}
+	assertRecordedPrefix(migrations, new Set(recorded));
 
 	const report: MigrationReport = { applied: [], skipped: [] };
 	for (const migration of migrations) {
@@ -105,21 +111,70 @@ function applyOne(db: AppDb, migration: Migration, now: () => number): boolean {
 	}
 }
 
+const ID_FORMAT = /^([a-z][a-z0-9-]*)\/(\d{3,})(?:_[a-z0-9_]+)?$/;
+
+/** The module and sequence number an id names. Only call with ids that passed {@link assertValid}. */
+function parts(id: string): { module: string; sequence: number } {
+	const match = ID_FORMAT.exec(id);
+	return { module: match?.[1] ?? "", sequence: Number(match?.[2] ?? 0) };
+}
+
 function assertValid(migrations: readonly Migration[]): void {
 	const seen = new Set<string>();
+	const lastSequence = new Map<string, { sequence: number; id: string }>();
 	for (const migration of migrations) {
 		if (typeof migration.id !== "string" || migration.id.trim() === "") {
 			throw new MigrationError(
 				"A migration has an empty id. Give every migration a unique id such as 'core/001_agents'.",
 			);
 		}
+		if (!ID_FORMAT.test(migration.id)) {
+			throw new MigrationError(
+				`Migration id '${migration.id}' is not '<module>/<sequence>[_<name>]'. Use a lowercase module name, a slash and ` +
+					"a sequence of three or more digits, for example 'tasks/001_items'.",
+				{ migrationId: migration.id },
+			);
+		}
 		if (seen.has(migration.id)) {
 			throw new MigrationError(
-				`Migration id '${migration.id}' is declared more than once. Ids must be unique across all domains; ` +
-					"prefix them with the domain, for example 'tasks/001_items'.",
+				`Migration id '${migration.id}' is declared more than once. Ids must be unique across all modules; ` +
+					"prefix them with the module, for example 'tasks/001_items'.",
 				{ migrationId: migration.id },
 			);
 		}
 		seen.add(migration.id);
+
+		const { module, sequence } = parts(migration.id);
+		const previous = lastSequence.get(module);
+		if (previous !== undefined && sequence <= previous.sequence) {
+			throw new MigrationError(
+				`Module '${module}' declares '${migration.id}' after '${previous.id}'. Within a module, migrations must be ` +
+					"declared in ascending sequence, each with a number higher than the one before it.",
+				{ migrationId: migration.id },
+			);
+		}
+		lastSequence.set(module, { sequence, id: migration.id });
+	}
+}
+
+/**
+ * What a database recorded for a module must be the first `k` migrations the module declares. A recorded migration that
+ * follows an unrecorded one means a migration was inserted before one that had already been applied here, which would
+ * leave this database with a schema no fresh database can reach.
+ */
+function assertRecordedPrefix(migrations: readonly Migration[], recorded: ReadonlySet<string>): void {
+	const gaps = new Map<string, string>();
+	for (const migration of migrations) {
+		const { module } = parts(migration.id);
+		if (!recorded.has(migration.id)) {
+			if (!gaps.has(module)) gaps.set(module, migration.id);
+		} else if (gaps.has(module)) {
+			throw new MigrationError(
+				`Module '${module}' declares '${gaps.get(module)}' before '${migration.id}', but this database applied ` +
+					`'${migration.id}' without it. Migrations that have shipped are never reordered or preceded by new ones: ` +
+					`give '${gaps.get(module)}' a sequence number after the last one in '${module}'.`,
+				{ migrationId: gaps.get(module) },
+			);
+		}
 	}
 }

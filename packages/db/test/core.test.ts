@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	type AppDb,
 	coreMigrations,
+	deletePushSubscription,
 	getAgentRow,
 	getAgentRowByConversation,
 	insertAgentRow,
 	listAgentRows,
+	listPushSubscriptions,
 	migrate,
 	openAppDb,
+	upsertPushSubscription,
 } from "../src/index.ts";
 
 const dbs: AppDb[] = [];
@@ -57,5 +60,27 @@ describe("agents table", () => {
 		insertAgentRow(db, { id: "pa", conversationId: 1, createdAt: 100 });
 
 		expect(listAgentRows(db).map((row) => row.id)).toStrictEqual(["pa", "inbox"]);
+	});
+});
+
+describe("push subscriptions", () => {
+	const row = { endpoint: "https://push.example/abc", p256dh: "key-1", auth: "auth-1", createdAt: 10 };
+
+	it("stores one row per endpoint and refreshes its keys when the browser registers again", () => {
+		const db = migrated();
+
+		upsertPushSubscription(db, { ...row, userAgent: "Chrome" });
+		upsertPushSubscription(db, { ...row, p256dh: "key-2", auth: "auth-2", createdAt: 99 });
+
+		expect(listPushSubscriptions(db)).toStrictEqual([{ ...row, p256dh: "key-2", auth: "auth-2" }]);
+	});
+
+	it("removes a subscription by endpoint and says whether there was one", () => {
+		const db = migrated();
+		upsertPushSubscription(db, row);
+
+		expect(deletePushSubscription(db, "https://push.example/other")).toBe(false);
+		expect(deletePushSubscription(db, row.endpoint)).toBe(true);
+		expect(listPushSubscriptions(db)).toStrictEqual([]);
 	});
 });
