@@ -1,0 +1,16 @@
+{
+	"name": "@assistant/extensions",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Durable extensions installed by the server: profile now; tasks, memory, files, ... later",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@earendil-works/pi-durable": "1.4.0"
+	}
+}

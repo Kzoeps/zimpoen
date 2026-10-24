@@ -1,0 +1,16 @@
+{
+	"name": "@assistant/shared",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "API contracts shared by server and web: route DTOs, error shape, SSE stream types",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@earendil-works/pi-durable": "1.4.0"
+	}
+}
