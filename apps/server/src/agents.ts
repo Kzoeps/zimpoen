@@ -1,5 +1,5 @@
 import { type AppDb, getAgentRow, getAgentRowByConversation, insertAgentRow } from "@assistant/db";
-import type { AgentId, AgentSummary } from "@assistant/shared";
+import type { AgentId, AgentSummary, ParkedTask } from "@assistant/shared";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
@@ -35,6 +35,17 @@ const OPENAI_MODEL: ModelRef = { provider: "openai", modelId: "gpt-6.1-sol" };
 /** The dev model that stands in for {@link AgentDef.defaultModel} when `ASSISTANT_MODEL_MODE=faux`. */
 export const FAUX_MODEL: ModelRef = { provider: FAUX_PROVIDER_ID, modelId: FAUX_MODEL_ID };
 
+/** What the PA is told about its task tools. Code-owned: re-applied to the existing conversation at every start. */
+const PA_TASK_RULES = [
+	"Tasks and reminders:",
+	'- Save a task with add_task. When the owner wants to be reminded, give remind_in_minutes ("in 10 minutes") or remind_at (a clock time). A reminder posts a card in this chat and a notification to their phone, and costs no model tokens.',
+	'- You do not know the current time. Before turning "tomorrow", "Friday" or "in two hours" into an ISO time, call current_time. Times you write are in the owner\'s time zone.',
+	"- Use list_tasks before changing a task whose id you do not know. Never invent ids.",
+	'- When a reminder card appears in the chat and the owner answers it ("snooze 10 min", "done"), use snooze_reminder or complete_task with the task id from the card.',
+	"- Deleting is permanent: call propose_delete_task, tell the owner to tap Approve or reply YES, and never say a task is deleted until they have approved. Never call delete_task yourself. To simply finish a task use complete_task.",
+	"- Report only what the tools returned. If a tool fails, say what went wrong.",
+].join("\n");
+
 const NO_TOOLS_YET =
 	"You have no tools yet, so you cannot save anything, look anything up or reach other agents. " +
 	"When a request needs a tool you do not have, say so plainly and suggest what the owner can do instead. " +
@@ -50,9 +61,9 @@ export const AGENTS: readonly AgentDef[] = [
 		extensions: [],
 		instructions: [
 			"You are the owner's personal assistant and the front door to a small team of specialist agents: inbox, health and accountant.",
-			"You help with tasks, reminders, follow-ups, meeting agendas, birthdays and planning the day, and will later write the morning briefing and evening wrap-up.",
-			"Be concise and direct. Ask one clarifying question when something essential is missing; otherwise just answer.",
-			NO_TOOLS_YET,
+			"You help with tasks and reminders now, and will later handle follow-ups, meeting agendas, birthdays and the morning briefing and evening wrap-up. You cannot do those later things yet: say so plainly instead of pretending.",
+			"Be concise and direct. Ask one clarifying question when something essential is missing; otherwise just do it.",
+			PA_TASK_RULES,
 		].join("\n"),
 	},
 	{
@@ -98,6 +109,15 @@ export const AGENTS: readonly AgentDef[] = [
 		].join("\n"),
 	},
 ];
+
+/**
+ * The agents as the running server has them: the PA gets the domain extensions (its tools, prompt sections and
+ * approval hook), the others only what they had. Capability by tool presence (PLAN §5.1): an agent that is not given
+ * an extension cannot use what it brings.
+ */
+export function buildAgents(domain: { pa: readonly Extension[] }, base: readonly AgentDef[] = AGENTS): AgentDef[] {
+	return base.map((def) => (def.id === "pa" ? { ...def, extensions: [...def.extensions, ...domain.pa] } : def));
+}
 
 export function modelFor(def: AgentDef, mode: ModelMode): ModelRef {
 	return mode === "faux" ? FAUX_MODEL : def.defaultModel;
@@ -237,7 +257,9 @@ async function reconcileAgent(
 		throw new Error(
 			`Agent '${def.id}' is recorded in app.sqlite with conversation ${conversationId}, but durable.sqlite has no such ` +
 				"conversation. The two databases are out of sync, probably because only one was restored or deleted. " +
-				"Restore both from the same backup, or delete the agent rows (DELETE FROM agents) to start those chats fresh.",
+				"Restore both from the same backup, or delete the agent rows (DELETE FROM agents) to start those chats fresh. " +
+				"Tasks and approval requests of the old conversations stay in app.sqlite; the next start says how to clear what " +
+				"cannot be repaired for them.",
 		);
 	}
 	const extensions = [...options.shared, ...def.extensions];
@@ -278,9 +300,19 @@ export async function listAgentSummaries(
  * Tasks Durable parked after `restartLimit` crashes in a row. They do nothing until `retryTask()`, so the agent whose
  * run they were stops answering; nothing else in the system says so.
  */
-export async function countParkedTasks(harness: Harness, context: Context = BACKGROUND_CONTEXT): Promise<number> {
+export async function listParkedTasks(harness: Harness, context: Context = BACKGROUND_CONTEXT): Promise<ParkedTask[]> {
 	const { tasks } = await harness.inspect(context);
-	return tasks.filter((task) => task.state.kind === "blocked" && task.state.reason === "restart_limit").length;
+	return tasks
+		.filter((task) => task.state.kind === "blocked" && task.state.reason === "restart_limit")
+		.map(({ record }) => ({
+			id: Number(record.id),
+			kind: record.kind,
+			conversationId: Number(record.conversationId),
+		}));
+}
+
+export async function countParkedTasks(harness: Harness, context: Context = BACKGROUND_CONTEXT): Promise<number> {
+	return (await listParkedTasks(harness, context)).length;
 }
 
 /** The agent a conversation belongs to, or undefined for a conversation that is not an agent's thread. */

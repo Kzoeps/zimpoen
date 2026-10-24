@@ -1,14 +1,23 @@
-import { type AppDb, getAgentRow } from "@assistant/db";
+import {
+	type AppDb,
+	deletePushSubscription,
+	getAgentRow,
+	listPushSubscriptions,
+	upsertPushSubscription,
+} from "@assistant/db";
+import { ApprovalConflict, ApprovalNotFound, type ApprovalService } from "@assistant/extensions";
 import type {
 	AgentSettingsResponse,
 	AgentsResponse,
 	AllAgentSettingsResponse,
 	MessagesPage,
+	PushConfigResponse,
+	RetryTaskResponse,
 	SendMessageResponse,
 } from "@assistant/shared";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
-import type { Conversation, EntryId, Harness } from "@earendil-works/pi-durable";
+import type { Conversation, EntryId, Harness, TaskId } from "@earendil-works/pi-durable";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
@@ -17,8 +26,8 @@ import {
 	type AgentDef,
 	agentForConversation,
 	asConversationId,
-	countParkedTasks,
 	listAgentSummaries,
+	listParkedTasks,
 } from "../agents.ts";
 import type { AuthConfig } from "../config.ts";
 import { listModelOptions, readAgentSettings, updateAgentSettings } from "../settings.ts";
@@ -29,8 +38,11 @@ import { authMiddleware } from "./auth.ts";
 import { ApiError, errorBody, errorHandler, notFound, notFoundHandler } from "./errors.ts";
 import { type HostPolicy, requestGuard } from "./guard.ts";
 import {
+	parseDecision,
 	parseHistoryQuery,
 	parseId,
+	parsePushSubscribe,
+	parsePushUnsubscribe,
 	parseSendMessage,
 	parseUpdateSettings,
 	readJsonObject,
@@ -46,6 +58,12 @@ export const MAX_REQUEST_BYTES = 256 * 1024;
 /** Most event streams open at once. Each holds a Durable watch; the owner has a few tabs, not dozens. */
 export const DEFAULT_MAX_STREAMS = 8;
 
+/** How many parked tasks `GET /api/agents` names. More than a handful means something else is wrong. */
+const MAX_LISTED_PARKED = 20;
+
+/** Devices that may be registered for notifications. One person has a few; a push is sent to each of them. */
+export const MAX_PUSH_SUBSCRIPTIONS = 20;
+
 export type AppDeps = {
 	harness: Harness;
 	db: AppDb;
@@ -53,6 +71,12 @@ export type AppDeps = {
 	models: Models;
 	/** Reads why messages were never answered, for the snapshots of the event stream. */
 	unanswered: UnansweredReader;
+	/** Answers to approval requests: the Approve/Deny buttons, and a reply of YES. */
+	approvals: ApprovalService;
+	/** The VAPID public key browsers subscribe to Web Push with. */
+	push: PushConfigResponse;
+	/** Clock for stored timestamps. Default `Date.now`. */
+	now?: () => number;
 	auth: AuthConfig;
 	/** Which `Host` headers this server answers to, for the port it actually listens on. */
 	hosts: HostPolicy;
@@ -60,7 +84,7 @@ export type AppDeps = {
 	/** SSE heartbeat interval. Default 15 s. */
 	heartbeatMs?: number;
 	maxStreams?: number;
-	logger?: Pick<Console, "error">;
+	logger?: Pick<Console, "error"> & Partial<Pick<Console, "info">>;
 };
 
 /**
@@ -110,11 +134,65 @@ export function createApp(deps: AppDeps): Hono {
 	}
 
 	app.get("/api/agents", async (c) => {
+		const parked = await listParkedTasks(harness, context);
 		const body: AgentsResponse = {
 			agents: await listAgentSummaries(harness, db, agents, context),
-			health: { parkedTasks: await countParkedTasks(harness, context) },
+			health: { parkedTasks: parked.length, parked: parked.slice(0, MAX_LISTED_PARKED) },
 		};
 		return c.json(body);
+	});
+
+	app.post("/api/admin/tasks/:id/retry", async (c) => {
+		const id = parseId(c.req.param("id"), "task id");
+		const parked = await listParkedTasks(harness, context);
+		if (!parked.some((task) => task.id === id)) {
+			throw notFound(`No parked task has id ${id}. GET /api/agents lists the parked tasks (health.parked).`);
+		}
+		// Only after a person asked: the usual cause of parking is something that keeps killing the process.
+		await harness.retryTask(id as TaskId, context);
+		deps.logger?.info?.(`[durable] task ${id} was retried by request.`);
+		const body: RetryTaskResponse = { ok: true };
+		return c.json(body);
+	});
+
+	app.get("/api/push/config", (c) => c.json(deps.push));
+
+	app.post("/api/push/subscribe", async (c) => {
+		const { endpoint, keys } = parsePushSubscribe(await readJsonObject(c));
+		const known = listPushSubscriptions(db);
+		if (known.length >= MAX_PUSH_SUBSCRIPTIONS && !known.some((row) => row.endpoint === endpoint)) {
+			throw new ApiError(
+				409,
+				"conflict",
+				`${MAX_PUSH_SUBSCRIPTIONS} devices are already registered for notifications. Turn notifications off on one you ` +
+					"no longer use (Settings, Notifications, Turn off) and try again.",
+			);
+		}
+		const userAgent = c.req.header("user-agent")?.slice(0, 200);
+		upsertPushSubscription(db, {
+			endpoint,
+			p256dh: keys.p256dh,
+			auth: keys.auth,
+			createdAt: (deps.now ?? Date.now)(),
+			...(userAgent === undefined ? {} : { userAgent }),
+		});
+		return c.json({ ok: true }, 201);
+	});
+
+	app.delete("/api/push/subscribe", async (c) => {
+		const { endpoint } = parsePushUnsubscribe(await readJsonObject(c));
+		return c.json({ removed: deletePushSubscription(db, endpoint) });
+	});
+
+	app.post("/api/approvals/:id", async (c) => {
+		const decision = parseDecision(await readJsonObject(c));
+		try {
+			return c.json(await deps.approvals.decide(c.req.param("id"), decision, "button"));
+		} catch (error) {
+			if (error instanceof ApprovalNotFound) throw notFound(error.message);
+			if (error instanceof ApprovalConflict) throw new ApiError(409, "conflict", error.message);
+			throw error;
+		}
 	});
 
 	/** The agent behind `:id` and its conversation id, 404 for a name that is not an agent. */
@@ -177,8 +255,14 @@ export function createApp(deps: AppDeps): Hono {
 	});
 
 	app.post("/api/conversations/:id/messages", async (c) => {
-		const { conversation } = await conversationOf(c.req.param("id"));
+		const { id, conversation } = await conversationOf(c.req.param("id"));
 		const { content, requestId, whenBusy } = parseSendMessage(await readJsonObject(c));
+		// A bare "YES" answers the newest approval request of this conversation. The server decides that, not the model.
+		const approved = await deps.approvals.tryYes(id, content, requestId);
+		if (approved !== undefined) {
+			const body: SendMessageResponse = { submissionId: approved.submissionId };
+			return c.json(body, 202);
+		}
 		// A repeated requestId returns the original submission, so a retry after a dropped response is safe.
 		const submission = await conversation.submit(
 			{ type: "input", content, requestId, ...(whenBusy === undefined ? {} : { whenBusy }) },

@@ -7,6 +7,13 @@ export type ModelMode = "faux" | "openai";
 
 export type AuthConfig = { mode: "off" } | { mode: "on"; ownerLogin: string };
 
+/**
+ * How reminders reach the phone. `web-push` sends through the browser vendors' push services (the only outbound
+ * call a reminder makes). `fake` sends nothing: it writes what it would have sent to `<data>/dev-push-outbox.jsonl`,
+ * which is what development and the tests use.
+ */
+export type PushMode = "web-push" | "fake";
+
 /** Facts every agent is told about its owner. Rendered into the `profile` prompt section. */
 export type ProfileConfig = {
 	ownerName: string;
@@ -32,6 +39,10 @@ export type Config = {
 		/** Credentials and keys. Never readable by agents. Mode 0700. */
 		secrets: string;
 		credentials: string;
+		/** The Web Push (VAPID) key pair, generated on first start. Mode 0600, inside `secrets`. */
+		vapid: string;
+		/** What the fake push sender would have sent, one JSON object per line. Only written in `fake` push mode. */
+		pushOutbox: string;
 	};
 	/** Absolute directories agents may read: `ASSISTANT_READ_PATHS` (or its defaults) plus `<data>/files`. */
 	readPaths: readonly string[];
@@ -40,6 +51,11 @@ export type Config = {
 	auth: AuthConfig;
 	profile: ProfileConfig;
 	modelMode: ModelMode;
+	push: {
+		mode: PushMode;
+		/** The VAPID `subject` push services may use to contact the operator: a `mailto:` or `https:` URL. */
+		subject: string;
+	};
 	/**
 	 * Bound to loopback only (PLAN rule 10); only the port is configurable. `publicHosts` are the names clients use to
 	 * reach the server through Tailscale Serve (`ASSISTANT_PUBLIC_HOST`); the API refuses every other `Host` header.
@@ -97,6 +113,8 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 		workspace: join(dataDir, "workspace"),
 		secrets: join(dataDir, "secrets"),
 		credentials: join(dataDir, "secrets", "credentials.json"),
+		vapid: join(dataDir, "secrets", "vapid.json"),
+		pushOutbox: join(dataDir, "dev-push-outbox.jsonl"),
 	};
 
 	const configured = parseReadPaths(env.ASSISTANT_READ_PATHS, context.homeDir, problem);
@@ -112,6 +130,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 			currency: parseCurrency(env.ASSISTANT_CURRENCY, problem),
 		},
 		modelMode: parseModelMode(env, problem),
+		push: parsePush(env, problem),
 		http: {
 			host: "127.0.0.1",
 			port: parsePort(env.ASSISTANT_PORT, problem),
@@ -178,6 +197,8 @@ export async function canonicalizeDataPaths(config: Config): Promise<Config> {
 		workspace,
 		secrets,
 		credentials: join(secrets, "credentials.json"),
+		vapid: join(secrets, "vapid.json"),
+		pushOutbox: join(dataDir, "dev-push-outbox.jsonl"),
 	};
 	return { ...config, dataDir, paths, writePath: workspace };
 }
@@ -313,6 +334,42 @@ function parseModelMode(env: Env, problem: ReportProblem): ModelMode {
 	if ((MODEL_MODES as readonly string[]).includes(raw)) return raw as ModelMode;
 	problem("ASSISTANT_MODEL_MODE", `'${raw}' is not valid. Use 'faux' (scripted dev model, no network) or 'openai'.`);
 	return fallback;
+}
+
+const PUSH_MODES: readonly PushMode[] = ["web-push", "fake"];
+const DEFAULT_PUSH_SUBJECT = "mailto:assistant@localhost";
+
+function parsePush(env: Env, problem: ReportProblem): Config["push"] {
+	const fallback: PushMode = env.NODE_ENV === "production" ? "web-push" : "fake";
+	const raw = nonEmpty(env.ASSISTANT_PUSH_MODE);
+	let mode = fallback;
+	if (raw !== undefined) {
+		if ((PUSH_MODES as readonly string[]).includes(raw)) mode = raw as PushMode;
+		else {
+			problem(
+				"ASSISTANT_PUSH_MODE",
+				`'${raw}' is not valid. Use 'web-push' (real notifications) or 'fake' (nothing leaves this machine; for development).`,
+			);
+		}
+	}
+	const given = nonEmpty(env.ASSISTANT_PUSH_SUBJECT);
+	if (given === undefined && mode === "web-push") {
+		// The placeholder is fine while nothing leaves the machine. A real push service reads this claim, and some are
+		// reputed to refuse an address that cannot be real, which would mean reminders that never reach the phone.
+		problem(
+			"ASSISTANT_PUSH_SUBJECT",
+			"needs a value when ASSISTANT_PUSH_MODE is 'web-push' (the default in production). Push services use it to reach " +
+				"the operator and may refuse a placeholder. Set a mailto: or https: URL you control, for example mailto:you@example.com.",
+		);
+	}
+	const subject = given ?? DEFAULT_PUSH_SUBJECT;
+	if (!/^(mailto:[^\s@]+@[^\s@]+|https:\/\/\S+)$/.test(subject)) {
+		problem(
+			"ASSISTANT_PUSH_SUBJECT",
+			`'${subject}' is not a mailto: or https: URL. Push services want a way to reach the operator, for example mailto:you@example.com.`,
+		);
+	}
+	return { mode, subject };
 }
 
 function parsePort(raw: string | undefined, problem: ReportProblem): number {

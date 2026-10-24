@@ -71,7 +71,7 @@ describe("GET /api/agents", () => {
 		expect(status).toBe(200);
 		expect(body.agents.map((agent) => agent.id)).toStrictEqual(["pa", "inbox", "health", "accountant"]);
 		expect(body.agents.every((agent) => typeof agent.conversationId === "number" && agent.busy === false)).toBe(true);
-		expect(body.health).toStrictEqual({ parkedTasks: 0 });
+		expect(body.health).toStrictEqual({ parkedTasks: 0, parked: [] });
 	});
 });
 

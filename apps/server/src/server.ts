@@ -3,15 +3,20 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Harness, ReportInfo } from "@earendil-works/pi-durable";
+import type { Harness, HarnessOptions, ReportInfo } from "@earendil-works/pi-durable";
 import { serve } from "@hono/node-server";
-import { countParkedTasks, type EnsureAgentsResult, ensureAgents } from "./agents.ts";
+import { buildAgents, countParkedTasks, type EnsureAgentsResult, ensureAgents } from "./agents.ts";
 import type { Config } from "./config.ts";
 import type { DevProviderOptions } from "./dev-model.ts";
+import { createDomain, type Domain, type RepairReport, type SweepReport } from "./domain.ts";
 import { acquireFileLock, type FileLock, LockHeldError } from "./file-lock.ts";
 import { createApp } from "./http/app.ts";
 import { errorBody } from "./http/errors.ts";
 import { createHostPolicy } from "./http/guard.ts";
+import { createFakePushSender } from "./push/dev-sender.ts";
+import { createNotifier } from "./push/notifier.ts";
+import { createWebPushSender, type PushSender } from "./push/sender.ts";
+import { loadOrCreateVapidKeys } from "./push/vapid.ts";
 import { openRuntime, type Runtime } from "./runtime.ts";
 
 export type ServerLogger = Pick<Console, "info" | "warn" | "error">;
@@ -24,7 +29,21 @@ export type StartServerOptions = {
 	onStorageFailure?: (error: unknown) => void;
 	/** Passed to Durable: crashes in a row before a task is parked. See `RuntimeOptions.restartLimit`. */
 	restartLimit?: number;
+	/** The clock of the Harness and of everything that stores a deadline. Default `Date.now`; tests pass a fake. */
+	now?: () => number;
+	/** Timers of the Harness. Default `setTimeout`; tests pass fakes. */
+	setTimer?: HarnessOptions["setTimer"];
+	/** Replaces the push sender the configuration chooses, so tests can see what would have been sent. */
+	pushSender?: PushSender;
+	/** How often the running server does its upkeep (see {@link startMaintenance}). The defaults are for real use; tests shorten them. */
+	intervals?: { resumeMs?: number; sweepMs?: number };
 };
+
+/** How often sleeping tasks that came due are woken. A reminder is at most this late after a suspend or a clock step. */
+const RESUME_TICK_MS = 30 * 1000;
+
+/** How often requests past their 24 hours are closed and reminder timers that Durable lost or ended are made again. */
+const SWEEP_MS = 10 * 60 * 1000;
 
 export type RunningServer = {
 	/** The port actually bound (differs from the configured one when that was 0). */
@@ -33,6 +52,7 @@ export type RunningServer = {
 	db: AppDb;
 	runtime: Runtime;
 	agents: EnsureAgentsResult;
+	domain: Domain;
 	/** Stop listening, finish running work's current step, close both databases. Idempotent. */
 	close(): Promise<void>;
 };
@@ -62,23 +82,39 @@ export async function startServer(config: Config, options: StartServerOptions = 
 
 		const db = openAppDb(config.paths.appDb);
 		undo.push(() => db.close());
-		const migrations = migrate(db, coreMigrations);
+
+		const now = options.now ?? Date.now;
+		const vapid = await loadOrCreateVapidKeys(config.paths.vapid, logger);
+		const sender =
+			options.pushSender ??
+			(config.push.mode === "fake"
+				? createFakePushSender(config.paths.pushOutbox, logger)
+				: createWebPushSender(vapid, config.push.subject));
+		const notifier = createNotifier(db, sender, logger);
+		const domain = createDomain({ db, timezone: config.profile.timezone, now, notify: notifier.notify });
+		const migrations = migrate(db, [...coreMigrations, ...domain.migrations]);
 		if (migrations.applied.length > 0) logger.info(`[db] applied migrations: ${migrations.applied.join(", ")}`);
 
 		const runtime = await openRuntime(config, {
 			onReport: (error, info) => reportDurable(logger, error, info),
 			devModel: options.devModel,
 			restartLimit: options.restartLimit,
+			extensions: domain.extensions,
+			now: options.now,
+			setTimer: options.setTimer,
 		});
 		undo.push(() => runtime.close());
 		const { harness, models } = runtime;
+		domain.bind(harness);
 		harness.closed.then((end) => {
 			if (end.reason === "failed") (options.onStorageFailure ?? exitOnStorageFailure(logger))(end.error);
 		});
 
 		await tidyCredentials(logger, config, runtime);
 
+		const agentDefs = buildAgents({ pa: domain.paExtensions });
 		const agents = await ensureAgents(harness, db, {
+			agents: agentDefs,
 			shared: runtime.shared,
 			modelMode: config.modelMode,
 			isModelAvailable: (ref) => models.getModel(ref.provider, ref.modelId) !== undefined,
@@ -86,9 +122,20 @@ export async function startServer(config: Config, options: StartServerOptions = 
 		logAgents(logger, agents);
 		await warnIfNoOpenAiLogin(logger, config, runtime);
 		await warnAboutParkedTasks(logger, harness);
+		const repairLog = createRepairLogger(logger, config.paths.appDb);
+		repairLog.startup(await domain.repair());
 
 		// Everything that can recover interrupted work is in place: let Durable continue it.
 		harness.resume();
+		const stopMaintenance = startMaintenance({
+			harness,
+			domain,
+			logger,
+			repairLog,
+			resumeMs: options.intervals?.resumeMs ?? RESUME_TICK_MS,
+			sweepMs: options.intervals?.sweepMs ?? SWEEP_MS,
+		});
+		undo.push(stopMaintenance);
 
 		const hosts = createHostPolicy(port, config.http.publicHosts);
 		current = createApp({
@@ -96,6 +143,10 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			db,
 			models,
 			unanswered: runtime.unanswered,
+			approvals: domain.approvals,
+			push: { publicKey: vapid.publicKey },
+			now,
+			agents: agentDefs,
 			auth: config.auth,
 			hosts,
 			logger,
@@ -110,7 +161,9 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			db,
 			runtime,
 			agents,
+			domain,
 			close: () => {
+				stopMaintenance();
 				closing ??= shutdown(server, runtime, db, lock, logger);
 				return closing;
 			},
@@ -252,6 +305,132 @@ async function warnAboutParkedTasks(logger: ServerLogger, harness: Harness): Pro
 		`[durable] ${parked} task(s) are parked after repeated crashes and will not run again by themselves. ` +
 			"Chats that depended on them stay silent. Nothing retries them automatically: find out why the process died first.",
 	);
+}
+
+/** An error message as a sentence, so that more text can follow it. */
+const sentence = (message: string): string => (/[.!?]$/.test(message) ? message : `${message}.`);
+
+type RepairLogger = {
+	startup(report: RepairReport): void;
+	sweep(report: SweepReport): void;
+};
+
+/**
+ * Says what repair did, and for what it could not repair, what to run. A request or task that cannot be repaired
+ * (typically a conversation that `DELETE FROM agents` made Durable's side forget) is described once per process, not
+ * every ten minutes: it will still be there, and the server works without it.
+ */
+function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
+	const described = new Set<string>();
+
+	function rescheduled(ids: string[]): void {
+		if (ids.length === 0) return;
+		logger.warn(
+			`[tasks] ${ids.length} reminder(s) had no live timer (Durable's database lost it, for example after a power cut, ` +
+				`or Durable ended it after an error) and were scheduled again: ${ids.join(", ")}`,
+		);
+	}
+
+	function unrepaired(failures: RepairReport["reminders"]["failures"]): void {
+		for (const failure of failures) {
+			if (described.has(`task:${failure.itemId}`)) continue;
+			described.add(`task:${failure.itemId}`);
+			logger.error(
+				`[tasks] could not give task ${failure.itemId} its reminder timer: ${sentence(failure.message)} The server keeps running without ` +
+					"that reminder and tries again every few minutes. If the conversation is gone for good (after DELETE FROM agents, " +
+					`for example), drop the reminder: sqlite3 "${appDb}" "UPDATE tasks_item SET remind_at = NULL WHERE id = '${failure.itemId}'"`,
+			);
+		}
+	}
+
+	function unannounced(failures: RepairReport["approvals"]["failures"]): void {
+		for (const failure of failures) {
+			if (described.has(`approval:${failure.id}`)) continue;
+			described.add(`approval:${failure.id}`);
+			logger.error(
+				`[approvals] could not post the outcome of request ${failure.id} to conversation ${failure.conversationId}: ` +
+					`${sentence(failure.message)} The owner's answer itself is saved. To stop trying, mark the notice as posted: ` +
+					`sqlite3 "${appDb}" "UPDATE pending_actions SET notified_at = 0 WHERE id = '${failure.id}'"`,
+			);
+		}
+	}
+
+	return {
+		startup(report) {
+			rescheduled(report.reminders.rescheduled);
+			unrepaired(report.reminders.failures);
+			const { expired, executed, notified, failures } = report.approvals;
+			if (expired + executed + notified > 0) {
+				logger.info(
+					`[approvals] closed ${expired} expired request(s), carried out ${executed} approved one(s) a crash had interrupted, ` +
+						`posted ${notified} missing outcome notice(s).`,
+				);
+			}
+			unannounced(failures);
+		},
+		sweep(report) {
+			rescheduled(report.reminders.rescheduled);
+			unrepaired(report.reminders.failures);
+		},
+	};
+}
+
+type MaintenanceOptions = {
+	harness: Harness;
+	domain: Domain;
+	logger: ServerLogger;
+	repairLog: RepairLogger;
+	resumeMs: number;
+	sweepMs: number;
+};
+
+/**
+ * The upkeep of a server that stays up for days. Returns the function that stops it.
+ *
+ * - `resume()` every few seconds: Durable arms one timer for the earliest sleeper, on a clock that does not run while the
+ *   machine is suspended and that a step of the wall clock does not move, so a reminder can come due with nothing
+ *   noticing until the next wake-up. `resume()` runs every sleeper whose time has passed; it does nothing otherwise.
+ * - `sweep()` every few minutes: closes approval requests past their 24 hours, and makes the timer again for a reminder
+ *   whose timer Durable lost or ended (a power cut, an error in the task), which would otherwise wait for the next start.
+ *
+ * Both timers are `unref`ed: they never keep the process alive on their own.
+ */
+function startMaintenance(options: MaintenanceOptions): () => void {
+	const { harness, domain, logger, repairLog } = options;
+	let sweeping = false;
+	let stopped = false;
+
+	const tick = setInterval(() => {
+		try {
+			harness.resume();
+		} catch (error) {
+			logger.error("[durable] waking sleeping tasks failed:", error);
+		}
+	}, options.resumeMs);
+
+	const sweep = setInterval(() => {
+		// A sweep that is still running (Durable is slow to answer) is not started a second time.
+		if (sweeping) return;
+		sweeping = true;
+		domain
+			.sweep()
+			.then((report) => repairLog.sweep(report))
+			.catch((error) => {
+				// A sweep that was running when the server shut down finds the Harness closed: not worth a line in the log.
+				if (!stopped) logger.error("[maintenance] the periodic repair of reminders and approvals failed:", error);
+			})
+			.finally(() => {
+				sweeping = false;
+			});
+	}, options.sweepMs);
+
+	tick.unref();
+	sweep.unref();
+	return () => {
+		stopped = true;
+		clearInterval(tick);
+		clearInterval(sweep);
+	};
 }
 
 function logAgents(logger: ServerLogger, result: EnsureAgentsResult): void {

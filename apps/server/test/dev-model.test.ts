@@ -1,6 +1,13 @@
 import { createModels } from "@earendil-works/pi-ai/models";
 import { describe, expect, it } from "vitest";
-import { createDevProvider, FAUX_MODEL_ID, FAUX_PROVIDER_ID, scriptedReply } from "../src/dev-model.ts";
+import {
+	createDevProvider,
+	FAUX_MODEL_ID,
+	FAUX_PROVIDER_ID,
+	parseToolCommand,
+	scriptedReply,
+	scriptedToolReply,
+} from "../src/dev-model.ts";
 
 describe("scriptedReply", () => {
 	it("echoes the user's message and says which message of the conversation it answers", () => {
@@ -49,5 +56,48 @@ describe("createDevProvider", () => {
 
 		expect(plain.content.map((block) => block.type)).toStrictEqual(["text"]);
 		expect(thoughtful.content.map((block) => block.type)).toStrictEqual(["thinking", "text"]);
+	});
+});
+
+describe("/tool commands", () => {
+	it("turns '/tool name {json}' into a name and arguments, and leaves other messages alone", () => {
+		expect(parseToolCommand('/tool add_task {"title":"Pay rent","remind_in_minutes":1}')).toStrictEqual({
+			name: "add_task",
+			args: { title: "Pay rent", remind_in_minutes: 1 },
+		});
+		expect(parseToolCommand("  /tool list_tasks  ")).toStrictEqual({ name: "list_tasks", args: {} });
+		expect(parseToolCommand("remind me to /tool something")).toBeUndefined();
+		expect(parseToolCommand("hello")).toBeUndefined();
+	});
+
+	it("explains arguments that are not a JSON object instead of calling the tool with nonsense", () => {
+		for (const text of ["/tool add_task {oops", "/tool add_task [1,2]", "/tool add_task 5"]) {
+			expect(parseToolCommand(text)).toStrictEqual({ problem: expect.stringContaining("must be a JSON object") });
+		}
+	});
+
+	it("calls the tool when asked, with the same call id if the answer is generated again", async () => {
+		const user = { role: "user" as const, content: '/tool list_tasks {"status":"all"}', timestamp: 1 };
+		const ask = async () => {
+			const provider = createDevProvider({ tokensPerSecond: 100_000 });
+			const models = createModels();
+			models.setProvider(provider.provider);
+			const model = models.getModel(FAUX_PROVIDER_ID, FAUX_MODEL_ID);
+			if (model === undefined) throw new Error("faux model missing");
+			return await models.completeSimple(model, { messages: [user] });
+		};
+
+		const first = await ask();
+		const again = await ask();
+
+		expect(first.stopReason).toBe("toolUse");
+		const call = first.content.find((block) => block.type === "toolCall");
+		expect(call).toMatchObject({ name: "list_tasks", arguments: { status: "all" } });
+		expect(again.content.find((block) => block.type === "toolCall")).toMatchObject({ id: (call as { id: string }).id });
+	});
+
+	it("says what the tool returned once it has, so the run ends instead of calling it again", () => {
+		expect(scriptedToolReply("add_task", "Saved t_1", false)).toContain("add_task returned:\n\nSaved t_1");
+		expect(scriptedToolReply("add_task", "Boom", true)).toContain("the tool add_task failed");
 	});
 });

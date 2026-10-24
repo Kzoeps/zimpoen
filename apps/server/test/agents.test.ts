@@ -2,7 +2,7 @@ import { type AppDb, coreMigrations, getAgentRow, listAgentRows, migrate, openAp
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { AgentDoc, type ConversationId, defineExtension } from "@earendil-works/pi-durable";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AGENTS, type AgentDef, ensureAgents, listAgentSummaries } from "../src/agents.ts";
+import { AGENTS, type AgentDef, buildAgents, ensureAgents, listAgentSummaries } from "../src/agents.ts";
 import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from "../src/dev-model.ts";
 import { openRuntime, type Runtime } from "../src/runtime.ts";
 import { createFixture, type Fixture, removeAllFixtures } from "./support.ts";
@@ -181,5 +181,27 @@ describe("listAgentSummaries", () => {
 
 	it("explains what to do when agents were never created", async () => {
 		await expect(listAgentSummaries(runtime.harness, db)).rejects.toThrow(/Call ensureAgents\(\)/);
+	});
+});
+
+describe("buildAgents", () => {
+	const tools = defineExtension({ name: "tasks" });
+	const guard = defineExtension({ name: "approvals" });
+
+	it("gives the PA the domain extensions and every other agent exactly what it had (capability by tool presence)", () => {
+		const built = buildAgents({ pa: [tools, guard] });
+
+		expect(built.find((def) => def.id === "pa")?.extensions.map((extension) => extension.name)).toStrictEqual([
+			"tasks",
+			"approvals",
+		]);
+		for (const def of built.filter((candidate) => candidate.id !== "pa")) expect(def.extensions).toStrictEqual([]);
+		expect(built.map((def) => def.id)).toStrictEqual(AGENTS.map((def) => def.id));
+	});
+
+	it("does not change the base definitions it was given", () => {
+		buildAgents({ pa: [tools] });
+
+		expect(AGENTS.find((def) => def.id === "pa")?.extensions).toStrictEqual([]);
 	});
 });

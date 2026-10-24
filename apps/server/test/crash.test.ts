@@ -144,4 +144,46 @@ describe("a server that is killed without any chance to clean up (SIGKILL)", () 
 		servers.push(await startServer(fixture.config, { logger: again, restartLimit: 1 }));
 		expect(again.lines.some((line) => line.startsWith("error") && line.includes("1 task(s) are parked"))).toBe(true);
 	});
+
+	it("runs a parked task again when the owner asks (POST /api/admin/tasks/:id/retry), and refuses a task that is not parked", async () => {
+		const fixture = await createFixture();
+		const { child, port } = await spawnServer(fixture);
+		const { submissionId } = await askAndWaitForPartial(port, "park me, then retry me", "crash-3");
+		await killHard(child);
+		const server = await startServer(fixture.config, {
+			logger: recordingLogger(),
+			restartLimit: 1,
+			devModel: { tokensPerSecond: 400 },
+		});
+		servers.push(server);
+		const base = `http://127.0.0.1:${server.port}`;
+		const { health } = (await (await fetch(`${base}/api/agents`)).json()) as AgentsResponse;
+		expect(health.parked).toHaveLength(1);
+		expect(health.parked[0]).toMatchObject({ kind: "pi.generation" });
+
+		const retry = (id: number) =>
+			fetch(`${base}/api/admin/tasks/${id}/retry`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: "{}",
+			});
+		const unknown = await retry(999_999);
+		const ok = await retry(health.parked[0]?.id ?? 0);
+
+		expect(unknown.status).toBe(404);
+		expect(((await unknown.json()) as { error: { message: string } }).error.message).toMatch(
+			/No parked task has id 999999/,
+		);
+		expect(ok.status).toBe(200);
+		expect(await ok.json()).toStrictEqual({ ok: true });
+		const submission = await server.harness.submission(submissionId as SubmissionId, ctx);
+		await waitFor(async () => (await submission?.status(ctx))?.status === "done", {
+			what: "the retried run to finish",
+			timeoutMs: 30_000,
+		});
+		const after = (await (await fetch(`${base}/api/agents`)).json()) as AgentsResponse;
+		expect(after.health).toStrictEqual({ parkedTasks: 0, parked: [] });
+		// Retrying again is refused: nothing is parked any more.
+		expect((await retry(health.parked[0]?.id ?? 0)).status).toBe(404);
+	});
 });

@@ -9,6 +9,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { AgentSummary, AgentsResponse, StreamBatch } from "@assistant/shared";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { SubmissionId } from "@earendil-works/pi-durable";
 import { type RunningServer, startServer } from "../src/server.ts";
 import { createFixture, readSseBatches, removeAllFixtures } from "../test/support.ts";
 
@@ -159,11 +160,76 @@ async function noModel(): Promise<Recording> {
 	}
 }
 
+/**
+ * The PA saves a task with a reminder, the reminder fires, and a deletion goes through approval: the cards a browser has
+ * to render. The clock is fake, so "in one minute" is instant, and the second connection is a reload after it all.
+ */
+async function remindersAndApprovals(): Promise<Recording> {
+	const fixture = await createFixture();
+	const clock = { now: Date.UTC(2026, 9, 25, 8, 0, 0) };
+	const server = await startServer(fixture.config, {
+		logger: quiet,
+		devModel: { tokensPerSecond: 100_000 },
+		now: () => clock.now,
+		pushSender: { send: async () => {} },
+	});
+	try {
+		const [pa] = await agents(server);
+		if (pa === undefined) throw new Error("no agents");
+		const base = `http://127.0.0.1:${server.port}`;
+		const isOutcome = (batches: StreamBatch[]) =>
+			batches
+				.flat()
+				.some(
+					(event) =>
+						(event.type === "message_end" || event.type === "entry_appended") && event.entry.kind === "app.notice",
+				);
+		const live = readSseBatches(await stream(server, pa.conversationId), isOutcome, 30_000);
+
+		const say = async (content: string, requestId: string): Promise<void> => {
+			const response = await fetch(`${base}/api/conversations/${pa.conversationId}/messages`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ content, requestId }),
+			});
+			const { submissionId } = (await response.json()) as { submissionId: number };
+			await (await server.harness.submission(submissionId as SubmissionId, BACKGROUND_CONTEXT))?.wait(
+				BACKGROUND_CONTEXT,
+			);
+		};
+		await say('/tool add_task {"title":"Pay rent","remind_in_minutes":1}', "fixture-rem-1");
+		clock.now += 60_000;
+		server.harness.resume();
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		await say('/tool add_task {"title":"Old report"}', "fixture-rem-2");
+		const row = server.db.get<{ id: string }>("SELECT id FROM tasks_item WHERE title = 'Old report'");
+		await say(`/tool propose_delete_task {"task_id":"${row?.id}"}`, "fixture-rem-3");
+		const request = server.db.get<{ id: string }>("SELECT id FROM pending_actions");
+		await fetch(`${base}/api/approvals/${request?.id}`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ decision: "approve" }),
+		});
+		const turns = await live;
+		const reloaded = await readSseBatches(await stream(server, pa.conversationId), (batches) => batches.length > 0);
+		return {
+			description:
+				"A task with a reminder, the reminder firing (a zero-token write), then a deletion proposed and approved with the " +
+				"button. The second connection is a reload and holds only its snapshot.",
+			connections: [turns, reloaded],
+		};
+	} finally {
+		await server.close();
+		await fixture.cleanup();
+	}
+}
+
 try {
 	await save("chat-turns", await chatTurns());
 	await save("stop-midway", await stopMidway());
 	await save("restart-resume", await restartResume());
 	await save("no-model", await noModel());
+	await save("reminders-approvals", await remindersAndApprovals());
 } finally {
 	await removeAllFixtures();
 }

@@ -32,6 +32,12 @@ export type RuntimeOptions = {
 	 * Lower it only to test what a parked task looks like.
 	 */
 	restartLimit?: number;
+	/** Domain extensions (tasks, approvals, ...) to install next to the profile. Agents select the ones they use by name. */
+	extensions?: readonly Extension[];
+	/** The Harness clock, epoch ms (default `Date.now`). Sleeping tasks keep their deadlines on it; tests pass a fake. */
+	now?: () => number;
+	/** Timers of the Harness (default `setTimeout`). Tests pass fakes. */
+	setTimer?: HarnessOptions["setTimer"];
 };
 
 /**
@@ -49,6 +55,7 @@ export async function openRuntime(config: Config, options: RuntimeOptions = {}):
 	const profile = createProfileExtension(config.profile);
 	const registry = createRegistry();
 	registry.install(profile);
+	for (const extension of options.extensions ?? []) registry.install(extension);
 
 	const storage = await openNodeSqliteStorage(config.paths.durableDb);
 	let harness: Harness;
@@ -60,6 +67,8 @@ export async function openRuntime(config: Config, options: RuntimeOptions = {}):
 				registry,
 				env: scopedEnvFor(config),
 				onReport: options.onReport,
+				...(options.now === undefined ? {} : { now: options.now }),
+				...(options.setTimer === undefined ? {} : { setTimer: options.setTimer }),
 				...(options.restartLimit === undefined ? {} : { settings: { restartLimit: options.restartLimit } }),
 			},
 			BACKGROUND_CONTEXT,

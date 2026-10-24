@@ -1,7 +1,7 @@
-import { randomBytes } from "node:crypto";
-import { chmod, mkdir, open, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import { writeFileAtomic } from "./atomic-file.ts";
 import { withFileLock } from "./file-lock.ts";
 
 /** A refresh runs inside `modify()` while the lock is held, so waiting must outlast a slow token request. */
@@ -126,32 +126,7 @@ export class FileCredentialStore implements CredentialStore {
 	}
 
 	async #write(all: Record<string, Credential>): Promise<void> {
-		await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-		const temp = `${this.path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-		try {
-			const file = await open(temp, "wx", 0o600);
-			try {
-				await file.writeFile(`${JSON.stringify(all, null, "\t")}\n`);
-				await file.sync();
-			} finally {
-				await file.close();
-			}
-			await rename(temp, this.path);
-			await syncDirectory(dirname(this.path));
-		} catch (error) {
-			await rm(temp, { force: true });
-			throw error;
-		}
-	}
-}
-
-/** Makes a rename durable: without it a power cut can bring the old file back. */
-async function syncDirectory(path: string): Promise<void> {
-	const directory = await open(path, "r");
-	try {
-		await directory.sync();
-	} finally {
-		await directory.close();
+		await writeFileAtomic(this.path, `${JSON.stringify(all, null, "\t")}\n`, 0o600);
 	}
 }
 

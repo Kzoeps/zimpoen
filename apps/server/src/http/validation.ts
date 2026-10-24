@@ -1,9 +1,11 @@
 import {
+	type ApprovalDecision,
 	DEFAULT_HISTORY_PAGE,
 	isThinkingLevel,
 	MAX_HISTORY_PAGE,
 	MAX_MESSAGE_CHARS,
 	type ModelSelection,
+	type PushSubscribeRequest,
 	REQUEST_ID_PATTERN,
 	type SendMessageRequest,
 	THINKING_LEVELS,
@@ -117,4 +119,71 @@ function parseModelSelection(value: unknown): ModelSelection {
 		throw invalidRequest('\'model\' must be an object like { "provider": "openai", "modelId": "gpt-6.1-sol" }.');
 	}
 	return { provider, modelId };
+}
+
+const MAX_ENDPOINT_CHARS = 2048;
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+
+/** A Web Push subscription as `PushSubscription.toJSON()` writes it. Checked the way a sender needs it, not loosely. */
+export function parsePushSubscribe(body: Record<string, unknown>): PushSubscribeRequest {
+	const { endpoint, keys } = body;
+	if (typeof endpoint !== "string" || endpoint.length > MAX_ENDPOINT_CHARS) {
+		throw invalidRequest(`'endpoint' must be the subscription's URL (at most ${MAX_ENDPOINT_CHARS} characters).`);
+	}
+	let url: URL;
+	try {
+		url = new URL(endpoint);
+	} catch {
+		throw invalidRequest("'endpoint' is not a URL. Send the endpoint of PushSubscription.toJSON().");
+	}
+	if (url.protocol !== "https:" || url.username !== "" || url.password !== "") {
+		throw invalidRequest("'endpoint' must be an https URL without credentials, as push services give out.");
+	}
+	if (!isPublicHostName(url.hostname)) {
+		throw invalidRequest(
+			`'endpoint' must point at a push service on the public internet, a name like fcm.googleapis.com, not '${url.hostname}'. ` +
+				"The server sends a request to every endpoint it stores, so addresses and local names are refused.",
+		);
+	}
+	const { p256dh, auth } = (typeof keys === "object" && keys !== null ? keys : {}) as Record<string, unknown>;
+	if (!isBase64Url(p256dh, 65)) {
+		throw invalidRequest("'keys.p256dh' must be the browser's public key: 65 bytes, base64url encoded.");
+	}
+	if (!isBase64Url(auth, 16)) {
+		throw invalidRequest("'keys.auth' must be the browser's auth secret: 16 bytes, base64url encoded.");
+	}
+	return { endpoint, keys: { p256dh, auth } };
+}
+
+/**
+ * Whether `hostname` (as `URL` normalises it) could be a push service: a name, not an address, and not a name that only
+ * means something inside a network. Vendors use names (fcm.googleapis.com, updates.push.services.mozilla.com,
+ * web.push.apple.com). Not a defence against a public name that resolves to a private address; the endpoint can only be
+ * sent by the owner (identity, `Host`, `Sec-Fetch-Site` and JSON-only rules apply), so this keeps a mistake or a stolen
+ * session from aiming the server at the machine's own network.
+ */
+function isPublicHostName(hostname: string): boolean {
+	if (hostname.startsWith("[") || /^[\d.]+$/.test(hostname)) return false;
+	if (!hostname.includes(".")) return false;
+	return !/\.(local|localhost|internal|lan|home\.arpa|ts\.net)$/.test(hostname);
+}
+
+function isBase64Url(value: unknown, bytes: number): value is string {
+	return typeof value === "string" && BASE64URL.test(value) && Buffer.from(value, "base64url").length === bytes;
+}
+
+export function parsePushUnsubscribe(body: Record<string, unknown>): { endpoint: string } {
+	const { endpoint } = body;
+	if (typeof endpoint !== "string" || endpoint === "" || endpoint.length > MAX_ENDPOINT_CHARS) {
+		throw invalidRequest("'endpoint' must be the URL of the subscription to remove.");
+	}
+	return { endpoint };
+}
+
+export function parseDecision(body: Record<string, unknown>): ApprovalDecision {
+	const { decision } = body;
+	if (decision !== "approve" && decision !== "deny") {
+		throw invalidRequest("'decision' must be 'approve' or 'deny'.");
+	}
+	return decision;
 }

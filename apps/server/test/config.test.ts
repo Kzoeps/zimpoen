@@ -29,25 +29,27 @@ describe("parseConfig", () => {
 			workspace: "/work/assistant/state/workspace",
 			secrets: "/work/assistant/state/secrets",
 			credentials: "/work/assistant/state/secrets/credentials.json",
+			vapid: "/work/assistant/state/secrets/vapid.json",
+			pushOutbox: "/work/assistant/state/dev-push-outbox.jsonl",
 		});
 		expect(config.writePath).toBe("/work/assistant/state/workspace");
 	});
 
 	it("keeps development and production data apart: ./data-dev unless NODE_ENV=production, then ./data", () => {
 		expect(parseConfig({ ...auth }, context).dataDir).toBe("/work/assistant/data-dev");
-		expect(parseConfig({ ASSISTANT_OWNER_LOGIN: "a@b.c", NODE_ENV: "production" }, context).dataDir).toBe(
-			"/work/assistant/data",
-		);
-		expect(
-			parseConfig({ ASSISTANT_OWNER_LOGIN: "a@b.c", NODE_ENV: "production", ASSISTANT_DATA_DIR: "/srv/a" }, context)
-				.dataDir,
-		).toBe("/srv/a");
+		const production = {
+			ASSISTANT_OWNER_LOGIN: "a@b.c",
+			ASSISTANT_PUSH_SUBJECT: "mailto:a@b.c",
+			NODE_ENV: "production",
+		};
+		expect(parseConfig(production, context).dataDir).toBe("/work/assistant/data");
+		expect(parseConfig({ ...production, ASSISTANT_DATA_DIR: "/srv/a" }, context).dataDir).toBe("/srv/a");
 	});
 
 	it("refuses ASSISTANT_AUTH=off in production, and says how to try the production build locally", () => {
 		let caught: unknown;
 		try {
-			parseConfig({ NODE_ENV: "production", ASSISTANT_AUTH: "off" }, context);
+			parseConfig({ NODE_ENV: "production", ASSISTANT_AUTH: "off", ASSISTANT_PUSH_SUBJECT: "mailto:a@b.c" }, context);
 		} catch (error) {
 			caught = error;
 		}
@@ -99,12 +101,41 @@ describe("parseConfig", () => {
 	});
 
 	it("uses the faux model outside production and the OpenAI model in production", () => {
-		const owner = { ASSISTANT_OWNER_LOGIN: "a@b.c" };
+		const owner = { ASSISTANT_OWNER_LOGIN: "a@b.c", ASSISTANT_PUSH_SUBJECT: "mailto:a@b.c" };
 		expect(parseConfig({ ...auth }, context).modelMode).toBe("faux");
 		expect(parseConfig({ ...owner, NODE_ENV: "production" }, context).modelMode).toBe("openai");
 		expect(parseConfig({ ...owner, NODE_ENV: "production", ASSISTANT_MODEL_MODE: "faux" }, context).modelMode).toBe(
 			"faux",
 		);
+	});
+
+	it("sends no real push outside production, real ones in production, unless told otherwise", () => {
+		const owner = { ASSISTANT_OWNER_LOGIN: "a@b.c" };
+
+		expect(parseConfig({ ...auth }, context).push).toStrictEqual({
+			mode: "fake",
+			subject: "mailto:assistant@localhost",
+		});
+		const contact = { ASSISTANT_PUSH_SUBJECT: "mailto:me@example.com" };
+		expect(parseConfig({ ...owner, ...contact, NODE_ENV: "production" }, context).push.mode).toBe("web-push");
+		expect(parseConfig({ ...owner, NODE_ENV: "production", ASSISTANT_PUSH_MODE: "fake" }, context).push.mode).toBe(
+			"fake",
+		);
+		expect(
+			parseConfig(
+				{ ...auth, ASSISTANT_PUSH_MODE: "web-push", ASSISTANT_PUSH_SUBJECT: "https://me.example/contact" },
+				context,
+			).push,
+		).toStrictEqual({ mode: "web-push", subject: "https://me.example/contact" });
+	});
+
+	it("asks for a real contact address before it sends real pushes, and accepts the placeholder while nothing is sent", () => {
+		const owner = { ASSISTANT_OWNER_LOGIN: "a@b.c" };
+
+		expect(problemsOf({ ...owner, NODE_ENV: "production" })).toStrictEqual(["ASSISTANT_PUSH_SUBJECT"]);
+		expect(problemsOf({ ...owner, ASSISTANT_PUSH_MODE: "web-push" })).toStrictEqual(["ASSISTANT_PUSH_SUBJECT"]);
+		expect(problemsOf({ ...owner, NODE_ENV: "production", ASSISTANT_PUSH_MODE: "fake" })).toStrictEqual([]);
+		expect(problemsOf({ ...owner })).toStrictEqual([]);
 	});
 
 	it("requires an owner login while authentication is on, which is the default", () => {
@@ -118,6 +149,9 @@ describe("parseConfig", () => {
 	it.each([
 		["ASSISTANT_AUTH", { ASSISTANT_AUTH: "maybe" }],
 		["ASSISTANT_MODEL_MODE", { ...auth, ASSISTANT_MODEL_MODE: "gpt" }],
+		["ASSISTANT_PUSH_MODE", { ...auth, ASSISTANT_PUSH_MODE: "fcm" }],
+		["ASSISTANT_PUSH_SUBJECT", { ...auth, ASSISTANT_PUSH_SUBJECT: "assistant@example.com" }],
+		["ASSISTANT_PUSH_SUBJECT", { ...auth, ASSISTANT_PUSH_SUBJECT: "http://example.com" }],
 		["ASSISTANT_PORT", { ...auth, ASSISTANT_PORT: "70000" }],
 		["ASSISTANT_PORT", { ...auth, ASSISTANT_PORT: "3001.5" }],
 		["ASSISTANT_PORT", { ...auth, ASSISTANT_PORT: "0x10" }],
