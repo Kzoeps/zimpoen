@@ -36,6 +36,8 @@ export const API_ERROR_CODES = [
 	"invalid_request",
 	"payload_too_large",
 	"not_found",
+	/** The request is valid but the resource is in another state: an approval already decided or expired. */
+	"conflict",
 	"too_many_requests",
 	"unavailable",
 	"internal_error",
@@ -48,6 +50,14 @@ export type ApiErrorBody = {
 	error: { code: ApiErrorCode; message: string };
 };
 
+/** A task Durable parked after repeated crashes; `POST /api/admin/tasks/:id/retry` runs it again. */
+export type ParkedTask = {
+	id: number;
+	/** The task's kind, for example `pi.generation` (an answer) or `app.reminder`. */
+	kind: string;
+	conversationId: number;
+};
+
 /** What `GET /api/agents` says about the server itself, so the UI can show trouble that the chat cannot. */
 export type ServerHealth = {
 	/**
@@ -55,6 +65,52 @@ export type ServerHealth = {
 	 * is retried, so the agent whose run it was stops answering. Zero when all is well.
 	 */
 	parkedTasks: number;
+	/** The parked tasks themselves (at most 20), so the UI can retry them. */
+	parked: ParkedTask[];
+};
+
+export type RetryTaskResponse = { ok: true };
+
+/**
+ * The JSON body of a push message, as the service worker receives it. Minimal on purpose: a push travels through
+ * Google's or Apple's servers, so it never carries what a task or message says.
+ */
+export type PushPayload = {
+	title: string;
+	body: string;
+	/** Where a tap on the notification goes. */
+	url: string;
+	/** A notification with the same tag replaces the earlier one instead of stacking. */
+	tag?: string;
+};
+
+/** The VAPID public key a browser needs to subscribe to Web Push (`GET /api/push/config`). */
+export type PushConfigResponse = { publicKey: string };
+
+/** What `PushSubscription.toJSON()` gives the browser; `POST /api/push/subscribe`. */
+export type PushSubscribeRequest = {
+	endpoint: string;
+	keys: { p256dh: string; auth: string };
+};
+
+/** `DELETE /api/push/subscribe`. */
+export type PushUnsubscribeRequest = { endpoint: string };
+
+export type ApprovalDecision = "approve" | "deny";
+
+/** `POST /api/approvals/:id`. */
+export type DecideApprovalRequest = { decision: ApprovalDecision };
+
+/** Where an approval request stands. `pending` is the only state that still accepts a decision. */
+export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "executed" | "failed";
+
+export type ApprovalState = {
+	id: string;
+	status: ApprovalStatus;
+	summary: string;
+	/** What happened when the approved action ran, in words. Absent while pending or denied. */
+	resultText?: string;
+	expiresAt: number;
 };
 
 export type AgentsResponse = {

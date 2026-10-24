@@ -3,7 +3,7 @@
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
-	"description": "Durable extensions installed by the server: profile now; tasks, memory, files, ... later",
+	"description": "Durable extensions installed by the server, one domain module each: profile, tasks, approvals; memory, files, ... later",
 	"exports": {
 		".": "./src/index.ts"
 	},
@@ -11,6 +11,10 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@assistant/db": "workspace:*",
+		"@assistant/shared": "workspace:*",
+		"@earendil-works/chord": "1.4.0",
+		"@earendil-works/pi-ai": "1.4.0",
 		"@earendil-works/pi-durable": "1.4.0"
 	}
 }
