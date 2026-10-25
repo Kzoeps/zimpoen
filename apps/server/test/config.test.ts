@@ -27,6 +27,7 @@ describe("parseConfig", () => {
 			durableDb: "/work/assistant/state/durable.sqlite",
 			files: "/work/assistant/state/files",
 			workspace: "/work/assistant/state/workspace",
+			templates: "/work/assistant/state/templates",
 			secrets: "/work/assistant/state/secrets",
 			credentials: "/work/assistant/state/secrets/credentials.json",
 			vapid: "/work/assistant/state/secrets/vapid.json",
@@ -311,10 +312,11 @@ describe("loadConfig (file system)", () => {
 
 		const config = await loadConfig(env, context);
 
-		for (const dir of [config.paths.files, config.paths.workspace, config.paths.secrets]) {
+		for (const dir of [config.paths.files, config.paths.workspace, config.paths.templates, config.paths.secrets]) {
 			expect((await stat(dir)).isDirectory()).toBe(true);
 		}
 		expect((await stat(config.paths.secrets)).mode & 0o777).toBe(0o700);
+		expect((await stat(config.paths.templates)).mode & 0o777).toBe(0o700);
 	});
 
 	it("tightens an existing data directory to 0700, because the databases inside are created 0644", async () => {
@@ -337,6 +339,7 @@ describe("loadConfig (file system)", () => {
 
 		expect(config.dataDir).toBe(real);
 		expect(config.paths.workspace).toBe(join(real, "workspace"));
+		expect(config.paths.templates).toBe(join(real, "templates"));
 		expect(config.writePath).toBe(join(real, "workspace"));
 		expect(config.paths.secrets).toBe(join(real, "secrets"));
 		expect(config.paths.credentials).toBe(join(real, "secrets", "credentials.json"));
@@ -388,6 +391,10 @@ describe("loadConfig (file system)", () => {
 		expect((await settingsOf({ ...env, ASSISTANT_READ_PATHS: root }))[0]).toContain("contains the data directory");
 		expect((await settingsOf({ ...env, ASSISTANT_READ_PATHS: data }))[0]).toContain("contains the data directory");
 		expect((await settingsOf({ ...env, ASSISTANT_READ_PATHS: join(data, "secrets") }))[0]).toContain(
+			"not under files/ or workspace/",
+		);
+		// The owner's invoice template is theirs: the agents may neither read nor change it.
+		expect((await settingsOf({ ...env, ASSISTANT_READ_PATHS: join(data, "templates") }))[0]).toContain(
 			"not under files/ or workspace/",
 		);
 		expect(await settingsOf({ ...env, ASSISTANT_READ_PATHS: join(data, "files") })).toStrictEqual([]);

@@ -1,16 +1,18 @@
+import { mkdir, realpath } from "node:fs/promises";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
+import { type AccountantDeps, seedInvoiceTemplate } from "@assistant/extensions";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Harness, HarnessOptions, ReportInfo } from "@earendil-works/pi-durable";
 import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
 import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import { serve } from "@hono/node-server";
 import { buildAgents, countParkedTasks, type EnsureAgentsResult, ensureAgents, listUnrunnableTasks } from "./agents.ts";
-import type { Config } from "./config.ts";
+import { type Config, DEFAULT_OWNER_NAME } from "./config.ts";
 import type { DevProviderOptions } from "./dev-model.ts";
-import { createDomain, type Domain, type RepairReport, type SweepReport } from "./domain.ts";
+import { createDomain, type Domain, type DomainOptions, type RepairReport, type SweepReport } from "./domain.ts";
 import { acquireFileLock, type FileLock, LockHeldError } from "./file-lock.ts";
 import { createApp } from "./http/app.ts";
 import { errorBody } from "./http/errors.ts";
@@ -41,6 +43,8 @@ export type StartServerOptions = {
 	images?: ImageProcessor;
 	/** How often the running server does its upkeep (see {@link startMaintenance}). The defaults are for real use; tests shorten them. */
 	intervals?: { resumeMs?: number; sweepMs?: number };
+	/** How long a code mode script may run (default 30 s, at most 2 minutes). Tests shorten it. */
+	codemodeLimits?: DomainOptions["codemodeLimits"];
 };
 
 /** How often sleeping tasks that came due are woken. A reminder is at most this late after a suspend or a clock step. */
@@ -106,7 +110,10 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			// The uploads folder is how files reach the PA, so it is named by `read_file`'s ids rather than as a place to look.
 			files: { readPaths: config.readPaths.filter((path) => path !== config.paths.files), images },
 			health: config.health,
+			accountant: await accountantDeps(config, logger),
+			...(options.codemodeLimits === undefined ? {} : { codemodeLimits: options.codemodeLimits }),
 		});
+		undo.push(() => domain.close());
 		const migrations = migrate(db, [...coreMigrations, ...domain.migrations]);
 		if (migrations.applied.length > 0) logger.info(`[db] applied migrations: ${migrations.applied.join(", ")}`);
 
@@ -127,7 +134,11 @@ export async function startServer(config: Config, options: StartServerOptions = 
 
 		await tidyCredentials(logger, config, runtime);
 
-		const agentDefs = buildAgents({ pa: domain.paExtensions, health: domain.healthExtensions });
+		const agentDefs = buildAgents({
+			pa: domain.paExtensions,
+			health: domain.healthExtensions,
+			accountant: domain.accountantExtensions,
+		});
 		const agents = await ensureAgents(harness, db, {
 			agents: agentDefs,
 			shared: runtime.shared,
@@ -164,6 +175,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			daily: domain.daily,
 			timezone: config.profile.timezone,
 			filesDir: config.paths.files,
+			workspaceDir: config.paths.workspace,
 			now,
 			agents: agentDefs,
 			auth: config.auth,
@@ -183,7 +195,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			domain,
 			close: () => {
 				stopMaintenance();
-				closing ??= shutdown(server, runtime, db, lock, logger);
+				closing ??= shutdown(server, runtime, db, lock, logger, domain);
 				return closing;
 			},
 		};
@@ -191,6 +203,29 @@ export async function startServer(config: Config, options: StartServerOptions = 
 		await unwind(undo, logger);
 		throw error;
 	}
+}
+
+/**
+ * What the Accountant's modules are told: the owner's currency and name, and where invoices are made. Invoices go to
+ * `<workspace>/invoices` and come from `<data>/templates/invoice.html`, which is written with a default the first time
+ * (the owner's own is never overwritten).
+ */
+async function accountantDeps(config: Config, logger: ServerLogger): Promise<AccountantDeps> {
+	const folder = join(config.paths.workspace, "invoices");
+	await mkdir(folder, { recursive: true, mode: 0o700 });
+	// The path of an invoice's file is stored with its links resolved, as every path the file policy compares is.
+	const outDir = await realpath(folder);
+	const template = await seedInvoiceTemplate(config.paths.templates);
+	if (template.created) {
+		logger.info(
+			`[invoices] wrote the default invoice template to ${template.path}. Replace it with yours (docs/setup-invoice.md).`,
+		);
+	}
+	return {
+		currency: config.profile.currency,
+		...(config.profile.ownerName === DEFAULT_OWNER_NAME ? {} : { ownerName: config.profile.ownerName }),
+		invoices: { outDir, templatesDir: config.paths.templates },
+	};
 }
 
 /** Make the credential file private again if it was copied in loosely, and drop temp files a crashed write left. */
@@ -258,6 +293,7 @@ async function shutdown(
 	db: AppDb,
 	lock: FileLock,
 	logger: ServerLogger,
+	domain: Domain,
 ): Promise<void> {
 	const drained = new Promise<void>((resolve) => server.close(() => resolve()));
 	server.closeIdleConnections();
@@ -265,6 +301,11 @@ async function shutdown(
 		await runtime.close();
 	} catch (error) {
 		logger.error("[shutdown] closing the Durable harness failed:", error);
+	}
+	try {
+		await domain.close();
+	} catch (error) {
+		logger.error("[shutdown] closing the code mode sandbox failed:", error);
 	}
 	// Streams end once the Harness closes; this is for a connection that does not, such as a stalled client.
 	const force = setTimeout(() => server.closeAllConnections(), 1000);

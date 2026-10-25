@@ -37,7 +37,8 @@ export type Harness = {
 	/** Every line the servers of this test logged, in order. */
 	logs: string[];
 	servers: RunningServer[];
-	start(intervals?: StartServerOptions["intervals"]): Promise<RunningServer>;
+	/** `more` overrides other options of the server, for a test of one of them (the code mode time limit). */
+	start(intervals?: StartServerOptions["intervals"], more?: Partial<StartServerOptions>): Promise<RunningServer>;
 };
 
 export async function setup(env: Record<string, string> = {}): Promise<Harness> {
@@ -52,13 +53,14 @@ export async function setup(env: Record<string, string> = {}): Promise<Harness> 
 		sender,
 		logs: logger.lines,
 		servers,
-		start: async (intervals) => {
+		start: async (intervals, more) => {
 			const server = await startServer(fixture.config, {
 				logger,
 				devModel: { tokensPerSecond: 1_000_000 },
 				now: () => clock.now,
 				pushSender: sender,
 				...(intervals === undefined ? {} : { intervals }),
+				...more,
 			});
 			servers.push(server);
 			return server;

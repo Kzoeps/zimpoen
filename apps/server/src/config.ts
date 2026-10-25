@@ -33,6 +33,9 @@ export type HealthConfig = {
 	heightCm?: number;
 };
 
+/** What the profile calls the owner when `ASSISTANT_OWNER_NAME` is not set. A module that needs a real name checks against it. */
+export const DEFAULT_OWNER_NAME = "the owner";
+
 export type Config = {
 	/**
 	 * Absolute and canonical (symlinks resolved) once `loadConfig` has run. Holds every database, upload, generated
@@ -46,6 +49,11 @@ export type Config = {
 		files: string;
 		/** Generated files (invoice PDFs, notes). The only place agents may write. */
 		workspace: string;
+		/**
+		 * The owner's document templates (`invoice.html` and the images it uses). Never readable or writable by agents: the
+		 * template is the owner's, and a model that could write it could change what an invoice says.
+		 */
+		templates: string;
 		/** Credentials and keys. Never readable by agents. Mode 0700. */
 		secrets: string;
 		credentials: string;
@@ -124,6 +132,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 		durableDb: join(dataDir, "durable.sqlite"),
 		files: join(dataDir, "files"),
 		workspace: join(dataDir, "workspace"),
+		templates: join(dataDir, "templates"),
 		secrets: join(dataDir, "secrets"),
 		credentials: join(dataDir, "secrets", "credentials.json"),
 		vapid: join(dataDir, "secrets", "vapid.json"),
@@ -138,7 +147,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 		writePath: paths.workspace,
 		auth: parseAuth(env, problem),
 		profile: {
-			ownerName: nonEmpty(env.ASSISTANT_OWNER_NAME) ?? "the owner",
+			ownerName: nonEmpty(env.ASSISTANT_OWNER_NAME) ?? DEFAULT_OWNER_NAME,
 			timezone: parseTimezone(env.ASSISTANT_TIMEZONE, problem),
 			currency: parseCurrency(env.ASSISTANT_CURRENCY, problem),
 		},
@@ -173,7 +182,7 @@ export async function prepareDataDirectories(config: Config): Promise<void> {
 	const { dataDir, paths } = config;
 	try {
 		await mkdir(dataDir, { recursive: true, mode: 0o700 });
-		for (const dir of [paths.files, paths.workspace, paths.secrets]) {
+		for (const dir of [paths.files, paths.workspace, paths.templates, paths.secrets]) {
 			await mkdir(dir, { recursive: true, mode: 0o700 });
 		}
 		// mkdir's mode is masked by the umask and ignored for directories that already exist. The databases inside are
@@ -200,9 +209,10 @@ export async function prepareDataDirectories(config: Config): Promise<void> {
  */
 export async function canonicalizeDataPaths(config: Config): Promise<Config> {
 	const dataDir = await realpath(config.dataDir);
-	const [files, workspace, secrets] = await Promise.all([
+	const [files, workspace, templates, secrets] = await Promise.all([
 		realpath(config.paths.files),
 		realpath(config.paths.workspace),
+		realpath(config.paths.templates),
 		realpath(config.paths.secrets),
 	]);
 	const paths = {
@@ -210,6 +220,7 @@ export async function canonicalizeDataPaths(config: Config): Promise<Config> {
 		durableDb: join(dataDir, "durable.sqlite"),
 		files,
 		workspace,
+		templates,
 		secrets,
 		credentials: join(secrets, "credentials.json"),
 		vapid: join(secrets, "vapid.json"),

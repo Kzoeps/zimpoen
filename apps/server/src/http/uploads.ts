@@ -15,6 +15,8 @@ export type UploadsDeps = {
 	db: AppDb;
 	/** `<data>/files`, resolved through symbolic links. Uploads live below it and nowhere else. */
 	filesDir: string;
+	/** `<data>/workspace`, resolved: the files the assistant made (invoice PDFs) live below it. Absent: none is served. */
+	workspaceDir?: string;
 	now?: () => number;
 };
 
@@ -91,20 +93,23 @@ export function createUploadsApp(deps: UploadsDeps): Hono {
 }
 
 /**
- * `GET /api/files/:id`: an upload as it was stored. Only uploads are served (a file the PA indexed from the owner's
- * folders is not the browser's business), and only from below the uploads folder. Whatever the file is, the browser is
- * told not to guess: images are shown, everything else is a download, and a sandboxing policy makes even a file the
- * browser opens unable to run anything.
+ * `GET /api/files/:id`: a file the assistant keeps for the owner as it was stored: an upload (from below the uploads
+ * folder) or a file it made itself, such as an invoice PDF (from below the workspace). A file the PA indexed from the
+ * owner's own folders is not the browser's business, and a row whose file moved outside the folder it must be in is
+ * not served: the path is resolved again at every request. Whatever the file is, the browser is told not to guess:
+ * images are shown, everything else is a download, and a sandboxing policy makes even a file the browser opens unable to
+ * run anything.
  */
 export function createFilesApp(deps: UploadsDeps): Hono {
 	const app = new Hono();
 	app.get("/:id", async (c) => {
 		const row = fileStore.getFile(deps.db, c.req.param("id"));
-		if (row === undefined || row.source !== "upload") {
+		const root = row?.source === "upload" ? deps.filesDir : row?.source === "generated" ? deps.workspaceDir : undefined;
+		if (row === undefined || root === undefined) {
 			throw notFound(`No uploaded file has the id '${c.req.param("id").slice(0, 40)}'.`);
 		}
 		const real = await realpath(row.path).catch(() => undefined);
-		if (real === undefined || !isInside(deps.filesDir, real)) {
+		if (real === undefined || !isInside(root, real)) {
 			throw notFound("The file is no longer where the assistant stored it.");
 		}
 		const content = await readFile(real);

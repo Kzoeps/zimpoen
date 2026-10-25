@@ -1,16 +1,20 @@
 import type { AppDb, Migration } from "@assistant/db";
 import {
+	type AccountantDeps,
 	type ApprovalService,
 	approvalsModule,
+	type CodemodeLimits,
 	closingYesWindow,
 	closingYesWindowOnAsk,
 	collectMigrations,
 	createApprovalService,
+	createBoundedCodemodeExtension,
 	createEntryPoster,
 	createInputSubmitter,
 	type DailyFactsProvider,
 	type DailyService,
 	type DailyStart,
+	DEFAULT_CODEMODE_LIMITS,
 	type DomainDeps,
 	type DomainModule,
 	dailyModule,
@@ -19,13 +23,17 @@ import {
 	followupsModule,
 	type HealthDeps,
 	healthModule,
+	invoicesModule,
+	ledgerModule,
 	peopleModule,
 	type ReconcileReport,
 	type RecoveryReport,
 	type ScheduleSettings,
+	splitsModule,
 	tasksModule,
 } from "@assistant/extensions";
 import type { PushPayload } from "@assistant/shared";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { Extension, Harness } from "@earendil-works/pi-durable";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 
@@ -49,6 +57,12 @@ export type Domain = {
 	 * `tool_search` for the deletion tools it keeps out of its everyday list. The PA does not get the health tools.
 	 */
 	healthExtensions: Extension[];
+	/**
+	 * What the Accountant agent selects: the ledger, splits and invoices, the file tools it reads receipts and statements
+	 * with, the approval hook, `tool_search` for its rarely used tools, and code mode, where it writes a script over the
+	 * ledger's query tools instead of adding up in its head. The PA and the Health agent do not get them.
+	 */
+	accountantExtensions: Extension[];
 	approvals: ApprovalService;
 	/** The morning briefing and the evening wrap-up: their times and whether they run. */
 	daily: DailyService;
@@ -62,6 +76,8 @@ export type Domain = {
 	 * the server works: it touches only requests past their deadline and rows that want a timer and have none.
 	 */
 	sweep(): Promise<SweepReport>;
+	/** Release what the domain holds outside the databases: the code mode sandbox. Idempotent. */
+	close(): Promise<void>;
 };
 
 export type RepairReport = {
@@ -94,7 +110,18 @@ export type DomainOptions = {
 	files?: FilesDeps;
 	/** What the Health module is told about the owner: their height, for BMI. */
 	health?: HealthDeps;
+	/** What the Accountant's modules are told: the owner's currency and name, and where invoices are made. */
+	accountant?: AccountantDeps;
+	/** How long a code mode script may run. Default: {@link DEFAULT_CODEMODE_LIMITS}; tests shorten it. */
+	codemodeLimits?: Partial<CodemodeLimits>;
 };
+
+/**
+ * What a code mode script may use: 256 MiB of memory, and 30 seconds unless it asks for more (at most two minutes: see
+ * {@link DEFAULT_CODEMODE_LIMITS}). The sandbox is QuickJS in a worker thread; it has no network and no files. The time limit
+ * is applied by the bounded code mode extension: the sandbox's own `timeoutMs` is not read for a script Durable can resume.
+ */
+const CODEMODE_MEMORY_BYTES = 256 * 1024 * 1024;
 
 /** The modules in the order their migrations and extensions are installed. */
 export const MODULES: readonly DomainModule[] = [
@@ -105,6 +132,9 @@ export const MODULES: readonly DomainModule[] = [
 	dailyModule,
 	filesModule,
 	healthModule,
+	ledgerModule,
+	splitsModule,
+	invoicesModule,
 ];
 
 export function createDomain(options: DomainOptions): Domain {
@@ -133,6 +163,7 @@ export function createDomain(options: DomainOptions): Domain {
 		...(options.schedule === undefined ? {} : { schedule: options.schedule }),
 		...(options.files === undefined ? {} : { files: options.files }),
 		...(options.health === undefined ? {} : { health: options.health }),
+		...(options.accountant === undefined ? {} : { accountant: options.accountant }),
 	};
 	for (const module of MODULES) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = MODULES.flatMap((module) => module.facts?.(deps) ?? []);
@@ -143,13 +174,26 @@ export function createDomain(options: DomainOptions): Domain {
 	const daily = dailyModule.extension(deps);
 	const files = filesModule.extension(deps);
 	const health = healthModule.extension(deps);
+	const ledger = ledgerModule.extension(deps);
+	const splits = splitsModule.extension(deps);
+	const invoices = invoicesModule.extension(deps);
 	const guard = approvalsModule.extension(deps);
 	const toolSearch = createToolSearchExtension();
+	// `models: false` leaves out `models.classify()` and `models.generateImages()`: they are paid calls to a model provider,
+	// and the Accountant sends nothing out (PLAN rule 1). A script calls the tools the Accountant itself has (its writes too,
+	// each under the same approval hook), and nothing else: no network, no files, no model.
+	const codemodeLimits: CodemodeLimits = { ...DEFAULT_CODEMODE_LIMITS, ...options.codemodeLimits };
+	const sandbox = new CodemodeSandbox({
+		memoryLimitBytes: CODEMODE_MEMORY_BYTES,
+		timeoutMs: codemodeLimits.maxTimeoutMs,
+	});
+	const codemode = createBoundedCodemodeExtension({ sandbox, models: false, limits: codemodeLimits });
 	return {
 		migrations: collectMigrations(MODULES),
-		extensions: [tasks, followups, people, daily, files, health, guard, toolSearch],
+		extensions: [tasks, followups, people, daily, files, health, ledger, splits, invoices, guard, toolSearch, codemode],
 		paExtensions: [tasks, followups, people, daily, files, guard, toolSearch],
 		healthExtensions: [health, guard, toolSearch],
+		accountantExtensions: [ledger, splits, invoices, files, guard, toolSearch, codemode],
 		approvals,
 		daily: dailyModule.service(deps),
 		bind: (open) => {
@@ -179,5 +223,6 @@ export function createDomain(options: DomainOptions): Domain {
 			birthdays: await peopleModule.scheduler(deps).reconcile(),
 			daily: await dailyModule.scheduler(deps).reconcile(),
 		}),
+		close: () => sandbox.close(),
 	};
 }

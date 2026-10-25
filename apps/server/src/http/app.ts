@@ -91,6 +91,8 @@ export type AppDeps = {
 	timezone: string;
 	/** Where uploads are kept (`<data>/files`, resolved). */
 	filesDir: string;
+	/** Where the assistant keeps what it makes (`<data>/workspace`, resolved), for the downloads that come from there. */
+	workspaceDir?: string;
 	/** Clock for stored timestamps. Default `Date.now`. */
 	now?: () => number;
 	auth: AuthConfig;
@@ -124,7 +126,14 @@ export function createApp(deps: AppDeps): Hono {
 		"/api/uploads",
 		createUploadsApp({ db, filesDir: deps.filesDir, ...(deps.now === undefined ? {} : { now: deps.now }) }),
 	);
-	app.route("/api/files", createFilesApp({ db, filesDir: deps.filesDir }));
+	app.route(
+		"/api/files",
+		createFilesApp({
+			db,
+			filesDir: deps.filesDir,
+			...(deps.workspaceDir === undefined ? {} : { workspaceDir: deps.workspaceDir }),
+		}),
+	);
 	app.use("/api/*", requireJsonContentType);
 	app.use(
 		"/api/*",
