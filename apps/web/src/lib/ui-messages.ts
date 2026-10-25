@@ -3,19 +3,27 @@ import {
 	type AgendaEntryData,
 	type ApprovalOutcome,
 	type AssistantChatMessage,
+	type AttachmentRef,
 	BIRTHDAY_ENTRY_KIND,
 	type BirthdayEntryData,
+	DAILY_ENTRY_KIND,
+	type DailyEntryData,
 	type EntryRecord,
+	type FileCard,
+	type FileListCard,
 	FOLLOWUP_ENTRY_KIND,
 	type FollowupCard,
 	type FollowupEntryData,
 	type FollowupListCard,
+	isDailyJobId,
+	type JournalCard,
 	NOTICE_ENTRY_KIND,
 	type NoticeEntryData,
 	type PeopleListCard,
 	type PersonCard,
 	REMINDER_ENTRY_KIND,
 	type ReminderEntryData,
+	splitAttachments,
 	type TaskCard,
 	type TaskListCard,
 	toolCardOf,
@@ -56,6 +64,11 @@ export type UiCard =
 	| { type: "followup_question"; data: FollowupEntryData; answered?: true }
 	/** The morning reminder or the evening question of a birthday. */
 	| { type: "birthday"; data: BirthdayEntryData; answered?: true }
+	/** The request of the morning briefing or the evening wrap-up with the facts it carried, or the card that stands in for a briefing with none. */
+	| { type: "daily"; data: DailyEntryData }
+	| JournalCard
+	| FileCard
+	| FileListCard
 	| TaskListCard
 	| TaskCard
 	| FollowupCard
@@ -64,16 +77,29 @@ export type UiCard =
 	| PeopleListCard
 	| { type: "approval"; actionId: string; summary: string; expiresAt: number; state: ApprovalCardState };
 
+/** A file a message of the owner's carries, read back from the line that references it. */
+export type UiAttachment = AttachmentRef & { sizeText: string };
+
 export type UiMessage =
 	| {
 			id: string;
 			role: "user";
 			createdAt: number;
+			/** What the owner wrote, without the lines that reference their files. */
 			text: string;
+			files?: UiAttachment[];
 			/** Why this message was never answered, when it was not: shown under it, also after a reload. */
 			notAnswered?: string;
 	  }
-	| { id: string; role: "assistant"; createdAt: number; parts: UiPart[]; status: UiAssistantStatus }
+	| {
+			id: string;
+			role: "assistant";
+			createdAt: number;
+			parts: UiPart[];
+			status: UiAssistantStatus;
+			/** What this answer is, when it answers the morning briefing or the evening wrap-up: "Morning briefing". */
+			chip?: string;
+	  }
 	| { id: string; role: "system"; createdAt: number; card: UiCard };
 
 const cache = new WeakMap<EntryRecord, UiMessage | null>();
@@ -98,7 +124,38 @@ export function toUiMessages(
 	};
 	for (const entry of state.entries) push(withExplanation(entryToMessage(entry), explanations.get(entry.id)));
 	if (state.draft !== undefined) push(assistantToMessage(state.draft, { type: "running" }, "draft"));
-	return resolveAnswers(resolveApprovals(markInterrupted(messages), approvalOutcomes(state.entries), now));
+	return chipAnswers(resolveAnswers(resolveApprovals(markInterrupted(messages), approvalOutcomes(state.entries), now)));
+}
+
+/** What the chip above an answer says, by the job whose request it answers. */
+export const DAILY_CHIP: Record<DailyEntryData["job"], string> = {
+	briefing: "☀️ Morning briefing",
+	wrapup: "🌙 Evening wrap-up",
+};
+
+/**
+ * The briefing and the wrap-up are requests the assistant makes by itself, and the PA's answer is an ordinary message.
+ * To tell it from a reply to something the owner said, the first answer after the request carries a chip with the job's
+ * name. Another message of the owner's ends it: what follows is a conversation. Cards in between (a task list the PA
+ * looked up for the briefing, a reminder that fired meanwhile) do not: the answer is still the briefing's.
+ */
+function chipAnswers(messages: UiMessage[]): UiMessage[] {
+	let pending: string | undefined;
+	return messages.map((message) => {
+		if (message.role === "system") {
+			if (message.card.type === "daily") {
+				pending = message.card.data.empty === true ? undefined : DAILY_CHIP[message.card.data.job];
+			}
+			return message;
+		}
+		if (message.role === "user") {
+			pending = undefined;
+			return message;
+		}
+		const chip = pending;
+		pending = undefined;
+		return chip === undefined ? message : { ...message, chip };
+	});
 }
 
 /**
@@ -207,7 +264,14 @@ function convertEntry(entry: EntryRecord): UiMessage | null {
 			typeof message.content === "string"
 				? message.content
 				: message.content.map((part) => (part.type === "text" ? part.text : "[image]")).join("");
-		return { id: `user-${entry.id}`, role: "user", createdAt: message.timestamp, text };
+		const { text: written, files } = splitAttachments(text);
+		return {
+			id: `user-${entry.id}`,
+			role: "user",
+			createdAt: message.timestamp,
+			text: written,
+			...(files.length === 0 ? {} : { files }),
+		};
 	}
 	if (entry.kind === "pi.assistant" && message?.role === "assistant") {
 		return assistantToMessage(message, statusOf(message), String(entry.id));
@@ -231,6 +295,12 @@ function cardOf(entry: EntryRecord): UiCard | undefined {
 		const data = entry.data as Partial<BirthdayEntryData> | undefined;
 		return typeof data?.name === "string" ? { type: "birthday", data: data as BirthdayEntryData } : undefined;
 	}
+	if (entry.kind === DAILY_ENTRY_KIND) {
+		const data = entry.data as Partial<DailyEntryData> | undefined;
+		return isDailyJobId(data?.job) && Array.isArray(data.sections)
+			? { type: "daily", data: data as DailyEntryData }
+			: undefined;
+	}
 	if (entry.kind === REMINDER_ENTRY_KIND) {
 		const data = entry.data as Partial<ReminderEntryData> | undefined;
 		return typeof data?.title === "string" ? { type: "reminder", data: data as ReminderEntryData } : undefined;
@@ -250,7 +320,7 @@ function cardOf(entry: EntryRecord): UiCard | undefined {
 /** When the card happened: the time a timer posted it, otherwise the entry's message time. */
 function cardTime(entry: EntryRecord): number {
 	const data = entry.data as { firedAt?: unknown } | undefined;
-	const posted = [REMINDER_ENTRY_KIND, AGENDA_ENTRY_KIND, FOLLOWUP_ENTRY_KIND, BIRTHDAY_ENTRY_KIND];
+	const posted = [REMINDER_ENTRY_KIND, AGENDA_ENTRY_KIND, FOLLOWUP_ENTRY_KIND, BIRTHDAY_ENTRY_KIND, DAILY_ENTRY_KIND];
 	if (posted.includes(entry.kind) && typeof data?.firedAt === "number") return data.firedAt;
 	const timestamp = entry.model?.[0]?.timestamp;
 	return typeof timestamp === "number" ? timestamp : 0;

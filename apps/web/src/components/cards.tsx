@@ -1,18 +1,28 @@
 "use client";
 
-import type {
-	AgendaEntryData,
-	BirthdayEntryData,
-	FollowupCardItem,
-	FollowupEntryData,
-	PersonCardItem,
-	TaskCardItem,
+import {
+	type AgendaEntryData,
+	type BirthdayEntryData,
+	type DailyEntryData,
+	type FileSummary,
+	type FollowupCardItem,
+	type FollowupEntryData,
+	formatSize,
+	type JournalCardItem,
+	type PersonCardItem,
+	type TaskCardItem,
 } from "@assistant/shared";
 import { useAui } from "@assistant-ui/react";
 import { useState } from "react";
-import { ApiRequestError, decideApproval } from "../lib/api.ts";
-import { FOLLOWUP_EVENT_LABEL, PERSON_EVENT_LABEL, TASK_EVENT_LABEL } from "../lib/card-text.ts";
-import type { ApprovalCardState, UiCard } from "../lib/ui-messages.ts";
+import { ApiRequestError, decideApproval, fileUrl } from "../lib/api.ts";
+import {
+	FILE_EVENT_LABEL,
+	FOLLOWUP_EVENT_LABEL,
+	JOURNAL_EVENT_LABEL,
+	PERSON_EVENT_LABEL,
+	TASK_EVENT_LABEL,
+} from "../lib/card-text.ts";
+import type { ApprovalCardState, UiAttachment, UiCard } from "../lib/ui-messages.ts";
 
 /** One non-chat item of the thread: a reminder, an agenda, a question, a birthday, a notice, a task, a follow-up, a person, a list, or a request for approval. */
 export function CardView({ card }: { card: UiCard }) {
@@ -41,7 +51,163 @@ export function CardView({ card }: { card: UiCard }) {
 			return <TaskListCardView heading={card.heading} tasks={card.tasks} total={card.total} />;
 		case "approval":
 			return <ApprovalCardView actionId={card.actionId} summary={card.summary} state={card.state} />;
+		case "daily":
+			return <DailyCard data={card.data} />;
+		case "journal":
+			return <JournalCardView event={card.event} entries={card.entries} />;
+		case "file":
+			return <FileToolCard event={card.event} file={card.file} />;
+		case "file_list":
+			return <FileListCardView heading={card.heading} files={card.files} total={card.total} />;
 	}
+}
+
+const DAILY_LABEL: Record<DailyEntryData["job"], { icon: string; name: string }> = {
+	briefing: { icon: "☀️", name: "Morning briefing" },
+	wrapup: { icon: "🌙", name: "Evening wrap-up" },
+};
+
+/**
+ * The request of the morning briefing or the evening wrap-up, as the thread shows it: what the assistant looked at, kept
+ * folded because the PA's answer under it says the same in words. A briefing with nothing to say is only this card.
+ */
+function DailyCard({ data }: { data: DailyEntryData }) {
+	const { icon, name } = DAILY_LABEL[data.job];
+	const items = data.sections.reduce((total, section) => total + section.lines.length, 0);
+	return (
+		<section className="card card--daily" aria-label={name}>
+			<header className="card__head">
+				<span aria-hidden="true">{icon}</span> {name} <span className="card__muted">· {data.dateText}</span>
+				{data.late === true ? <span className="chip chip--late">sent late</span> : null}
+			</header>
+			{data.empty === true ? (
+				<p className="card__title">Nothing on your list today: no tasks, meetings or birthdays. Enjoy the day.</p>
+			) : (
+				<details className="card__facts">
+					<summary>
+						What the assistant looked at{" "}
+						<span className="card__muted">
+							({items === 0 ? "nothing recorded" : `${items} item${items === 1 ? "" : "s"}`})
+						</span>
+					</summary>
+					{data.sections.map((section) => (
+						<div key={section.title}>
+							<p className="card__muted card__section">{section.title}</p>
+							<ul className="facts">
+								{section.lines.map((line, index) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: the list is fixed once posted
+									<li key={index}>{line}</li>
+								))}
+							</ul>
+						</div>
+					))}
+				</details>
+			)}
+		</section>
+	);
+}
+
+function JournalCardView({ event, entries }: { event: keyof typeof JOURNAL_EVENT_LABEL; entries: JournalCardItem[] }) {
+	return (
+		<section className="card card--daily" aria-label={JOURNAL_EVENT_LABEL[event]}>
+			<header className="card__head">
+				<span aria-hidden="true">📓</span> {JOURNAL_EVENT_LABEL[event]}
+			</header>
+			{entries.length === 0 ? <p className="card__muted">Nothing written for those days.</p> : null}
+			{entries.map((entry) => (
+				<div key={entry.date} className="journal-day">
+					<p className="card__title">{entry.dateText}</p>
+					{entry.userLog !== undefined ? (
+						<p>{entry.userLog}</p>
+					) : (
+						<p className="card__muted">Waiting for your answer to the wrap-up.</p>
+					)}
+					{entry.carriedOver.length > 0 ? (
+						<>
+							<p className="card__muted card__section">Carried over</p>
+							<ul className="facts">
+								{entry.carriedOver.map((item, index) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: the list is fixed once posted
+									<li key={index}>{item}</li>
+								))}
+							</ul>
+						</>
+					) : null}
+				</div>
+			))}
+		</section>
+	);
+}
+
+/** A file as a chip: a small picture for an image, an icon and the name otherwise; it opens the stored file. */
+export function FileChip({
+	file,
+}: {
+	file: Pick<UiAttachment, "id" | "name" | "mime"> & { sizeText?: string; size?: number };
+}) {
+	const size = file.sizeText ?? (file.size === undefined ? "" : formatSize(file.size));
+	const isImage = file.mime.startsWith("image/");
+	return (
+		<a
+			className="file-chip"
+			href={fileUrl(file.id)}
+			target="_blank"
+			rel="noreferrer"
+			title={`${file.name} · ${file.mime}`}
+		>
+			{isImage ? (
+				// biome-ignore lint/performance/noImgElement: a stored upload served by the assistant's own API, at its natural size
+				<img className="file-chip__thumb" src={fileUrl(file.id)} alt="" loading="lazy" />
+			) : (
+				<span className="file-chip__icon" aria-hidden="true">
+					{file.mime === "application/pdf" ? "📕" : file.mime === "text/csv" ? "📊" : "📄"}
+				</span>
+			)}
+			<span className="file-chip__name">{file.name}</span>
+			{size !== "" ? <span className="card__muted file-chip__size">{size}</span> : null}
+		</a>
+	);
+}
+
+function FileToolCard({ event, file }: { event: keyof typeof FILE_EVENT_LABEL; file: FileSummary }) {
+	return (
+		<section className="card card--file" aria-label={FILE_EVENT_LABEL[event]}>
+			<header className="card__head">
+				<span aria-hidden="true">🗂️</span> {FILE_EVENT_LABEL[event]}
+			</header>
+			<FileDetail file={file} />
+		</section>
+	);
+}
+
+function FileDetail({ file }: { file: FileSummary }) {
+	return (
+		<div className="file-detail">
+			{file.source === "upload" ? <FileChip file={file} /> : <p className="card__title">{file.name}</p>}
+			{file.description !== undefined ? <p>{file.description}</p> : null}
+			<p className="card__muted">
+				{file.mime} · {formatSize(file.size)}
+				{file.source === "path" ? " · from your folders" : ""}
+				{file.tags !== undefined ? ` · ${file.tags.join(", ")}` : ""}
+			</p>
+		</div>
+	);
+}
+
+function FileListCardView({ heading, files, total }: { heading: string; files: FileSummary[]; total: number }) {
+	return (
+		<section className="card card--file" aria-label={heading}>
+			<header className="card__head">
+				{heading} <span className="card__muted">({total})</span>
+			</header>
+			{files.length === 0 ? (
+				<p className="card__muted">No files.</p>
+			) : (
+				files.map((file) => <FileDetail key={file.id} file={file} />)
+			)}
+			{total > files.length ? <p className="card__muted">…and {total - files.length} more</p> : null}
+		</section>
+	);
 }
 
 function ReminderCard({ data }: { data: Extract<UiCard, { type: "reminder" }>["data"] }) {

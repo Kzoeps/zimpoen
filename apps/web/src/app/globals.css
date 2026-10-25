@@ -410,11 +410,19 @@ button {
 .composer {
 	flex: none;
 	display: flex;
-	align-items: flex-end;
+	flex-direction: column;
+	align-items: stretch;
 	gap: 8px;
 	width: min(760px, 100%);
 	margin: 0 auto;
 	padding: 8px 16px calc(12px + env(safe-area-inset-bottom));
+}
+
+/* The input and its buttons; the files being attached sit above, in their own tray. */
+.composer__row {
+	display: flex;
+	align-items: flex-end;
+	gap: 8px;
 }
 
 .composer__input {
@@ -737,4 +745,358 @@ button {
 	gap: 8px;
 	margin: 0 0 12px;
 	font-size: 14px;
+}
+
+/* Daily briefing and wrap-up, journal and file cards */
+
+.chip {
+	display: inline-block;
+	margin: 0 0 4px;
+	padding: 1px 10px;
+	border-radius: 999px;
+	background: var(--bg-hover);
+	color: var(--text-muted);
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+}
+
+.chip--late {
+	margin: 0 0 0 8px;
+	background: var(--warn-bg);
+	color: var(--text);
+}
+
+.card--daily {
+	border-left: 4px solid #d9a441;
+}
+
+.card--file {
+	border-left: 4px solid var(--text-muted);
+}
+
+.card__facts {
+	margin-top: 6px;
+}
+
+.card__facts summary {
+	cursor: pointer;
+	font-size: 14px;
+	color: var(--text-muted);
+}
+
+.card__section {
+	margin-top: 10px;
+	font-weight: 600;
+}
+
+.facts {
+	margin: 4px 0 0;
+	padding-left: 1.3em;
+	font-size: 14px;
+}
+
+.facts li {
+	padding: 1px 0;
+	overflow-wrap: anywhere;
+}
+
+.journal-day p {
+	margin: 4px 0 0;
+}
+
+.journal-day + .journal-day,
+.file-detail + .file-detail {
+	margin-top: 10px;
+	padding-top: 10px;
+	border-top: 1px solid var(--border);
+}
+
+.file-detail p {
+	margin: 4px 0 0;
+}
+
+/* Files: in a sent message, in a card, on the capture page */
+
+.msg__files {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 6px;
+	max-width: 85%;
+	margin-bottom: 6px;
+}
+
+.file-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 100%;
+	padding: 6px 12px 6px 8px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background: var(--bg-subtle);
+	color: var(--text);
+	font-size: 14px;
+	text-decoration: none;
+}
+
+.file-chip:hover {
+	background: var(--bg-hover);
+}
+
+.file-chip__thumb {
+	flex: none;
+	width: 56px;
+	height: 56px;
+	border-radius: 8px;
+	background: var(--bg-hover);
+	object-fit: cover;
+}
+
+.file-chip__icon {
+	flex: none;
+	width: 32px;
+	font-size: 22px;
+	line-height: 1;
+	text-align: center;
+}
+
+.file-chip__name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.file-chip__size {
+	flex: none;
+	margin: 0;
+}
+
+/* The paperclip and the files being attached to the message in the composer */
+
+.composer__attach {
+	flex: none;
+	width: 44px;
+	height: 44px;
+	border: 1px solid var(--border);
+	border-radius: 50%;
+	background: var(--bg-subtle);
+	color: var(--text);
+	font-size: 18px;
+	cursor: pointer;
+}
+
+.composer__attach:hover {
+	background: var(--bg-hover);
+}
+
+.attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.attachment {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 100%;
+	padding: 4px 4px 4px 12px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--bg-subtle);
+	font-size: 14px;
+}
+
+.attachment__name {
+	min-width: 0;
+	max-width: 180px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.attachment__progress {
+	flex: none;
+	width: 64px;
+	height: 6px;
+	accent-color: var(--accent);
+}
+
+.attachment__error {
+	font-size: 13px;
+}
+
+.attachment__remove {
+	flex: none;
+	width: 32px;
+	height: 32px;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.attachment__remove:hover {
+	background: var(--bg-hover);
+}
+
+/* A failed file is a card of its own: its name, a way to take it off, and below them the reason in full. */
+.attachment--error {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-areas:
+		"name remove"
+		"error error";
+	column-gap: 8px;
+	width: 100%;
+	padding: 4px 4px 8px 12px;
+	border-color: var(--danger);
+	border-radius: 14px;
+	background: var(--danger-bg);
+	color: var(--danger);
+}
+
+.attachment--error .attachment__name {
+	grid-area: name;
+	align-self: center;
+	max-width: none;
+	font-weight: 600;
+}
+
+.attachment--error .attachment__error {
+	grid-area: error;
+	padding-right: 8px;
+}
+
+.attachment--error .attachment__remove {
+	grid-area: remove;
+}
+
+/* Daily schedule in settings */
+
+.schedule-job {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background: var(--bg);
+}
+
+.schedule-job__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.schedule-job__label {
+	font-weight: 600;
+}
+
+.schedule-job__switch {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 14px;
+}
+
+.schedule-job__row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+}
+
+.schedule-job__row input[type="time"] {
+	padding: 8px 10px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+}
+
+/* Capture page: what the Android share sheet handed over, and who gets it */
+
+.capture {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 20px 16px 40px;
+}
+
+.capture__column {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	max-width: 560px;
+	margin: 0 auto;
+}
+
+.capture__column .notice {
+	width: auto;
+	margin: 0;
+}
+
+.capture__title {
+	margin: 0;
+	font-size: 22px;
+}
+
+.capture__intro {
+	margin: 0;
+	color: var(--text-muted);
+}
+
+.capture__files {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.capture__field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 14px;
+	color: var(--text-muted);
+}
+
+.capture__field select,
+.capture__text {
+	padding: 9px 12px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background: var(--bg-subtle);
+	color: var(--text);
+	font: inherit;
+	outline: none;
+}
+
+.capture__text {
+	resize: vertical;
+	line-height: 1.4;
+}
+
+.capture__field select:focus,
+.capture__text:focus {
+	border-color: var(--accent);
+}
+
+.capture__actions {
+	display: flex;
+	align-items: center;
+	gap: 16px;
 }

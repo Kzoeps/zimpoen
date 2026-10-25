@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentSummary } from "@assistant/shared";
+import { type AgentSummary, withAttachments } from "@assistant/shared";
 import {
 	type AppendMessage,
 	AssistantRuntimeProvider,
@@ -13,15 +13,18 @@ import {
 } from "@assistant-ui/react";
 import { useEffect, useMemo } from "react";
 import { useStore } from "zustand";
+import { attached } from "../lib/attachments.ts";
 import { convertMessage } from "../lib/convert-message.ts";
 import type { Notice } from "../lib/thread-state.ts";
 import { threadFor } from "../lib/thread-store.ts";
-import { toUiMessages, type UiCard, type UiMessage } from "../lib/ui-messages.ts";
-import { CardView } from "./cards.tsx";
+import { toUiMessages, type UiAttachment, type UiCard, type UiMessage } from "../lib/ui-messages.ts";
+import { CardView, FileChip } from "./cards.tsx";
 import { useChat } from "./chat-context.tsx";
+import { AttachButton, type AttachmentsState, AttachmentTray, useAttachments } from "./composer-attachments.tsx";
 
 export function ThreadView({ agent }: { agent: AgentSummary }) {
-	const { runtime, thread, notice } = useAgentThread(agent);
+	const attachments = useAttachments();
+	const { runtime, thread, notice, sendFiles } = useAgentThread(agent, attachments);
 
 	return (
 		<AssistantRuntimeProvider runtime={runtime}>
@@ -64,7 +67,7 @@ export function ThreadView({ agent }: { agent: AgentSummary }) {
 						{notice.message}
 					</p>
 				) : null}
-				<Composer agent={agent} />
+				<Composer agent={agent} attachments={attachments} sendFiles={sendFiles} />
 			</ThreadPrimitive.Root>
 		</AssistantRuntimeProvider>
 	);
@@ -74,7 +77,7 @@ export function ThreadView({ agent }: { agent: AgentSummary }) {
  * Connects the open conversation to assistant-ui: the store's state in, the user's send / stop / load-earlier out.
  * The connection lives exactly as long as the component.
  */
-function useAgentThread(agent: AgentSummary) {
+function useAgentThread(agent: AgentSummary, attachments: AttachmentsState) {
 	const { store, refresh } = useChat();
 	const thread = useStore(store, (state) => threadFor(state, agent.conversationId));
 	const sendError = useStore(store, (state) => state.sendError);
@@ -101,18 +104,30 @@ function useAgentThread(agent: AgentSummary) {
 		onLoadEarlier: () => store.getState().loadEarlier(),
 		onNew: async (message: AppendMessage) => {
 			try {
-				await store.getState().send(textOf(message));
+				// The files are already stored (they upload when picked): the message only names them.
+				await store.getState().send(withAttachments(textOf(message), attached(attachments.current())));
 			} catch {
 				// The send never reached the server: hand the text back to the composer; the reason is shown below it.
 				throw new MessageNotSentError("The message was not sent.");
 			}
+			attachments.clear();
 		},
 		onCancel: () => store.getState().stop(),
 	});
 
 	// A failed send outranks whatever the thread is saying: it is what the user just did.
 	const notice: Notice | undefined = sendError === undefined ? thread?.notice : { kind: "error", message: sendError };
-	return { runtime, thread, notice };
+
+	/** Send the attached files alone: assistant-ui's own send button needs words. A failure stays on the composer's notice. */
+	const sendFiles = async (): Promise<void> => {
+		try {
+			await store.getState().send(withAttachments("", attached(attachments.current())));
+			attachments.clear();
+		} catch {
+			// `send` has already put the reason in `sendError`, which the notice shows; the files stay attached.
+		}
+	};
+	return { runtime, thread, notice, sendFiles };
 }
 
 function textOf(message: AppendMessage): string {
@@ -140,11 +155,25 @@ function EmptyThread({ agent }: { agent: AgentSummary }) {
 
 function UserMessage() {
 	const notAnswered = useAuiState((state) => state.message.metadata.custom.notAnswered);
+	const files = useAuiState((state) => state.message.metadata.custom.files) as UiAttachment[] | undefined;
+	// Files sent on their own have no words: the chips stand alone, without an empty bubble under them.
+	const hasText = useAuiState((state) =>
+		state.message.parts.some((part) => part.type === "text" && part.text.trim() !== ""),
+	);
 	return (
 		<MessagePrimitive.Root className="msg msg--user">
-			<div className="msg__bubble">
-				<MessagePrimitive.Parts components={{ Text: PlainText }} />
-			</div>
+			{files !== undefined && files.length > 0 ? (
+				<div className="msg__files">
+					{files.map((file) => (
+						<FileChip key={file.id} file={file} />
+					))}
+				</div>
+			) : null}
+			{hasText ? (
+				<div className="msg__bubble">
+					<MessagePrimitive.Parts components={{ Text: PlainText }} />
+				</div>
+			) : null}
 			{typeof notAnswered === "string" ? <p className="status status--error msg__unanswered">{notAnswered}</p> : null}
 		</MessagePrimitive.Root>
 	);
@@ -163,12 +192,14 @@ function CardMessage() {
 
 function AssistantMessage({ agent }: { agent: AgentSummary }) {
 	const status = useAuiState((state) => state.message.status);
+	const chip = useAuiState((state) => state.message.metadata.custom.chip);
 	return (
 		<MessagePrimitive.Root className="msg msg--assistant">
 			<span className="msg__avatar" aria-hidden="true">
 				{agent.avatar}
 			</span>
 			<div className="msg__body">
+				{typeof chip === "string" ? <span className="chip">{chip}</span> : null}
 				<MessagePrimitive.Parts components={{ Text: PlainText, Reasoning }} />
 				<StatusLine status={status} />
 			</div>
@@ -226,26 +257,55 @@ function WaitingForAnswer({ agent }: { agent: AgentSummary }) {
 	);
 }
 
-function Composer({ agent }: { agent: AgentSummary }) {
+function Composer({
+	agent,
+	attachments,
+	sendFiles,
+}: {
+	agent: AgentSummary;
+	attachments: AttachmentsState;
+	sendFiles: () => Promise<void>;
+}) {
 	const running = useAuiState((state) => state.thread.isRunning);
+	const text = useAuiState((state) => state.thread.composer.text);
+	// Files with no words: assistant-ui's send button wants text, so this one names the files alone.
+	const filesOnly = text.trim() === "" && attachments.ready.length > 0;
 	return (
 		<ComposerPrimitive.Root className="composer">
-			<ComposerPrimitive.Input
-				className="composer__input"
-				placeholder={`Message ${agent.name}`}
-				rows={1}
-				maxRows={8}
-				aria-label={`Message ${agent.name}`}
-			/>
-			{running ? (
-				<ComposerPrimitive.Cancel className="composer__button composer__button--stop" aria-label="Stop answering">
-					■
-				</ComposerPrimitive.Cancel>
-			) : (
-				<ComposerPrimitive.Send className="composer__button" aria-label="Send message">
-					↑
-				</ComposerPrimitive.Send>
-			)}
+			<AttachmentTray attachments={attachments} />
+			<div className="composer__row">
+				<AttachButton attachments={attachments} />
+				<ComposerPrimitive.Input
+					className="composer__input"
+					placeholder={attachments.list.length > 0 ? "Add a note (optional)" : `Message ${agent.name}`}
+					rows={1}
+					maxRows={8}
+					aria-label={`Message ${agent.name}`}
+				/>
+				{running ? (
+					<ComposerPrimitive.Cancel className="composer__button composer__button--stop" aria-label="Stop answering">
+						■
+					</ComposerPrimitive.Cancel>
+				) : filesOnly ? (
+					<button
+						type="button"
+						className="composer__button"
+						aria-label="Send files"
+						disabled={attachments.uploading}
+						onClick={() => void sendFiles()}
+					>
+						↑
+					</button>
+				) : (
+					<ComposerPrimitive.Send
+						className="composer__button"
+						aria-label="Send message"
+						disabled={attachments.uploading}
+					>
+						↑
+					</ComposerPrimitive.Send>
+				)}
+			</div>
 		</ComposerPrimitive.Root>
 	);
 }

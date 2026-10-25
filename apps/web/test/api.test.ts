@@ -3,10 +3,15 @@ import {
 	ApiRequestError,
 	decideApproval,
 	fetchAgents,
+	fetchSchedule,
+	fileUrl,
 	retryTask,
 	sendMessage,
+	type UploadRequest,
 	unsubscribePush,
 	updateAgentSettings,
+	updateSchedule,
+	uploadFile,
 } from "../src/lib/api.ts";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -133,5 +138,174 @@ describe("the M2 calls", () => {
 		const [url, init] = lastCall();
 		expect(url).toBe("/api/admin/tasks/17/retry");
 		expect(init.method).toBe("POST");
+	});
+});
+
+describe("the daily schedule and file calls", () => {
+	const lastCall = (): [string, RequestInit] => {
+		const calls = vi.mocked(fetch).mock.calls;
+		return calls[calls.length - 1] as unknown as [string, RequestInit];
+	};
+
+	it("reads the schedule, and changes one job with a JSON PUT that names the job", async () => {
+		stubFetch(() => Response.json({ timezone: "Asia/Thimphu", jobs: [] }));
+
+		await fetchSchedule();
+		expect(lastCall()[0]).toBe("/api/settings/schedule");
+
+		await updateSchedule("briefing", { localTime: "07:45", enabled: true });
+		const [url, init] = lastCall();
+		expect(url).toBe("/api/settings/schedule/briefing");
+		expect(init).toMatchObject({ method: "PUT", headers: { "content-type": "application/json" } });
+		expect(JSON.parse(init.body as string)).toStrictEqual({ localTime: "07:45", enabled: true });
+	});
+
+	it("names a stored file's address by its id, so that an image opens in the page and anything else downloads", () => {
+		expect(fileUrl("fi_0a1b2c3d")).toBe("/api/files/fi_0a1b2c3d");
+		expect(fileUrl("a/b")).toBe("/api/files/a%2Fb");
+	});
+});
+
+describe("uploading a file", () => {
+	type Handler = ((this: unknown, event: never) => unknown) | null;
+
+	/** Stands in for `XMLHttpRequest`: the test decides what the network does and when. */
+	function fakeRequest() {
+		const sent: { method?: string; url?: string; body?: FormData } = {};
+		const xhr = {
+			status: 0,
+			responseText: "",
+			onload: null as Handler,
+			onerror: null as Handler,
+			onabort: null as Handler,
+			upload: { onprogress: null as Handler },
+			open(method: string, url: string) {
+				sent.method = method;
+				sent.url = url;
+			},
+			send(body: FormData) {
+				sent.body = body;
+			},
+			abort: vi.fn(() => {
+				xhr.onabort?.call(xhr, new Event("abort") as never);
+			}),
+		};
+		return {
+			sent,
+			xhr,
+			create: () => xhr as unknown as UploadRequest,
+			progress(loaded: number, total: number, lengthComputable = true) {
+				xhr.upload.onprogress?.call(xhr.upload, { loaded, total, lengthComputable } as never);
+			},
+			answer(status: number, body: string) {
+				xhr.status = status;
+				xhr.responseText = body;
+				xhr.onload?.call(xhr, new Event("load") as never);
+			},
+			networkError() {
+				xhr.onerror?.call(xhr, new Event("error") as never);
+			},
+		};
+	}
+
+	const photo = () => new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" });
+	const storedBody = JSON.stringify({
+		file: {
+			id: "fi_0a1b2c3d",
+			name: "photo.png",
+			mime: "image/png",
+			kind: "image",
+			size: 3,
+			source: "upload",
+			addedAt: 1,
+		},
+	});
+
+	it("posts the file as a multipart form to the upload route and resolves with the stored file", async () => {
+		const request = fakeRequest();
+
+		const upload = uploadFile(photo(), () => {}, request.create);
+		request.answer(201, storedBody);
+
+		await expect(upload.done).resolves.toMatchObject({ file: { id: "fi_0a1b2c3d", name: "photo.png" } });
+		expect(request.sent.method).toBe("POST");
+		expect(request.sent.url).toBe("/api/uploads");
+		const part = request.sent.body?.get("file") as File;
+		expect(part.name).toBe("photo.png");
+		expect(part.size).toBe(3);
+	});
+
+	it("reports how much of the body has gone as a fraction, never above one, and skips what cannot be measured", () => {
+		const request = fakeRequest();
+		const seen: number[] = [];
+
+		uploadFile(photo(), (fraction) => seen.push(fraction), request.create);
+		request.progress(0, 100);
+		request.progress(25, 100);
+		request.progress(50, 0); // no total
+		request.progress(99, 100, false); // the browser could not tell
+		request.progress(130, 100); // multipart framing makes the sent bytes exceed the file's
+
+		expect(seen).toStrictEqual([0, 0.25, 1]);
+	});
+
+	it.each([
+		[413, { error: { code: "payload_too_large", message: "That file is over 20 MB." } }, "That file is over 20 MB."],
+		[
+			415,
+			{ error: { code: "invalid_request", message: "The assistant takes images, PDFs, CSV and text files." } },
+			"The assistant takes images, PDFs, CSV and text files.",
+		],
+		[
+			403,
+			{ error: { code: "forbidden", message: "This page is not one the assistant answers." } },
+			"This page is not one the assistant answers.",
+		],
+	])("shows the server's own words for a %d", async (status, body, message) => {
+		const request = fakeRequest();
+
+		const upload = uploadFile(photo(), () => {}, request.create);
+		request.answer(status, JSON.stringify(body));
+
+		const failure = await upload.done.catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(ApiRequestError);
+		expect(failure).toMatchObject({ status, message });
+	});
+
+	it("says the server may be restarting when a proxy answers 5xx with its own page, and plainly for other statuses", async () => {
+		const bad = fakeRequest();
+		const upload502 = uploadFile(photo(), () => {}, bad.create);
+		bad.answer(502, "<h1>Bad gateway</h1>");
+		const failure502 = await upload502.done.catch((error: unknown) => error);
+		expect(failure502).toMatchObject({ status: 502, code: "http_error" });
+		expect((failure502 as Error).message).toMatch(/not answering properly \(HTTP 502\).*restarting/);
+
+		const missing = fakeRequest();
+		const upload404 = uploadFile(photo(), () => {}, missing.create);
+		missing.answer(404, "");
+		await expect(upload404.done).rejects.toMatchObject({ status: 404, message: "The server answered 404." });
+	});
+
+	it("tells the owner the upload did not reach the assistant when the network fails", async () => {
+		const request = fakeRequest();
+
+		const upload = uploadFile(photo(), () => {}, request.create);
+		request.networkError();
+
+		await expect(upload.done).rejects.toMatchObject({
+			status: 0,
+			code: "network",
+			message: expect.stringMatching(/did not reach the assistant/),
+		});
+	});
+
+	it("stops the upload on abort, and the rejection says it was cancelled so that the composer does not show an error", async () => {
+		const request = fakeRequest();
+
+		const upload = uploadFile(photo(), () => {}, request.create);
+		upload.abort();
+
+		expect(request.xhr.abort).toHaveBeenCalledOnce();
+		await expect(upload.done).rejects.toMatchObject({ code: "aborted" });
 	});
 });

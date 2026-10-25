@@ -20,7 +20,16 @@ export function convertMessage(message: UiMessage): ThreadMessageLike {
 			id: message.id,
 			createdAt: new Date(message.createdAt),
 			content: [{ type: "text", text: message.text }],
-			...(message.notAnswered === undefined ? {} : { metadata: { custom: { notAnswered: message.notAnswered } } }),
+			...(message.notAnswered === undefined && message.files === undefined
+				? {}
+				: {
+						metadata: {
+							custom: {
+								...(message.notAnswered === undefined ? {} : { notAnswered: message.notAnswered }),
+								...(message.files === undefined ? {} : { files: message.files }),
+							},
+						},
+					}),
 		};
 	}
 	return {
@@ -29,6 +38,7 @@ export function convertMessage(message: UiMessage): ThreadMessageLike {
 		createdAt: new Date(message.createdAt),
 		content: message.parts.map((part) => ({ type: part.type, text: part.text })),
 		status: statusOf(message.status),
+		...(message.chip === undefined ? {} : { metadata: { custom: { chip: message.chip } } }),
 	};
 }
 

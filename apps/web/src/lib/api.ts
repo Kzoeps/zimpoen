@@ -9,9 +9,12 @@ import type {
 	PushConfigResponse,
 	PushSubscribeRequest,
 	RetryTaskResponse,
+	ScheduleSettingsResponse,
 	SendMessageRequest,
 	SendMessageResponse,
 	UpdateAgentSettingsRequest,
+	UpdateScheduleRequest,
+	UploadResponse,
 } from "@assistant/shared";
 
 /** A failed call to the server, with a message fit to show the user. `status` is 0 when the server was unreachable. */
@@ -96,6 +99,82 @@ export const unsubscribePush = (endpoint: string): Promise<{ removed: boolean }>
 	request("/api/push/subscribe", json({ endpoint }, "DELETE"));
 
 export const streamUrl = (conversationId: number): string => `/api/conversations/${conversationId}/stream`;
+
+export const fetchSchedule = (): Promise<ScheduleSettingsResponse> => request("/api/settings/schedule");
+
+export const updateSchedule = (job: string, change: UpdateScheduleRequest): Promise<ScheduleSettingsResponse> =>
+	request(`/api/settings/schedule/${encodeURIComponent(job)}`, json(change, "PUT"));
+
+/** Where an uploaded file can be opened: images are shown, everything else downloads. */
+export const fileUrl = (id: string): string => `/api/files/${encodeURIComponent(id)}`;
+
+/** The part of `XMLHttpRequest` that {@link uploadFile} uses, so that tests can stand in for it. */
+export type UploadRequest = Pick<
+	XMLHttpRequest,
+	"open" | "send" | "abort" | "status" | "responseText" | "onload" | "onerror" | "onabort"
+> & { upload: Pick<XMLHttpRequest["upload"], "onprogress"> };
+
+export type Upload = {
+	/** Resolves with the stored file; rejects with an {@link ApiRequestError} whose message is fit to show. */
+	done: Promise<UploadResponse>;
+	/** Stops the upload. `done` then rejects with code `aborted`. */
+	abort(): void;
+};
+
+/**
+ * Upload one file to the server. Not `fetch`: only `XMLHttpRequest` reports how much of the body has been sent, which is
+ * what the progress bar shows on a phone. The browser sets the multipart boundary and `Sec-Fetch-Site: same-origin`,
+ * which the server requires for this route (`docs/design-notes.md`).
+ */
+export function uploadFile(
+	file: File,
+	onProgress: (fraction: number) => void,
+	create: () => UploadRequest = () => new XMLHttpRequest(),
+): Upload {
+	const xhr = create();
+	const done = new Promise<UploadResponse>((resolve, reject) => {
+		xhr.open("POST", "/api/uploads");
+		xhr.upload.onprogress = (event) => {
+			if (event.lengthComputable && event.total > 0) onProgress(Math.min(event.loaded / event.total, 1));
+		};
+		xhr.onload = () => {
+			const body = parseJson(xhr.responseText);
+			if (xhr.status >= 200 && xhr.status < 300) return resolve(body as UploadResponse);
+			const error = (body as Partial<ApiErrorBody> | undefined)?.error;
+			reject(
+				new ApiRequestError(
+					xhr.status,
+					error?.code ?? "http_error",
+					error?.message ??
+						(xhr.status >= 500
+							? `The assistant server is not answering properly (HTTP ${xhr.status}). It may be restarting: try again in a few seconds.`
+							: `The server answered ${xhr.status}.`),
+				),
+			);
+		};
+		xhr.onerror = () =>
+			reject(
+				new ApiRequestError(
+					0,
+					"network",
+					"The upload did not reach the assistant. Check that you are connected and try again.",
+				),
+			);
+		xhr.onabort = () => reject(new ApiRequestError(0, "aborted", "The upload was cancelled."));
+		const form = new FormData();
+		form.set("file", file, file.name);
+		xhr.send(form);
+	});
+	return { done, abort: () => xhr.abort() };
+}
+
+function parseJson(text: string): unknown {
+	try {
+		return JSON.parse(text);
+	} catch {
+		return undefined;
+	}
+}
 
 /** Idempotency key for one message. `crypto.randomUUID` needs a secure context, so fall back to random bytes. */
 export function newRequestId(): string {

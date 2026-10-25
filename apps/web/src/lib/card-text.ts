@@ -1,4 +1,4 @@
-import type { FollowupCard, PersonCard, TaskCard } from "@assistant/shared";
+import type { FileCard, FollowupCard, JournalCard, PersonCard, TaskCard } from "@assistant/shared";
 import type { UiCard } from "./ui-messages.ts";
 
 /** Words for each kind of task event, as the card's heading says them. */
@@ -21,6 +21,16 @@ export const PERSON_EVENT_LABEL: Record<PersonCard["event"], string> = {
 	created: "Birthday saved",
 	updated: "Person updated",
 	wish: "Noted",
+};
+
+export const JOURNAL_EVENT_LABEL: Record<JournalCard["event"], string> = {
+	saved: "Journal saved",
+	shown: "Journal",
+};
+
+export const FILE_EVENT_LABEL: Record<FileCard["event"], string> = {
+	described: "File described",
+	registered: "File found",
 };
 
 /**
@@ -57,5 +67,15 @@ export function cardSummary(card: UiCard): string {
 			return `${card.heading}: ${card.total}`;
 		case "approval":
 			return `Approval needed: ${card.summary}`;
+		case "daily":
+			return card.data.empty === true
+				? `Morning briefing, ${card.data.dateText}: nothing today`
+				: `${card.data.job === "briefing" ? "Morning briefing" : "Evening wrap-up"}, ${card.data.dateText}`;
+		case "journal":
+			return `${JOURNAL_EVENT_LABEL[card.event]}: ${card.entries.map((entry) => entry.date).join(", ")}`;
+		case "file":
+			return `${FILE_EVENT_LABEL[card.event]}: ${card.file.name}`;
+		case "file_list":
+			return `${card.heading}: ${card.total}`;
 	}
 }

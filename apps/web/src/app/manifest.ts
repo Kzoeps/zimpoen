@@ -12,6 +12,35 @@ export default function manifest(): MetadataRoute.Manifest {
 		start_url: "/chat/pa",
 		scope: "/",
 		display: "standalone",
+		// "Share → Assistant" on Android: the share sheet posts the title, text, link and files to /share, which stores the
+		// files and opens the capture page. The service worker has no fetch handler, so the post reaches the route as it is.
+		share_target: {
+			action: "/share",
+			method: "POST",
+			enctype: "multipart/form-data",
+			params: {
+				title: "title",
+				text: "text",
+				url: "url",
+				files: [
+					{
+						name: "files",
+						accept: [
+							"image/png",
+							"image/jpeg",
+							"image/gif",
+							"image/webp",
+							"application/pdf",
+							"text/csv",
+							"text/plain",
+							".csv",
+							".txt",
+							".md",
+						],
+					},
+				],
+			},
+		},
 		background_color: "#171717",
 		theme_color: "#171717",
 		icons: [

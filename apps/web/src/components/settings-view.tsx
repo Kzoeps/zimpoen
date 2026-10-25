@@ -14,6 +14,7 @@ import {
 	withModel,
 } from "../lib/settings-form.ts";
 import { NotificationsCard } from "./notifications-card.tsx";
+import { ScheduleCard } from "./schedule-card.tsx";
 
 const messageOf = (error: unknown, fallback: string): string =>
 	error instanceof ApiRequestError ? error.message : fallback;
@@ -46,6 +47,7 @@ export function SettingsView() {
 					</p>
 				) : null}
 				<NotificationsCard />
+				<ScheduleCard />
 				{data === undefined && error === undefined ? <p className="placeholder">Loading…</p> : null}
 				{data !== undefined && offeredModels(data.models, "", false).length < data.models.length ? (
 					<label className="settings-card__check">
