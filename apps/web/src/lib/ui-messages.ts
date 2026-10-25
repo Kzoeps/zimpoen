@@ -9,6 +9,7 @@ import {
 	DAILY_ENTRY_KIND,
 	type DailyEntryData,
 	type EntryRecord,
+	type ExerciseChartCard,
 	type FileCard,
 	type FileListCard,
 	FOLLOWUP_ENTRY_KIND,
@@ -27,6 +28,10 @@ import {
 	type TaskCard,
 	type TaskListCard,
 	toolCardOf,
+	type WeightCard,
+	type WeightChartCard,
+	type WorkoutCard,
+	type WorkoutListCard,
 } from "@assistant/shared";
 import { explainUnanswered, type ThreadState } from "./thread-state.ts";
 
@@ -75,6 +80,11 @@ export type UiCard =
 	| FollowupListCard
 	| PersonCard
 	| PeopleListCard
+	| WeightCard
+	| WeightChartCard
+	| ExerciseChartCard
+	| WorkoutCard
+	| WorkoutListCard
 	| { type: "approval"; actionId: string; summary: string; expiresAt: number; state: ApprovalCardState };
 
 /** A file a message of the owner's carries, read back from the line that references it. */

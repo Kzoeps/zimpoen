@@ -1,4 +1,12 @@
-import type { FileCard, FollowupCard, JournalCard, PersonCard, TaskCard } from "@assistant/shared";
+import {
+	type FileCard,
+	type FollowupCard,
+	formatKg,
+	type JournalCard,
+	type PersonCard,
+	type TaskCard,
+	type WeightCard,
+} from "@assistant/shared";
 import type { UiCard } from "./ui-messages.ts";
 
 /** Words for each kind of task event, as the card's heading says them. */
@@ -26,6 +34,11 @@ export const PERSON_EVENT_LABEL: Record<PersonCard["event"], string> = {
 export const JOURNAL_EVENT_LABEL: Record<JournalCard["event"], string> = {
 	saved: "Journal saved",
 	shown: "Journal",
+};
+
+export const WEIGHT_EVENT_LABEL: Record<WeightCard["event"], string> = {
+	logged: "Weight logged",
+	updated: "Weight updated",
 };
 
 export const FILE_EVENT_LABEL: Record<FileCard["event"], string> = {
@@ -76,6 +89,16 @@ export function cardSummary(card: UiCard): string {
 		case "file":
 			return `${FILE_EVENT_LABEL[card.event]}: ${card.file.name}`;
 		case "file_list":
+			return `${card.heading}: ${card.total}`;
+		case "weight":
+			return `${WEIGHT_EVENT_LABEL[card.event]}: ${formatKg(card.kg)} kg, ${card.day.dateText}`;
+		case "weight_chart":
+			return `${card.heading}: ${card.summary.entries} ${card.summary.entries === 1 ? "entry" : "entries"}, latest ${formatKg(card.summary.latest.kg)} kg`;
+		case "exercise_chart":
+			return `${card.heading}: ${card.summary.sessions} ${card.summary.sessions === 1 ? "day" : "days"}`;
+		case "workout":
+			return `Workout logged: ${card.workout.dateText}, ${card.workout.exercises.map((exercise) => exercise.name).join(", ")}`;
+		case "workout_list":
 			return `${card.heading}: ${card.total}`;
 	}
 }

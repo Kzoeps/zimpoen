@@ -1100,3 +1100,190 @@ button {
 	align-items: center;
 	gap: 16px;
 }
+
+/* Health: weight and workout cards, and their charts. The charts are SVG drawn from lib/chart.ts and scale with the card. */
+
+.card--health {
+	border-left: 4px solid #3fa66b;
+}
+
+.card--chart {
+	width: min(100%, 520px);
+}
+
+.card__big {
+	margin: 4px 0 0;
+	font-size: 28px;
+	font-weight: 700;
+	line-height: 1.2;
+}
+
+.chart {
+	display: block;
+	width: 100%;
+	height: auto;
+	margin: 8px 0 0;
+	overflow: visible;
+}
+
+.chart__grid line {
+	stroke: var(--border);
+	stroke-width: 1;
+}
+
+.chart__axis text {
+	fill: var(--text-muted);
+	font-size: 10px;
+}
+
+/* The drawing is scaled to the card: on a phone it is about 285 px wide for 360 units, so the same 10 units would be 8 px. */
+@media (max-width: 480px) {
+	.chart__axis text {
+		font-size: 12.5px;
+	}
+}
+
+.chart__series path {
+	stroke: var(--accent);
+	stroke-width: 2;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+}
+
+.chart__series--raw .chart__dot {
+	fill: var(--text-muted);
+	opacity: 0.55;
+}
+
+.chart__series--points .chart__dot {
+	fill: var(--accent);
+}
+
+/* Two classes, like the rule above it, so that a record is amber (as its key says) and not the line's blue. */
+.chart__series .chart__dot--pr {
+	fill: #d9a441;
+	stroke: var(--bg);
+	stroke-width: 1.5;
+	opacity: 1;
+}
+
+.chart__legend {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px 10px;
+	margin-top: 4px;
+}
+
+/* A key and its word stay together when the legend wraps. */
+.chart__note {
+	white-space: nowrap;
+}
+
+.chart__key {
+	display: inline-block;
+	width: 10px;
+	height: 10px;
+	margin-right: 4px;
+	border-radius: 50%;
+	vertical-align: middle;
+}
+
+.chart__key--raw {
+	background: var(--text-muted);
+	opacity: 0.55;
+}
+
+.chart__key--avg {
+	width: 14px;
+	height: 3px;
+	border-radius: 2px;
+	background: var(--accent);
+}
+
+.chart__key--pr {
+	background: #d9a441;
+}
+
+.stats {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+	gap: 8px 12px;
+	margin: 10px 0 0;
+}
+
+.stat {
+	min-width: 0;
+}
+
+.stat__label {
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.stat__value {
+	margin: 0;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.stat__note {
+	display: block;
+	font-size: 12px;
+	font-weight: 400;
+	color: var(--text-muted);
+}
+
+.days,
+.lifts {
+	margin: 10px 0 0;
+	padding: 0;
+	list-style: none;
+	font-size: 14px;
+}
+
+.days li,
+.lift {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 2px 8px;
+	padding: 3px 0;
+}
+
+.days__date {
+	min-width: 3.4em;
+	color: var(--text-muted);
+}
+
+.lift__name {
+	font-weight: 600;
+}
+
+.badge {
+	display: inline-block;
+	padding: 0 8px;
+	border-radius: 999px;
+	background: var(--bg-hover);
+	color: var(--text-muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.badge--pr {
+	background: #f5e4b8;
+	color: #5c4310;
+}
+
+@media (prefers-color-scheme: dark) {
+	.badge--pr {
+		background: #4a3b14;
+		color: #f5e4b8;
+	}
+}
+
+.workout + .workout {
+	margin-top: 10px;
+	padding-top: 10px;
+	border-top: 1px solid var(--border);
+}

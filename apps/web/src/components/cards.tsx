@@ -23,6 +23,13 @@ import {
 	TASK_EVENT_LABEL,
 } from "../lib/card-text.ts";
 import type { ApprovalCardState, UiAttachment, UiCard } from "../lib/ui-messages.ts";
+import {
+	ExerciseChartView,
+	WeightChartView,
+	WeightLoggedView,
+	WorkoutListView,
+	WorkoutLoggedView,
+} from "./health-charts.tsx";
 
 /** One non-chat item of the thread: a reminder, an agenda, a question, a birthday, a notice, a task, a follow-up, a person, a list, or a request for approval. */
 export function CardView({ card }: { card: UiCard }) {
@@ -59,6 +66,16 @@ export function CardView({ card }: { card: UiCard }) {
 			return <FileToolCard event={card.event} file={card.file} />;
 		case "file_list":
 			return <FileListCardView heading={card.heading} files={card.files} total={card.total} />;
+		case "weight":
+			return <WeightLoggedView card={card} />;
+		case "weight_chart":
+			return <WeightChartView card={card} />;
+		case "exercise_chart":
+			return <ExerciseChartView card={card} />;
+		case "workout":
+			return <WorkoutLoggedView card={card} />;
+		case "workout_list":
+			return <WorkoutListView card={card} />;
 	}
 }
 
