@@ -520,3 +520,125 @@ PA has none of them (capability by tool presence; a whole-server test shows the 
   by rendering to markup. The drawing scales through its `viewBox` (360 x 176), colours are CSS variables, so a 390 px phone and dark
   mode need no special case. Vitest turns JSX into calls through `oxc.jsx` in `vitest.config.ts` (the web app's `tsconfig` says
   `preserve` because Next compiles it).
+
+## Accountant: ledger, splits, invoices
+
+Three modules (`packages/extensions/src/ledger/`, `splits/`, `invoices/`) belong to the Accountant agent alone. Its extension list
+is `ledger`, `splits`, `invoices`, `files` (receipts and statements are read with `read_file`), the approval hook, `tool_search`
+and code mode; the PA and the other agents have none of the three modules' tools (a whole-server test shows the PA's
+`/tool add_expense` refused). Rule 7 is the point of all three: **every number is computed in code**, and the instructions
+(`ACCOUNTANT_RULES` in `apps/server/src/agents.ts`) tell the model to pass amounts exactly as stated and never to add, convert or
+split anything itself.
+
+- **Money is integers, and text becomes an integer by its digits.** Storage is `INTEGER` minor units in `STRICT` tables (chhertum,
+  cents, paise; `currencyExponent` knows the few currencies that are not hundredths), signed from the account's side. A tool call
+  carries an amount as a JSON number of major units; `toMinor` reads the *digits* of its shortest decimal form (`19.99` is 1999, never
+  `19.99 * 100`) and refuses more decimals than the currency has instead of rounding: `12.345` for BTN, or a `1004.9999999999999` the
+  model computed, is an error that says so. Sums, shares and conversions are BigInt, rounded half away from zero once.
+  Nothing is fetched: an exchange rate is a number the owner gave (`ledger_fx`, insert-only, six decimals).
+- **A balance is the latest stated balance plus what was written after it.** `set_balance` stores a snapshot (the amount, the day and
+  the highest entry `seq` it saw). Entries dated after the day count, entries dated before are inside the stated balance, and entries
+  of that same day count only if they were written after it. That makes "I spent 450 on lunch, my balance is 12,000" and the same two
+  sentences the other way round both right, and a backdated snapshot never replaces a newer one. `set_balance` reports the difference
+  against what the entries explained and writes no adjustment entry: the owner's statement is the truth, and the difference is told, not hidden.
+- **Spending is outflow that is not a transfer.** A transfer is two entries sharing a `transfer_id`; it is neither spending nor income.
+  Income (a refund too) is reported next to spending and never netted against it. Shares of a summary are tenths of a percent from the
+  same largest-remainder `allocate` as everything else, so they add up to exactly 100.0 %. Other currencies are listed apart unless
+  `convert_to` is given, and then each entry converts at the owner's latest rate on or before its day.
+- **A CSV is imported in two steps, and what was shown is what is written.** `import_csv` reads the file through `api.env` (the path
+  policy holds), detects the encoding (UTF-8 with or without a BOM, UTF-16, else Windows-1252), the separator, the header (it may sit
+  below title lines), the columns and the date order (day-first when every date is ambiguous, and the preview says so), and keeps the
+  parsed rows in `ledger_import` with the preview. `confirm_import` writes those rows, not a second reading of the file. Entries are
+  deduplicated by a fingerprint (account, day, amount, description, and a counter for identical rows within one file) in
+  `ledger_txn.import_hash UNIQUE`, so the same statement twice, or two that overlap, adds nothing. Confirming is idempotent by status
+  and by its call id. A preview nobody confirms stays in the table until it is.
+- **A statement is text from outside, and a wrong reading costs the owner's numbers.** Four rules come from that.
+  *Reading is linear*: the clock time at the end of a date cell is found by one pass over its colons (the regular expression it
+  replaced was quadratic, and one cell of 40,000 spaces held the server's only thread for six seconds), and a cell longer than any
+  date is not a date. *Which way the money went* is read from a column of DR/CR or Debit/Credit words (`mapping.direction`) next to
+  one unsigned amount, from `Amount (Dr/Cr)` with the word in each cell, or from separate debit and credit columns; a header that says
+  Debit over cells that say DR or CR is one signed column, and the narration beats a reference number as the description. The
+  preview *warns* when ten or more rows all go one way and says what to check. *A row that repeats an entry already there* is
+  found by account, amount and a date within two days of an entry typed in chat or read from a receipt (each entry answers for one
+  row, the nearest day first, never an entry another import wrote): such rows are listed with the entry they look like and are left out
+  unless `confirm_import` is given their line (`include_lines`) or `include_matches`, so that the owner's lunch is not counted once
+  from chat and once from the bank. Rows dated after today are left out, as the chat refuses such a day. *A wrong import can be taken
+  back as a unit*: `propose_undo_import` asks for approval and then deletes the entries whose `source_ref` is the import
+  (`ledger/004_undo` marks the import `undone_at`; confirming it again is refused and the file can be read again).
+- **A bulk recategorization can be seen first and taken back.** `recategorize` matches a merchant by its key (case, accents,
+  punctuation and order numbers aside): the whole name by default, whole words with `match: "words"`, never a piece of a word ("tea"
+  no longer takes "Steak House"). More than 20 entries change only on a second call with `confirm: true`, after the first showed the
+  merchants, the categories they come from and a sample. Each change is a batch that keeps every entry's earlier category
+  (`ledger_recategorization`), and `undo_recategorize` puts back what is still in the category the batch gave it.
+- **Every tool is idempotent by its call id (rule 8).** Entry-creating tools use `source_call_id UNIQUE` (a transfer's second leg is
+  `<call>:in`, an import's rows `<call>:<n>`); tools that change a row that exists (`recategorize`, `archive_account`,
+  `set_invoice_profile`) record their call in a ledger table in the same transaction, so a replay after a crash is recognised and a
+  later change is not undone; each looks for its own earlier result before it reads the clock, so a call replayed days later says the
+  same words. Deleting an entry or a bill is `propose_delete_*` and the owner's approval, like everywhere else.
+- **Code mode, without the paid calls, and with a time limit that is really applied.** The accountant can write a script; it is
+  given `ledger_query` and `ledger_accounts` (`callers: ["tools"]`: not offered to the model, callable from a script) and may call every
+  other tool the Accountant has, the writes included, each under the same approval hook (a script calling `delete_txn` is blocked); it
+  has no network, no files and no model. The sandbox is QuickJS in a worker (256 MiB), created with `models: false`:
+  `models.classify()` and `models.generateImages()` are calls to a provider that cost money and send data out (PLAN rule 1), so a
+  script sees none. A script's nested calls have their own call ids (`<call>/c<n>`), so rule 8 holds inside a script and a replayed
+  script writes nothing twice. `ledger_query` pages are at most 1000 rows, because Durable journals a script's results.
+  **The time limit is written into the script.** Durable starts a script with the `timeout_ms` of the script's own `// @options`
+  line and nothing else (the sandbox's configured `timeoutMs` is not read on that path): a script that names none ran until the
+  owner pressed Stop and again after every restart, and one that named a day was allowed a day. `createBoundedCodemodeExtension`
+  (`packages/extensions/src/codemode.ts`) wraps the tool so the line is always there: 30 seconds by default, a request above two
+  minutes cut to two minutes. Durable then also stores the script's deadline, so a script that a restart interrupted past its
+  deadline ends with "its deadline passed while it was interrupted" instead of starting again.
+- **Splits are written whole and add up exactly.** `split_bill` writes the bill, its items and every share in one transaction
+  (`splits/compute.ts` is pure). Each item is shared equally by those who had it; a person's claim on the items is the sum of their
+  parts as an exact fraction (a common denominator, BigInt), and rounding happens once per person by largest remainder, not once per
+  item, so three items of 1.00 shared by three people give each exactly 1.00. Tax, service and tip are shared in proportion to what each
+  person's items came to, the same way; a percentage is of the items alone, never compounded with the other extras. A `total` the model
+  read from the bill is a check: when it differs from what the items and extras come to, the call fails and names the difference, which
+  is how a misread line is caught. The payer need not be among the people (they paid for others), and the result says so when they are
+  not, because "I paid for lunch with Pema and Tashi" with the payer left out of `people` would otherwise split between two.
+  People are matched by the key of their whole name (accents, case and punctuation dropped); `me`, `I`, `you`, the configured owner
+  name are the owner, shown as "You". A new name that shares words with a known one ("Pema" after "Pema Dorji") is flagged in
+  the result of a bill, which is how a friend joins; in `record_settlement` it is **refused**: nothing is recorded and the tool
+  asks which person was meant (`new_person: true` says it really is somebody else), because a payment from "Pema" would otherwise
+  become a debt of a second person and leave the real one open.
+- **Who owes whom is netted per pair of people and currency.** Every share of someone other than the payer is a debt to the payer,
+  every settlement a payment against it; opposite debts cancel, and nothing is converted between currencies. "Unsettled splits" in the
+  prompt is therefore the number of open pair balances, listed with the owner's first. **Splits do not write ledger entries**
+  (decision for the coordinator to veto): the owner's own share is recorded with `add_expense` if they want it there, and a friend's
+  payment back reaches an account when the owner next states its balance. The result of each tool says so.
+- **Invoices: a profile, a template, and a number taken with the row.** `invoice_profile` holds what stays the same (client, usual
+  amount, the line, terms, payment details, the numbering pattern and the running number). `generate_invoice` runs one call at a time
+  in the process (Durable may run two calls of a round at once, and there is one server per data directory): replay by call id,
+  defaults (this month, today, due after the terms), a second invoice for a month refused unless `again`, the number from the pattern
+  (`INV-{YYYY}-{seq:03}`) checked as unused, **the PDF rendered first** (a template that fails uses no number and leaves no file),
+  the file written through a temporary name and renamed, indexed in `files_index` (`source: generated`), and then one transaction
+  that bumps the running number *from the value that was read* and inserts the invoice row (`UNIQUE number`), failing with "the
+  profile changed meanwhile" if the number moved. A crash between the file and the row leaves a file the replay overwrites with the
+  same name. `preview_invoice` renders the same PDF with PREVIEW drawn across every page (over the template, which cannot remove it)
+  and takes nothing: no number, no row, no file among the real invoices (previews are `workspace/invoices/previews/`, one per call).
+  It also previews a month that already has an invoice, and says so, which is what trying a changed template needs.
+- **The template is Mustache over a documented set of fields, rendered by a small HTML layout over pdfkit.** `mustache` fills
+  `<data>/templates/invoice.html` (read fresh at every invoice, so an edit takes effect at once); `{{field}}` is HTML-escaped, the
+  `*_html` fields are escaped by this program for `{{{field}}}`, and a name that is not a field is an error that lists the fields
+  (Mustache would print nothing for a typo, which on an invoice is the worst failure). The result is read by `invoices/html.ts`, a
+  tolerant parser of the subset an invoice needs (scripts and styles dropped with their text, unknown tags transparent), and laid out by
+  `invoices/pdf.ts` with **pdfkit**: pure JavaScript, the standard Helvetica fonts, no browser and no file at run time. Chromium was
+  not chosen: it is not reliably present on the machine, and a browser is a large thing to run for a page of text. The layout paints in
+  one pass and measures in a dry run (a table row's height, a box with a background); text is wrapped by this code, because pdfkit's
+  own continued text aligns each fragment of a right-aligned line separately. Text outside Latin-1 and the Windows-1252 punctuation
+  cannot be drawn with the standard fonts and comes out as `?` (`₹` is written `Rs.`): embedding a font is the next step if Dzongkha
+  names are needed on an invoice. The default template is a string in the code (`default-template.ts`): the built server is one
+  bundle that cannot read package files, so it is written to the data directory at start with the `wx` flag and never over the owner's.
+- **Serving what the assistant made.** `GET /api/files/:id` now serves a `generated` row from below the workspace as well as an
+  `upload` from below the uploads folder, resolving the path again at each request, so a row whose file moved elsewhere is a 404 and
+  an `upload` row that points into the workspace (or the other way round) is too. PDFs are `attachment`s with the same
+  `nosniff` and `Content-Security-Policy: sandbox` headers. `files/002_generated_source` rebuilds `files_index` (SQLite cannot alter a
+  CHECK) to allow the new source; nothing references that table by a foreign key.
+- **The web cards** (`apps/web/src/components/accountant-cards.tsx`) are plain functions of their card, like the Health ones. The
+  spending bars are CSS (a width in tenths of a percent from the tool), a split bill is a table whose Items and Extras columns fold
+  under the name on a phone, and the import preview's Confirm button says "Confirm import im_..." in the chat as the owner would
+  (sent through the thread's store, as a message with no files, and not through the composer: that would take the draft the owner
+  was typing, and the files they had picked, along with it): no new route, and the model then calls `confirm_import`. Nothing but
+  the model's rules ties a confirmation to that message (the owner's own "yes, import it" works as well). The preview loses its button once a later
+  `import_result` names the same import, lists the rows that look like entries already there and warns in a bordered block; an invoice
+  preview carries a PREVIEW badge and says it is not an invoice.

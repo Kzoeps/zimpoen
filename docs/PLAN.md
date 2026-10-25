@@ -1,8 +1,8 @@
 # Personal assistant — implementation plan
 
-Status: approved direction. Milestones 1, 2, 3, 4 and 6 are implemented (see `progress-m1.md`, `progress-m2.md`,
-`progress-m3.md`, `progress-m4.md`, `progress-m6.md`; M5 is not built yet); this document was updated at the end of M6 to
-describe what was built. Owner: Dorje.
+Status: approved direction. Milestones 1, 2, 3, 4, 6 and 7 are implemented (see `progress-m1.md`, `progress-m2.md`,
+`progress-m3.md`, `progress-m4.md`, `progress-m6.md`, `progress-m7.md`; M5 is not built yet); this document was updated at the end
+of M7 to describe what was built. Owner: Dorje.
 
 ## 1. Goal
 
@@ -164,12 +164,13 @@ type DomainDeps = {
 	files?: FilesDeps; // { readPaths, images? }: the folders the PA is told it may read, and the image processor for read_file
 	schedule?: Partial<ScheduleSettings>; // when follow-ups and birthdays fire (ASSISTANT_AGENDA_LEAD_MINUTES, ...); defaults otherwise
 	health?: HealthDeps; // { heightCm? }: the owner's height for BMI (ASSISTANT_OWNER_HEIGHT_CM); only the Health module reads it
+	accountant?: AccountantDeps; // { currency, ownerName?, invoices?: { outDir, templatesDir } }: ASSISTANT_CURRENCY (BTN), the configured owner name, where invoice PDFs and the template live (M7)
 };
 ```
 
 The server (`apps/server/src/domain.ts`) lists the modules, concatenates their migrations after the core ones
 (`migrate(db, [...coreMigrations, ...domain.migrations])`), installs every extension in the registry, and gives each agent
-the ones it should have (`buildAgents`: the PA gets `tasks`, `followups`, `people`, `approvals`, `daily` and `files`; the Health agent gets `health`, `approvals` and `tool_search`; capability is tool presence). A module never
+the ones it should have (`buildAgents`: the PA gets `tasks`, `followups`, `people`, `approvals`, `daily` and `files`; the Health agent gets `health`, `approvals` and `tool_search`; the Accountant gets `ledger`, `splits`, `invoices`, `files`, `approvals`, `tool_search` and Durable's code mode (`@earendil-works/pi-durable/codemode` over a QuickJS sandbox with `models: false`, so a script has no paid model calls, and a time limit written into every script: `createBoundedCodemodeExtension`, 30 s by default and 2 minutes at most); capability is tool presence). A module never
 imports server code: everything it needs arrives in `DomainDeps`.
 
 **Migrations.** An id is `<module>/<NNN>[_name]`. Ordering is a rule within one module only: its migrations must be
@@ -409,8 +410,8 @@ daily_call(source_call_id PK, tool, subject, applied_at)   -- rule 8 for save_jo
 
 -- files (module files)
 files_index(id TEXT PK /* fi_xxxxxxxx */, path UNIQUE /* absolute, links resolved */, name, mime, kind CHECK(kind IN
-            ('image','pdf','csv','text','other')), size, source CHECK(source IN ('upload','path')),
-            description, tags, added_at, updated_at)   -- an upload, or a file the PA found in an allowed folder
+            ('image','pdf','csv','text','other')), size, source CHECK(source IN ('upload','path','generated')),
+            description, tags, added_at, updated_at)   -- an upload, a file the PA found in an allowed folder, or one the assistant made (M7: files/002 rebuilds the table to allow 'generated')
 files_call(source_call_id PK, tool, file_id, applied_at)   -- rule 8 for describe_file and read_file_path
 
 -- memory (M8)
@@ -431,8 +432,42 @@ health_set(id INTEGER PK, session_id REFERENCES health_session ON DELETE CASCADE
            rpe NULL, source_call_id UNIQUE /* "<call id>:<n>" */, UNIQUE(session_id, exercise_id, set_no))
 health_call(source_call_id PK, tool, subject, applied_at)   -- rule 8 for log_weight's replace and rename_exercise
 
--- later milestones: ledger_expense, ledger_balance, splits_bill,
--- splits_share, invoice_state, inbox_message(triage) ...
+-- ledger (module ledger, the Accountant; M7). Money is INTEGER minor units, signed from the account's side (out is negative), in STRICT
+-- tables; never a float. Deviations from the first sketch: ledger_txn.seq (AUTOINCREMENT) numbers the writes, and a snapshot remembers
+-- the highest seq it saw, which is how a balance, an entry of the same day written before it and one written after it are told apart;
+-- ledger_category has a kind (expense | income) and 18 seeded names; ledger_import keeps the parsed rows of a CSV between the preview
+-- and the confirm; ledger_call is rule 8 for recategorize and archive_account; ledger_fx is insert-only (rate_micro, six decimals).
+ledger_account(id PK, name, key UNIQUE /* nameKey(name) */, kind CHECK(kind IN ('cash','bank','wallet','card')), currency, archived, source_call_id UNIQUE, created_at)
+ledger_category(id PK, name, key UNIQUE, parent_id NULL, kind CHECK(kind IN ('expense','income')), source_call_id UNIQUE)
+ledger_txn(seq INTEGER PK AUTOINCREMENT, id TEXT UNIQUE /* x_xxxxxxxx */, account_id, occurred_on /* local day */, amount_minor CHECK(!= 0), currency,
+           category_id NULL, merchant, merchant_key, note, source CHECK(source IN ('chat','csv','receipt')), source_ref NULL /* fi_ id, or im_ id */,
+           transfer_id NULL /* the two legs of a transfer */, source_call_id UNIQUE, import_hash UNIQUE NULL, created_at)
+ledger_balance_snapshot(id PK, account_id, as_of, amount_minor, txn_watermark, note, source_call_id UNIQUE, created_at)
+ledger_fx(id PK, date, from_currency, to_currency, rate_micro, source_call_id UNIQUE, created_at)
+ledger_import(id TEXT PK /* im_xxxxxxxx */, file_id, file_name, account_id, status CHECK(status IN ('preview','imported')), summary_json, rows_json,
+              inserted, duplicates, skipped_matches NULL /* rows left out: they look like entries already there */, source_call_id UNIQUE,
+              confirmed_call_id, created_at, imported_at, undone_at NULL /* the owner had the import's entries removed */)
+ledger_call(source_call_id PK, tool, subject, applied_at)
+-- ledger/004_undo: a bulk recategorize keeps each entry's earlier category so that it can be taken back
+ledger_recategorization(id TEXT PK /* rc_xxxxxxxx */, source_call_id UNIQUE, category_id, what, changed, created_at, undone_at NULL)
+ledger_recategorization_row(batch_id REFERENCES ledger_recategorization ON DELETE CASCADE, txn_id, previous_category_id NULL, PK(batch_id, txn_id))
+
+-- splits (module splits, the Accountant; M7). People are matched by the key of their whole name; 'me' is the owner. Splits write no ledger entries.
+splits_bill(id TEXT PK /* b_xxxxxxxx */, title, occurred_on, payer_key, payer_name, total_minor, currency, equal, extras_json, source_ref NULL /* fi_ */,
+            note, source_call_id UNIQUE, created_at)
+splits_item(id PK, bill_id REFERENCES splits_bill ON DELETE CASCADE, description, amount_minor, shared_by_json)
+splits_share(bill_id, person_key, person_name, person_id NULL REFERENCES people_person ON DELETE SET NULL, items_minor, extras_minor, owed_minor, PK(bill_id, person_key))
+splits_settlement(id TEXT PK /* s_xxxxxxxx */, occurred_on, from_key, from_name /* paid */, to_key, to_name /* received */, amount_minor, currency, note,
+                  source_call_id UNIQUE, created_at)
+
+-- invoices (module invoices, the Accountant; M7). One profile row; a number is taken in the same transaction as the invoice row.
+invoice_profile(id INTEGER PK CHECK(id = 1), sender_name, sender_details, client_name, client_address, description /* {period} {month} {year} */,
+                amount_minor NULL, currency, payment_terms_days, payment_details, notes, number_pattern DEFAULT 'INV-{YYYY}-{seq:03}', next_seq, updated_at)
+invoice_issued(id PK, number UNIQUE, seq, period /* YYYY-MM */, issue_date, due_date, amount_minor, currency, client_name, description,
+               file_id /* fi_ */, file_path, source_call_id UNIQUE, created_at)
+invoices_call(source_call_id PK, tool, subject, applied_at)   -- rule 8 for set_invoice_profile
+
+-- later milestones: inbox_message(triage) ...
 ```
 
 Preferences/personality memory is written only when the user explicitly asks. Factual updates come from domain
@@ -448,13 +483,26 @@ tools (e.g. `add_expense`), not free-form memory.
 | M4 Briefing, wrap-up, journal, files, share target (done)                       | daily tasks, done-log, uploads + file tools, PWA share target |                                                                                                                             |
 | M5 Inbox                                                          | Gmail + Calendar read-only (multi-account), Jev triage, digest, handoff to PA                                                                                                                                                                                                                                                  |                                                                                                                             |
 | M6 Health (done)                                                  | weight/lift tables, tools, trends, chart cards, facts for the wrap-up and briefing                                                                                                                                                                                                                                              | tools tested with replays; whole-server test; browser check                                                                 |
-| M7 Accountant                                                     | expenses (CSV/photo/chat), code-mode analysis, splits, invoice PDF from template                                                                                                                                                                                                                                               |                                                                                                                             |
+| M7 Accountant (done)                                              | expenses (CSV/photo/chat), code-mode analysis, splits, invoice PDF from template                                                                                                                                                                                                                                               |                                                                                                                             |
 | M8 Memory/profile UI, activity log, usage dashboard, budget guard |                                                                                                                                                                                                                                                                                                                                |                                                                                                                             |
 | Ops                                                               | systemd units, tailscale serve config, OAuth login CLI (`pnpm login:openai`), backup (deferred)                                                                                                                                                                                                                                |                                                                                                                             |
 
 ## 9. Open items (deferred decisions)
 
-- Invoice PDF template source format (user has a PDF; may need to recreate as HTML/Typst template). M7.
+- (Decided in M7) Invoice template: an HTML file with Mustache fields, `<data>/templates/invoice.html`, laid out to PDF by a small
+  renderer over pdfkit (pure JavaScript, no browser; Latin-1 text only for now: an embedded font is the next step for Dzongkha).
+  The owner recreates their PDF as that HTML once (`docs/setup-invoice.md`); Chromium and Typst were not chosen (not reliably
+  present on the machine). Open: a font for non-Latin names, and a way to turn the owner's existing PDF into the template.
+- (Decided in M7, cheap to reverse) Splits write no ledger entries; "unsettled splits" is the number of open pair balances; a CSV is
+  previewed and then confirmed; a balance is the latest stated balance plus what was written after it (`docs/design-notes.md`).
+- (Decided in the M7 review fixes) A script's time is bounded (30 s, 2 minutes at most); a settlement that names only part of a known
+  friend's name is refused instead of starting a second person; rows of a statement that repeat an entry typed in chat or read from
+  a receipt (same account and amount, within two days) are left out unless the owner includes them; a wrong import is taken back as
+  a unit with approval; a bulk recategorization shows what it would do above 20 entries and can be undone; `preview_invoice` shows
+  an invoice without taking a number. Open: should `record_settlement` also write the owner's side as a ledger entry (an optional
+  account and category), so that "I paid Pema 250 from mBoB" reaches spending and the balance? The review recommended it; it
+  couples the splits module to the ledger and was not in the coordinator's adjudication. And: an issued invoice keeps no snapshot of
+  its address, payment details or notes, so a lost PDF cannot be made again under its own number (`docs/OPS.md` says to back it up).
 - Backups (deferred by user).
 - PDFs are stored and shown but the PA cannot read them yet: text extraction is a dependency decision (M7 needs it for
   statements; bank CSVs and receipt photos already work).

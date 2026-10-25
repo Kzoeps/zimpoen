@@ -93,6 +93,17 @@ Three things the server does without being asked, and does not log unless someth
   "The assistant takes a share only from the Android share sheet or its own page" (403), the browser did not send
   `Sec-Fetch-Site: none` for the share POST; see `docs/design-notes.md`, "The Android share target".
 
+## What to back up (the Accountant's files)
+
+Besides the two databases and `files/` (above), two folders hold what cannot be made again:
+
+- **`<data>/templates/`** is your invoice template and the images it uses. Only you can change it, and the server never
+  overwrites it, so a lost one is a lost layout.
+- **`<data>/workspace/invoices/`** has the PDF of every invoice that was made, under its number (`INV-2026-004.pdf`). The database
+  keeps the numbers, dates and amounts but not the PDF's layout, and an invoice cannot be made again under its own number: asking
+  for the month again (`again: true`) takes a **new** number. A lost PDF is therefore lost, unless it was backed up or you sent it.
+  The `previews/` folder under it can be emptied at any time.
+
 ## Calling the admin endpoint from a shell
 
 Every write must be JSON, even one without a body. With authentication on, a request that does not come through Tailscale

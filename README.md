@@ -5,7 +5,7 @@ ChatGPT-style web chat. Several themed agents (`pa`, `inbox`, `health`, `account
 crash-safe conversation on [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable): if the
 process dies mid-answer, the next start picks the work up where it stopped.
 
-Status: **Milestone 6 (health: weight and gym lifts)**. You can open the web UI, pick an agent, chat, and watch
+Status: **Milestone 7 (accountant: expenses, splits, invoices)**. You can open the web UI, pick an agent, chat, and watch
 the answer stream in. The `pa` agent keeps a task list and reminds you at the right time; it also follows your meetings:
 after one it asks how it went and, if something has to be followed up, when, and then asks about that follow-up in turn;
 through the day you add agenda points, and shortly before the meeting it posts them; and it keeps your friends' and
@@ -21,8 +21,19 @@ your gym sessions (exercises, sets, reps, weight lifted), and answers "how is my
 up" from numbers computed in code: the 7-day moving average, the change over a range, the estimated one-rep max (Epley),
 the volume and your personal records, each with a small chart in the thread; a pull-up or dip done with a belt is followed
 by the weight you added, and a wrongly named exercise can be renamed or merged into the right one. The evening wrap-up mentions
-what you weighed and trained, and the morning briefing nudges you when yesterday's weight is missing. The `inbox` and `accountant` agents
-have no tools yet; mail and accounting arrive in later milestones.
+what you weighed and trained, and the morning briefing nudges you when yesterday's weight is missing. The `accountant` agent keeps your
+money: expenses and income typed in chat, read from a receipt photo or imported from a bank or app CSV (shown to you first, then
+confirmed; importing the same file twice adds nothing), in Ngultrum by default (`Nu. 1,234.50`) and in USD or INR when you say so,
+with balances per account ("I have 12,000 in BoB" is recorded and the difference reported), and answers "where did I spend the most"
+from sums and shares computed in code, with a bar chart in the thread. It splits a bill one friend paid (items, who had what, tax,
+service and tip in proportion; the shares add up to the bill to the last chhertum) and remembers who owes whom until it is paid
+back. Every month it makes your invoice as a PDF from your own template (`<data>/templates/invoice.html`, see
+[`docs/setup-invoice.md`](docs/setup-invoice.md)) with the next invoice number, and gives it to you as a download in the chat:
+it never sends it anywhere. Every number comes from a tool, never from the model; for an analysis the tools do not cover it
+writes a short script in Durable's code mode. A script may call any tool the Accountant has (a write goes through the same
+approval rule as in chat), and has no network, no files and no model; it is stopped after 30 seconds, or after the time it asks
+for, never more than two minutes. The `inbox` agent has no tools yet; mail arrives in a
+later milestone.
 The full design and milestone list is in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Quickstart
@@ -59,6 +70,30 @@ you added (`"weight":20`), after which its progress is that weight. `/tool renam
 keeps the old name working. `propose_delete_weight`, `propose_delete_workout` and `propose_merge_exercises` (two exercises that are
 really one: it moves every set) load with `/tool tool_search {"query":"delete a workout"}` or `"merge two exercises"` first, like the
 PA's deletion tools, and then a reply of YES (or the Approve button) carries them out.
+
+The Accountant's tools work the same way (arguments: `packages/extensions/src/ledger/tools.ts`, `splits/tools.ts` and
+`invoices/tools.ts`), in its own thread. Amounts are plain numbers of major units (`1234.5` is Nu. 1,234.50); more decimals than
+the currency has is refused, never rounded:
+`/tool add_account {"name":"BoB savings","kind":"bank","balance":100000}`, `/tool add_expense {"amount":1250.5,"merchant":"Druk Mart","category":"groceries"}`,
+`/tool add_income {"amount":120000,"category":"salary"}`, `/tool add_transfer {"from_account":"BoB","to_account":"Cash","amount":5000}`,
+`/tool set_balance {"account":"BoB","balance":98000}`, `/tool spending_summary {"range":"this_month","group_by":"category"}`,
+`/tool balances` and `/tool list_txns {"range":"30d"}`. A statement: attach a CSV (or `curl -F file=@bank.csv -H 'Sec-Fetch-Site: none'
+http://127.0.0.1:3001/api/uploads`), then `/tool import_csv {"file_id":"fi_...","account":"BoB savings"}` shows what was found, and
+`/tool confirm_import {"import_id":"im_..."}` (the card's Confirm button says it in the chat) adds it. A row that looks like an
+entry you already typed or photographed (same account and amount, within two days) is listed apart and left out unless you say
+it is a different purchase (`include_lines` or `include_matches`), and the preview warns when every row goes one way, as a
+Dr/Cr column read wrongly would make it. A wrong import is taken back as a whole with `propose_undo_import`. Bills:
+`/tool split_bill {"title":"Lunch","payer":"Pema","people":["me","Pema","Tashi"],"items":[{"description":"Momos","amount":450,"shared_by":["me","Pema"]},{"description":"Thukpa","amount":300,"shared_by":["Tashi"]}],"extras":[{"label":"Service charge","percent":10}],"total":825}`,
+`/tool who_owes` and `/tool record_settlement {"from":"Pema","to":"me","amount":300}` (a name that is only part of a friend's,
+"Pema" for "Pema Dorji", records nothing and asks which person). Invoices:
+`/tool set_invoice_profile {"client_name":"Acme Pte Ltd","amount":50000,"sender_name":"Dorje"}`, `/tool preview_invoice` (a PDF
+marked PREVIEW that takes no number: use it to try a template) and `/tool generate_invoice`.
+`recategorize`, `undo_recategorize`, `propose_delete_txn`, `propose_undo_import`, `archive_account`, `add_category`,
+`set_fx_rate`, `list_splits`, `propose_delete_split`, `list_invoices` and `get_invoice_profile` load with `/tool tool_search`
+first; deleting asks for your approval as everywhere else. `recategorize` matches a merchant by its whole name, shows what would
+change before it moves more than 20 entries, and can be undone.
+`/tool codemode {"code":"const page = await tools.ledger_query({kind:'expense'}); return page.total"}` runs a script over the
+ledger's query tools (which only scripts are given).
 
 **Rarely used tools are not offered until loaded.** The PA is offered `current_time`, `add_task`, `list_tasks`,
 `complete_task`, `snooze_reminder`, `add_followup`, `add_agenda_point`, `record_outcome`, `add_person`, `record_wish` and
@@ -126,7 +161,7 @@ apps/
 packages/
   shared/        API contracts: DTOs, error shape, stream event types, card types (types, plus tiny constants and guards)
   db/            app.sqlite: node:sqlite wrapper and the migration runner (ids per module), core tables
-  extensions/    Durable extensions the server installs: domain modules `tasks`, `followups`, `people`, `approvals`, `daily` (briefing, wrap-up, journal), `files` and `health` (weight, lifts; the Health agent's), and `profile`; more later
+  extensions/    Durable extensions the server installs: domain modules `tasks`, `followups`, `people`, `approvals`, `daily` (briefing, wrap-up, journal), `files`, `health` (weight, lifts; the Health agent's), `ledger`, `splits` and `invoices` (the Accountant's: accounts and entries in integer minor units, CSV import, bills and who owes whom, the invoice PDF made with pdfkit and Mustache), and `profile`; more later
 docs/            PLAN.md (architecture), design-notes.md (security and durability reasoning), handoff and progress notes
 ```
 
@@ -183,10 +218,15 @@ FCM or Apple's push service has not been tried yet.
 
 ```text
 data/
-  app.sqlite       domain tables (agents, tasks, follow-ups, people, approvals, push subscriptions, daily schedule, journal, file index; expenses, ... later), WAL
+  app.sqlite       domain tables (agents, tasks, follow-ups, people, approvals, push subscriptions, daily schedule, journal, file index, health, ledger, splits, invoices), WAL
   durable.sqlite   Durable's storage: conversations, entries, tasks (reminder timers included), WAL
   files/           uploads, `<yyyy-mm>/<id>-<name>`, mode 0600. Agents may read; the browser gets them back through `GET /api/files/:id`
   workspace/       generated files. The only place agents may write
+    invoices/          the invoice PDFs, `<number>.pdf`; the browser gets them through `GET /api/files/:id`
+      previews/        PDFs marked PREVIEW from `preview_invoice`, one per call; nothing refers to them but a chat card, so
+                       the folder may be emptied at any time
+  templates/       your document templates, mode 0700: `invoice.html` (the server writes a default the first time and never over yours)
+                   and the images it uses. Agents can neither read nor change it
   secrets/         credentials and keys, mode 0700. Never readable by an agent
     credentials.json   the OpenAI sign-in, mode 0600
     vapid.json         the Web Push key pair, mode 0600, created at the first start
@@ -222,7 +262,11 @@ first before it touches either database. A lock left behind by a crash is recogn
   in production), like any chat. For the Health agent that is your weight, the BMI when `ASSISTANT_OWNER_HEIGHT_CM` is set,
   your workouts and the notes you add. The PA is given a few lines of it (what you weighed and trained, a missed weighing) as
   facts for the briefing and the wrap-up, and what it writes in the journal may repeat them. Only the Health agent is told
-  your height. Pushes carry none of it (see "Pushes carry no content" below). In dev mode nothing leaves the machine.
+  your height. For the Accountant it is your account names and balances, your entries, the receipts and statements you attach,
+  the names of friends on a split bill, and what you tell it for the invoice (client, amount, bank details); the template file
+  and the PDF are never put to the model. The PA is given the day's spending by category and what came in as facts for the
+  wrap-up, and what it writes in the journal may repeat them. Pushes carry none of it (see "Pushes carry no content" below). In dev mode nothing
+  leaves the machine.
 - **Files are an allowlist:** reads inside `ASSISTANT_READ_PATHS`, `<data>/files` and the workspace; writes only inside
   `<data>/workspace`. Always refused, in any letter case: `.ssh`, `.env*`, `auth.json`, `*.pem`, `*.key`, `.netrc`, `.npmrc`,
   `.aws`, `.git-credentials`, `.gnupg`, `id_*` and `<data>/secrets/**`. The data directory, the workspace and the secrets
@@ -233,6 +277,12 @@ first before it touches either database. A lock left behind by a crash is recogn
   reason. An upload cannot be a way around it: it is stored under `<data>/files` by an id the server chooses, judged by
   its content (an image, a PDF, CSV or UTF-8 text; text holding a private key is refused), served back with `nosniff`, a
   sandboxing CSP, and as a download unless it is an image.
+- **Templates and invoices:** `<data>/templates` is not a read path and not the write path, so no agent can read or change the
+  owner's invoice template (an `ASSISTANT_READ_PATHS` entry inside it is rejected at startup). The template can only reach a PDF
+  through fixed fields (`docs/setup-invoice.md`): fields are HTML-escaped, nothing in it runs, an image must be a file below that
+  folder (links resolved) or a `data:` PNG or JPEG, and a web address is refused, so rendering fetches nothing. Invoice PDFs are
+  written in `<data>/workspace/invoices`, served only from there (`GET /api/files/:id` resolves the path again at each request), as
+  downloads with `Content-Security-Policy: sandbox`. There is no tool that sends an invoice anywhere (PLAN rule 1).
 - **Secrets:** `<data>/secrets` is 0700; `credentials.json` and `vapid.json` (the Web Push private key, created at the first
   start) are 0600, written atomically and fsynced. The private key never leaves that folder: browsers get only the public
   key. The credential store is locked (`credentials.json.lock`) against a second writer, such as a future login command
@@ -389,3 +439,29 @@ the newest records, a replayed `log_workout` answering with the same records and
 (and a replay that does not undo a later rename) and merging (approval, set numbers, aliases, the refusals), names in any
 script and `-ies` plurals, ranges that reach too far, the height kept out of every other agent's prompt (read from what the
 model was told, with a positive control), and in the web the card of a loaded bodyweight exercise.
+
+M7 added: the money arithmetic as pure functions (amounts turned into minor units by their digits and refused with too many
+decimals, percentages, largest-remainder sharing, conversions at an owner-given rate, bank amounts such as `(500.00)`, `500 DR` and
+`1.234,50`), the ledger (balances as the latest stated balance plus what was written after it, in either order on the same day;
+transfers that are neither spending nor income; summaries whose shares add up to exactly 100.0 %; merchant memory; replays by call
+id; deleting through approval with the hook in front), CSV import (encodings, separators, a header below title lines, day-first
+dates, the preview before anything is written, an idempotent confirm and the same file twice), code mode through a real Harness
+(a script that sums the ledger, its nested calls journaled once, the approval hook applying to a script's call), splits (600 random
+bills whose shares add up to the total exactly and are within one unit of each person's exact claim, tax and service in proportion,
+netting per pair and currency, settlements, deleting a bill through approval), invoices (numbers never reused and idempotent per
+call, two calls at once taking two numbers, a failing template using none, a real PDF whose text is read back, fields escaped,
+a template with a bad tag or a field that does not exist, images only from the templates folder), the rebuilt file index, the whole
+server (the Accountant's tools and nobody else's, a YES in its thread, a script in the sandbox, an invoice downloaded through the
+API, a template that survives a restart, files served only from the folder their kind belongs in), and in the web the cards
+rendered to markup.
+
+M7's review fixes added: code mode with a time limit (a script that never ends stops at 30 seconds, a request for a day is cut
+to two minutes, and a script a restart interrupted past its deadline ends with an error instead of starting again); hostile CSV
+cells (200,000 spaces, `T`s, digits or colons read in a few milliseconds, each under a time bound); Dr/Cr columns in the three
+shapes bank files use, with a loud warning when every row of a long statement goes one way; rows that repeat an entry typed or
+photographed earlier (left out by default, one entry answering for one row, a deleted twin imported after all) and taking a whole
+import back through approval, also after it was read again; a settlement whose name is only part of a friend's (nothing is
+recorded, the full name is asked for, and a bill is only flagged); the bulk `recategorize` (the merchant's whole name, a
+confirmation above 20 entries, an undo by batch that leaves later changes alone); the PREVIEW watermark and an invoice preview that
+takes no number; and the file-serving tests, which now create one real file per row and read it back before trusting a status (a
+link to the outside, a sibling folder, and a control that stays inside and is served).
