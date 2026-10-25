@@ -5,7 +5,7 @@ ChatGPT-style web chat. Several themed agents (`pa`, `inbox`, `health`, `account
 crash-safe conversation on [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable): if the
 process dies mid-answer, the next start picks the work up where it stopped.
 
-Status: **Milestone 7 (accountant: expenses, splits, invoices)**. You can open the web UI, pick an agent, chat, and watch
+Status: **Milestones 1 to 7 are implemented; the latest is M5 (inbox: Gmail and Calendar, read-only, with Jev triage)**. You can open the web UI, pick an agent, chat, and watch
 the answer stream in. The `pa` agent keeps a task list and reminds you at the right time; it also follows your meetings:
 after one it asks how it went and, if something has to be followed up, when, and then asks about that follow-up in turn;
 through the day you add agenda points, and shortly before the meeting it posts them; and it keeps your friends' and
@@ -32,8 +32,15 @@ back. Every month it makes your invoice as a PDF from your own template (`<data>
 it never sends it anywhere. Every number comes from a tool, never from the model; for an analysis the tools do not cover it
 writes a short script in Durable's code mode. A script may call any tool the Accountant has (a write goes through the same
 approval rule as in chat), and has no network, no files and no model; it is stopped after 30 seconds, or after the time it asks
-for, never more than two minutes. The `inbox` agent has no tools yet; mail arrives in a
-later milestone.
+for, never more than two minutes. The `inbox` agent reads your Gmail accounts (as many as you connect) and your Google
+Calendar **read-only**: it keeps a local copy of the recent mail (synced every ten minutes), sorts it (important, needs a reply,
+follow-up, newsletter, ...) with TypeSafe's Jev or, without a key, with local rules, and at 12:30 and 19:00 writes you a digest of
+only the mail that needs you, each item a link to its conversation in Gmail, so that nothing important is lost among the app
+mail. It never sends, replies, labels or deletes: those tools do not exist. When a mail or a meeting commits you to something it
+suggests a follow-up, which appears in the assistant's chat as a card with **Add** and **Dismiss** (nothing is added unless you
+press Add; one nobody answers expires after a week), and the assistant can ask it a question on your behalf (`ask_agent`). To connect your accounts, see
+[`docs/SETUP.md`](docs/SETUP.md) (everything you have to do, in one list), [`docs/setup-google.md`](docs/setup-google.md) and
+[`docs/setup-jev.md`](docs/setup-jev.md).
 The full design and milestone list is in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Quickstart
@@ -135,6 +142,21 @@ text=hello -F files=@pic.png http://127.0.0.1:3000/share`. Dev mode also keeps p
 (`ASSISTANT_PUSH_MODE=fake`): after you press **Enable notifications** in Settings, each reminder appends one line per
 subscribed device to `./data-dev/dev-push-outbox.jsonl`, which is what your phone would have been sent.
 
+**The Inbox.** In development `ASSISTANT_GOOGLE_MODE` is `fake`: the Inbox agent reads a scripted demo mailbox of two accounts
+(`demo.owner@example.com` and `demo.work@example.com`: a realtor asking you to confirm a visit, a bank statement, a newsletter,
+an overdue invoice, a pull request notice, a few calendar events) and nothing leaves the machine. **Settings → Google accounts**
+lists them and says **Rules mode** (no Jev key). In the Inbox thread try `/tool search_mail {"query":"plot"}`,
+`/tool read_mail {"id":1}`, `/tool list_events {"range":"week"}`, `/tool mark_triage {"id":2,"category":"newsletter"}` and
+`/tool suggest_followup {"mail_id":1,"title":"Follow up with the realtor","at":"2026-12-01T15:00"}` (a future time): a card with
+**Add** and **Dismiss** appears in the PA's thread, and Add makes the PA run on a message written from those details (the dev
+model only echoes it; a real model calls `add_followup`). The digests are two more jobs under **Settings → Daily schedule** (move
+one two minutes ahead): a card lists the mail that needs you since the last digest, open, each row a link to Gmail, and the Inbox
+agent's answer sits under a chip; with nothing to report it is one line, costs no tokens and sends no push. In the PA's thread
+`/tool ask_agent {"agent":"inbox","question":"Is there mail from the bank?"}` puts the question to the Inbox agent and brings its
+answer back. `ASSISTANT_GOOGLE_MODE=real` (the default in production) reads real Gmail once an account is connected with
+`pnpm connect:google`: [`docs/setup-google.md`](docs/setup-google.md) (publish the Google app "In production" there: in Testing mode
+Google may expire each sign-in after 7 days, which this guide marks as to verify).
+
 On first start the server must be able to read `~/Documents` and `~/Downloads`, which agents may read once file tools
 exist. If you do not have them, point it elsewhere and it will tell you what is wrong in any case:
 
@@ -147,6 +169,7 @@ ASSISTANT_READ_PATHS=/some/folder:/another/folder pnpm dev
 | `pnpm dev` | Server (restarts on file changes, resuming interrupted work) and web dev server |
 | `pnpm build` | Bundles the server to `apps/server/dist/main.js` and builds the web app |
 | `pnpm start` | Runs the built server in production mode (`NODE_ENV=production`: auth on and cannot be turned off, OpenAI model, `./data`). Run the built web app with `pnpm --filter @assistant/web start` |
+| `pnpm connect:google` | Connects a Gmail account (read-only), once per account: prints a link, waits for the approval in your browser, saves the sign-in in `<data>/secrets/google-accounts.json`. `--list` shows the accounts. [`docs/setup-google.md`](docs/setup-google.md) |
 | `pnpm typecheck` | `tsc --noEmit` in every package |
 | `pnpm test` | Vitest for the whole workspace |
 | `pnpm lint` | Biome (lint and format check) |
@@ -194,6 +217,8 @@ use a systemd unit.
 | `ASSISTANT_CURRENCY` | `BTN` | ISO 4217 default currency told to every agent |
 | `ASSISTANT_OWNER_NAME` | `the owner` | Your name, as agents address you |
 | `ASSISTANT_OWNER_HEIGHT_CM` | unset | Your height in centimetres (100 to 250, for example `176`). Only the Health agent uses it, for the BMI in its weight results; unset means no BMI anywhere. Not told to the other agents |
+| `ASSISTANT_GOOGLE_MODE` | `fake`, or `real` when `NODE_ENV=production` | `real` reads Gmail and Calendar through Google's APIs with the accounts `pnpm connect:google` saved. `fake` is a scripted demo mailbox of two accounts: nothing is read from Google |
+| `ASSISTANT_INBOX_SYNC_MINUTES` | `10` | Minutes between two syncs of one Gmail account (1 to 1440); a failing account is tried again after twice as long each time, up to an hour. The digests' times are settings (Settings → Daily schedule) |
 | `ASSISTANT_PORT` | `3001` | API port. It always binds to `127.0.0.1` |
 | `ASSISTANT_API_ORIGIN` | `http://127.0.0.1:3001` | Where the web app proxies `/api/*` (web only). It is baked into `apps/web/.next` by `next build`: changing it, or `ASSISTANT_PORT`, needs a rebuild of the web app |
 
@@ -206,7 +231,10 @@ production mode: `ASSISTANT_AUTH=off ASSISTANT_MODEL_MODE=faux node apps/server/
 `pnpm --filter @assistant/web start`. `pnpm start` itself refuses `ASSISTANT_AUTH=off`.
 
 OpenAI mode reads credentials from `<data>/secrets/credentials.json` (mode 0600, pi-ai's `CredentialStore` format). There is
-no sign-in command yet (PLAN.md lists `pnpm login:openai` under Ops), and the server never logs in or calls OpenAI by itself.
+no sign-in command yet (PLAN.md lists `pnpm login:openai` under Ops; [`docs/SETUP.md`](docs/SETUP.md) says how to make the file today), and the server never logs in or calls OpenAI by itself.
+Google and Jev are read from two more files in the same folder, which you make from their guides: `google-oauth.json` (the OAuth
+client you created) and `jev.json` (the key); `pnpm connect:google` writes `google-accounts.json`. A missing `jev.json` means local
+rules, a missing `google-oauth.json` means no Google account can be connected; neither stops the server.
 
 Real push notifications need two things the server cannot provide. The page must be served over https (Tailscale Serve),
 because browsers allow service workers and push subscriptions only on secure origins; `http://127.0.0.1` counts as one,
@@ -218,7 +246,7 @@ FCM or Apple's push service has not been tried yet.
 
 ```text
 data/
-  app.sqlite       domain tables (agents, tasks, follow-ups, people, approvals, push subscriptions, daily schedule, journal, file index, health, ledger, splits, invoices), WAL
+  app.sqlite       domain tables (agents, tasks, follow-ups, people, approvals, push subscriptions, daily schedule, journal, file index, health, ledger, splits, invoices, the inbox's accounts, mail with its full-text index, events, rules, suggestions and digest windows, questions between agents), WAL
   durable.sqlite   Durable's storage: conversations, entries, tasks (reminder timers included), WAL
   files/           uploads, `<yyyy-mm>/<id>-<name>`, mode 0600. Agents may read; the browser gets them back through `GET /api/files/:id`
   workspace/       generated files. The only place agents may write
@@ -230,6 +258,9 @@ data/
   secrets/         credentials and keys, mode 0700. Never readable by an agent
     credentials.json   the OpenAI sign-in, mode 0600
     vapid.json         the Web Push key pair, mode 0600, created at the first start
+    google-oauth.json  the Google Cloud OAuth client (Desktop app) you made: id and secret. You put it there (docs/setup-google.md)
+    google-accounts.json  one refresh token per connected Gmail account, mode 0600, written by `pnpm connect:google`
+    jev.json           `{ "JEV_API_KEY": "..." }`, optional: without it mail is sorted by local rules (docs/setup-jev.md)
   server.lock      held while a server runs on this directory (see below)
   dev-push-outbox.jsonl   what the fake push sender would have sent; only with ASSISTANT_PUSH_MODE=fake
 ```
@@ -267,6 +298,13 @@ first before it touches either database. A lock left behind by a crash is recogn
   and the PDF are never put to the model. The PA is given the day's spending by category and what came in as facts for the
   wrap-up, and what it writes in the journal may repeat them. Pushes carry none of it (see "Pushes carry no content" below). In dev mode nothing
   leaves the machine.
+- **What leaves the machine for mail (M5):** Gmail and Calendar are read through Google's APIs (`gmail.googleapis.com`,
+  `www.googleapis.com`) over https with `GET` requests only. A copy of each mail (headers, snippet, up to 8,000 characters of text,
+  never attachments) is kept in `app.sqlite`. When the Inbox agent reads or searches mail, what it reads goes to the model
+  provider like anything else you say to an agent. If a Jev key is saved, each new mail's sender, recipients, subject, Gmail labels
+  and the first 1,500 characters of its text go to `api.typesafe.ai` and to no other host. The morning briefing quotes the subjects of
+  the top three mails that need you (one short line each, stripped of markup and hidden characters) to the PA's model. Pushes about
+  mail say only "Your inbox digest", "The Inbox has a suggestion" or that an account needs to be connected again.
 - **Files are an allowlist:** reads inside `ASSISTANT_READ_PATHS`, `<data>/files` and the workspace; writes only inside
   `<data>/workspace`. Always refused, in any letter case: `.ssh`, `.env*`, `auth.json`, `*.pem`, `*.key`, `.netrc`, `.npmrc`,
   `.aws`, `.git-credentials`, `.gnupg`, `id_*` and `<data>/secrets/**`. The data directory, the workspace and the secrets
@@ -283,8 +321,23 @@ first before it touches either database. A lock left behind by a crash is recogn
   folder (links resolved) or a `data:` PNG or JPEG, and a web address is refused, so rendering fetches nothing. Invoice PDFs are
   written in `<data>/workspace/invoices`, served only from there (`GET /api/files/:id` resolves the path again at each request), as
   downloads with `Content-Security-Policy: sandbox`. There is no tool that sends an invoice anywhere (PLAN rule 1).
-- **Secrets:** `<data>/secrets` is 0700; `credentials.json` and `vapid.json` (the Web Push private key, created at the first
-  start) are 0600, written atomically and fsynced. The private key never leaves that folder: browsers get only the public
+- **Mail is read-only, and email is untrusted (rules 1 and 6):** the Google permissions asked for are constants
+  (`gmail.readonly`, `calendar.readonly`, `openid`, `email`: `apps/server/src/google/oauth.ts`), the HTTP clients behind the Inbox
+  tools only `GET` and only to Google's hosts, and no tool can send, reply, label, archive or delete, so there is nothing for a
+  prompt to talk a model into. The Inbox agent has no file tools, no approval or search tools and no way to call another agent:
+  its only tools are `search_mail`, `read_mail`, `list_events`, `mark_triage`, `propose_sender_rule`, `suggest_followup` and
+  `current_time` (capability by tool presence, tested through the whole server). Text from an email is data: every tool result
+  frames it as such, the Inbox's and the PA's instructions say never to follow it, and what it can reach is bounded:
+  `mark_triage` changes one mail's category and nothing else, a lasting rule for every later mail of a sender is only a card
+  (`propose_sender_rule`) that takes effect when you tap **Approve** (a typed YES does not count), `suggest_followup` only writes
+  a card, and the PA acts on it only when you press **Add**, on a message the server writes from the stored suggestion (not from
+  model text).
+  Only `ask_agent` (the PA's alone) crosses between agents. Disconnecting an account in Settings is your own action, local and
+  without approval (rule 3 is about the assistant deleting); it deletes no mail.
+- **Secrets:** `<data>/secrets` is 0700 (`pnpm connect:google` closes it too if you made it by hand); `credentials.json`,
+  `vapid.json` (the Web Push private key, created at the first start) and `google-accounts.json` (the Gmail refresh tokens) are
+  0600, written atomically and fsynced; `google-oauth.json` and `jev.json` are yours to place, and the server tightens `jev.json` and
+  `google-accounts.json` to 0600 if they are wider. Access tokens are kept in memory only. The private key never leaves that folder: browsers get only the public
   key. The credential store is locked (`credentials.json.lock`) against a second writer, such as a future login command
   running beside the server, and removes temp files a crashed write left behind. The data directory is set to 0700 at
   every start.
@@ -465,3 +518,21 @@ recorded, the full name is asked for, and a bill is only flagged); the bulk `rec
 confirmation above 20 entries, an undo by batch that leaves later changes alone); the PREVIEW watermark and an invoice preview that
 takes no number; and the file-serving tests, which now create one real file per row and read it back before trusting a status (a
 link to the outside, a sibling folder, and a control that stays inside and is served).
+
+M5 added (all against fakes: no call to Google, TypeSafe or OpenAI): the whole sign-in against a fake token endpoint on 127.0.0.1
+(the consent link has exactly the four scopes and a PKCE S256 challenge, the verifier sent with the code hashes to it, a request
+with the wrong state, path, method or `Host` is refused and the flow keeps waiting, the listener is bound to 127.0.0.1, the token
+file is 0600 in a 0700 folder, a sign-in without a scope, a refresh token or for another client saves nothing, `invalid_grant`
+marks the account); the Gmail and Calendar clients over a fake `fetch` (GET only, Google's hosts only, retries, history, an
+expired history, all-day events) and the MIME reader against hostile input in bounded time; the sync with a fake Gmail history
+(incremental, deleted and relabelled mail, an expired history read again, one message that fails every time without holding the
+others back, given up on after five syncs and shown in Settings); the triage rules by category and reason, what the
+owner approved, Jev's contract played by a fake server (the exact URL, no redirect, the three questions, 1,500 characters, the
+answer shapes, a refused key, an outage, a never-ending answer), a sync with Jev down and back, Jev paused after three failures in
+a row and asked again after the cool-down, and a slow Jev that cannot stretch a sync; the digests through the daily
+engine (selection, the three-day limits, windows that tile and survive a rerun and a power cut, the empty digest that costs no
+tokens and sends no push, the briefing's Inbox line); the Inbox tools (FTS search that words cannot break out of, bounded
+`read_mail`, events, `mark_triage` once per call id and for one mail only, a sender rule that exists only after Approve, suggestions
+posted once, Add and Dismiss, the first answer standing, a suggestion that expires after a week); `ask_agent` (replay, timeout,
+a late answer); the capability boundaries through the whole server, real mode with the saved sign-in (revoked, reconnected) and
+Jev; and the web's mail, digest, suggestion and Settings cards rendered to markup, a mail link that only ever goes to Gmail.

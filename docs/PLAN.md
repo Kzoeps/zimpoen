@@ -1,8 +1,8 @@
 # Personal assistant — implementation plan
 
-Status: approved direction. Milestones 1, 2, 3, 4, 6 and 7 are implemented (see `progress-m1.md`, `progress-m2.md`,
-`progress-m3.md`, `progress-m4.md`, `progress-m6.md`, `progress-m7.md`; M5 is not built yet); this document was updated at the end
-of M7 to describe what was built. Owner: Dorje.
+Status: approved direction. Milestones 1 to 7 are implemented (see `progress-m1.md` … `progress-m7.md`; M5, the inbox, was built last);
+this document was updated at the end of M5 to describe what was built. M8 and Ops remain. Owner: Dorje. What the owner has to do is
+`SETUP.md`.
 
 ## 1. Goal
 
@@ -36,11 +36,13 @@ Anthropic subscription OAuth must NOT be used (violates Anthropic consumer terms
    `.npmrc`, `.aws/**`, `.git-credentials`, `.gnupg/**`, `id_*`, `<data>/secrets/**`. Paths are absolute in config;
    startup verifies each allowed path is readable, rejects one that would expose the databases, and fails loudly.
 5. **No `bash` tool** for any agent.
-6. **Inbox agent has no file tools** (it processes untrusted email text).
+6. **Inbox agent has no file tools** (it processes untrusted email text). As built: its extension list is `[profile, inbox]` and its only tools are
+   `search_mail`, `read_mail`, `list_events`, `mark_triage` (one mail), `propose_sender_rule` (asks; the owner's Approve writes the rule), `suggest_followup` and
+   `current_time`: no file tools, no `tool_search`, no approval hook, no `ask_agent`. Email text is data in every layer (`design-notes.md`: "Inbox").
 7. **Arithmetic is code, never the model** (splits, balances, totals, invoice numbers).
 8. **Every app.sqlite write from a tool is idempotent** by the tool call ID (`source_call_id UNIQUE`,
    `ON CONFLICT DO NOTHING`), because Durable may rerun a replay-safe tool after a crash.
-9. **Secrets** (OAuth credential store `credentials.json`, Jev key, VAPID keys `vapid.json`) live in `<data>/secrets/`
+9. **Secrets** (OAuth credential store `credentials.json`, Jev key, VAPID keys `vapid.json`) live in `<data>/secrets/` As built: `credentials.json`, `vapid.json`, `google-accounts.json` (refresh tokens, written by `pnpm connect:google`), and the two files the owner places, `google-oauth.json` (the OAuth client) and `jev.json`.
    (0700), files mode 0600, never readable through any agent environment.
 10. Server and web bind to `127.0.0.1` only. Tailscale Serve is the only ingress.
 
@@ -138,7 +140,10 @@ type AgentDef = {
 
 Agent → conversation mapping is stored in `app.sqlite` table `agents (id PK, conversation_id, created_at)`.
 `ensureAgents` creates missing conversations with `harness.createConversation({ ownership: { kind: "ownerless" }, agent: {...} }, context)` (ownership is required) and records them.
-Only `pa` gets `ask_agent`; specialists cannot reach each other (capability by tool presence).
+Only `pa` gets `ask_agent` (M5, `packages/extensions/src/delegate/`): `ask_agent(agent: inbox|health|accountant, question)` puts the question into that agent's conversation
+with request id `ask:<call id>` (table `delegate_ask`, so a replayed call asks nothing twice), waits 90 s, and returns the answer as information; past that the result says the agent is still working and
+the answer later arrives as a display-only `app.agent-answer` card. Specialists cannot reach each other (capability by tool presence); the Inbox hands work to the PA only through the
+suggestion queue (§5.2).
 
 ### 5.2 Domain modules
 
@@ -165,12 +170,14 @@ type DomainDeps = {
 	schedule?: Partial<ScheduleSettings>; // when follow-ups and birthdays fire (ASSISTANT_AGENDA_LEAD_MINUTES, ...); defaults otherwise
 	health?: HealthDeps; // { heightCm? }: the owner's height for BMI (ASSISTANT_OWNER_HEIGHT_CM); only the Health module reads it
 	accountant?: AccountantDeps; // { currency, ownerName?, invoices?: { outDir, templatesDir } }: ASSISTANT_CURRENCY (BTN), the configured owner name, where invoice PDFs and the template live (M7)
+	inbox?: InboxDeps; // { google: GoogleGateway (gmail, calendar, tokens: read-only interfaces), triage: Triage (Jev or the rules), sync?: SyncSettings } (M5)
+	delegate?: DelegateDeps; // { timeoutMs? }: how long ask_agent waits (M5)
 };
 ```
 
 The server (`apps/server/src/domain.ts`) lists the modules, concatenates their migrations after the core ones
 (`migrate(db, [...coreMigrations, ...domain.migrations])`), installs every extension in the registry, and gives each agent
-the ones it should have (`buildAgents`: the PA gets `tasks`, `followups`, `people`, `approvals`, `daily` and `files`; the Health agent gets `health`, `approvals` and `tool_search`; the Accountant gets `ledger`, `splits`, `invoices`, `files`, `approvals`, `tool_search` and Durable's code mode (`@earendil-works/pi-durable/codemode` over a QuickJS sandbox with `models: false`, so a script has no paid model calls, and a time limit written into every script: `createBoundedCodemodeExtension`, 30 s by default and 2 minutes at most); capability is tool presence). A module never
+the ones it should have (`buildAgents`: the PA gets `tasks`, `followups`, `people`, `approvals`, `daily`, `files` and `delegate` (`ask_agent`); the Inbox agent gets `inbox` alone (`inboxExtensions`: no files, no `tool_search`, no approvals); the Health agent gets `health`, `approvals` and `tool_search`; the Accountant gets `ledger`, `splits`, `invoices`, `files`, `approvals`, `tool_search` and Durable's code mode (`@earendil-works/pi-durable/codemode` over a QuickJS sandbox with `models: false`, so a script has no paid model calls, and a time limit written into every script: `createBoundedCodemodeExtension`, 30 s by default and 2 minutes at most); capability is tool presence). A module never
 imports server code: everything it needs arrives in `DomainDeps`.
 
 **Migrations.** An id is `<module>/<NNN>[_name]`. Ordering is a rule within one module only: its migrations must be
@@ -249,6 +256,17 @@ EveningWrapUp  (21:00; late window to midnight): what the system recorded today 
 //  A first row is never "late", nor is an edit in Settings; a day that ran never runs again. At start, a job that ran today
 //  is delivered again with the same request id and no push (a power cut can lose it from Durable's database). Every question
 //  the jobs ask closes the YES window (an approval cannot be answered by a "yes" typed to a wrap-up).
+// Inbox digests (M5, the same engine, `agent: "inbox"`): `digest_midday` 12:30 and `digest_evening` 19:00, late window 2 h. Facts = the mail whose category is important, needs_reply
+//  or follow_up and that was classified in `(since, cutoff]` (at most 25, most urgent first; not older than 3 days; the window starts at the last saved cutoff, never more than 3 days
+//  back; saved in `inbox_digest` so a rerun and the power-cut recovery show the same mail) plus any account that needs to be connected again -> deps.ask(inbox, request id
+//  digest_<midday|evening>:<date>) + push "Your inbox digest" (/chat/inbox). NOTHING -> an app.daily card, zero tokens, NO push (requestId ...:empty; DailyJob.pushWhenEmpty false). The morning briefing gets an
+//  "Inbox" line (counts, the top three subjects).
+// Inbox sync (M5): one Durable task per connected Gmail account, `app.inbox-sync`, input { account, gen }; `inbox_account` is the truth (next_sync_at, gen, failures, last error).
+wait --sleepUntil(next_sync_at)--> run
+//  wait: ends as superseded when the row no longer wants this timer, else sleeps
+//  run:  first read (last 14 days, newest first, <= 1000) or history.list (a 404 reads the mailbox again) -> classify what is new (Jev, or the rules; provisional when Jev fails)
+//        -> calendar (yesterday to +14 days) -> the next run goes into the row first, then its timer; a failure waits twice as long each time (<= 1 h), a refused token
+//        ends the timer and marks the account needs_reconnect (a card in the PA's thread and a push). A conversation-owned background task: it never holds up the PA.
 ```
 
 **The row is the truth, the Durable task is a timer.** `tasks_item` and `durable.sqlite` are two databases, so nothing can
@@ -283,8 +301,11 @@ POST /api/push/subscribe                  { endpoint, keys: { p256dh, auth } } -
 DELETE /api/push/subscribe                { endpoint } -> { removed }
 POST /api/approvals/:id                   { decision: "approve"|"deny" } -> ApprovalState; 404 unknown, 409 expired/answered
 POST /api/admin/tasks/:id/retry           runs a task Durable parked after repeated crashes; 404 if it is not parked
-GET  /api/settings/schedule               -> { timezone, jobs: [{ job, label, localTime, enabled, defaultTime, nextRunAt?, nextRunText?, lastRunDate? }] }
+GET  /api/settings/schedule               -> { timezone, jobs: [{ job, label, localTime, enabled, defaultTime, nextRunAt?, nextRunText?, lastRunDate? }] }   (jobs: briefing, wrapup, digest_midday, digest_evening)
 PUT  /api/settings/schedule/:job          { localTime?: "HH:MM", enabled? } -> the same body; takes effect at once (404 unknown job, 400 bad time)
+GET  /api/settings/google                 -> { mode: "real"|"fake", clientConfigured, triage: { mode: "jev"|"rules", lastError?, lastErrorText? }, syncMinutes, accounts: [{ email, status: "connected"|"needs_reconnect"|"disconnected", lastSyncText?, lastError?, messages }] }
+DELETE /api/settings/google/accounts      { email } -> the same body (local only: the sign-in is forgotten, the sync stops, the mail stays; 404 unknown, 400 bad address)
+POST /api/suggestions/:id                 { decision: "add"|"dismiss" } -> { id, status }; Add asks the PA to add the follow-up (message written by code from the stored suggestion); 404 unknown, 409 answered the other way
 POST /api/uploads                         multipart, ONE `file` field, <= 20 MB -> 201 { file: FileSummary }; the only non-JSON write
 GET  /api/files/:id                       an upload's bytes (nosniff, sandbox CSP; inline for images, download for the rest)
 ```
@@ -349,9 +370,14 @@ fed by `EventSource` → adapter (`applyEvent(state, event)`) → `convertMessag
 - Daily cards: the briefing or wrap-up request is a card (the facts folded, "sent late" when it was) and the PA's first answer
   after it carries a "Morning briefing" / "Evening wrap-up" chip until the owner speaks again; a briefing with nothing in it
   is one line. `save_journal` / `get_journal` and the file tools (`describe_file`, `search_files`, `read_file_path`) have cards.
+- Inbox cards (M5): `search_mail` and a digest list mail as rows (subject as a link to the conversation in Gmail, category chip, sender, date, account; text only, and a link is
+  followed only when it is `https://mail.google.com/...`), `read_mail` folds the text, `list_events` lists the calendar; in the PA's thread a suggestion from the Inbox is a card with
+  **Add** and **Dismiss** (disabled once pressed; its state comes from the notices that follow), `ask_agent` shows the question and the answer (or "still working"), and a late answer is a
+  card; in a specialist's thread the question the PA asked is a card. The digest is the daily card with its mail open; the Inbox agent's answer under it carries an "Inbox digest" chip.
 - Capture page `/capture` (the Android share target lands here): the shared files as chips, the shared text editable, an
   agent picker (default `pa`), "Send to X".
-- Settings: the daily schedule (a time and an on/off switch for each job) and per-agent model + thinking level (curated list: models whose id starts with `gpt-6`, "Show all" toggle; the
+- Settings: **Google accounts** (each account's address, status, last sync and how much mail is kept, Disconnect with a confirmation, the commands that connect or reconnect one, the
+  **Jev / Rules mode** badge with why Jev fell back, "client file missing", and a note in fake mode); the daily schedule (a time and an on/off switch for each job, the two digests included) and per-agent model + thinking level (curated list: models whose id starts with `gpt-6`, "Show all" toggle; the
   agent's current model is always listed; a server with no curated model lists everything) and the Enable
   notifications control (permission → register `/sw.js` → subscribe with the VAPID key → `POST /api/push/subscribe`).
 - PWA (M2): `manifest.ts`, generated icons (`apps/web/scripts/make-icons.mjs`), `public/sw.js` (push, notificationclick and
@@ -467,7 +493,22 @@ invoice_issued(id PK, number UNIQUE, seq, period /* YYYY-MM */, issue_date, due_
                file_id /* fi_ */, file_path, source_call_id UNIQUE, created_at)
 invoices_call(source_call_id PK, tool, subject, applied_at)   -- rule 8 for set_invoice_profile
 
--- later milestones: inbox_message(triage) ...
+-- inbox (module inbox, the Inbox agent; M5). Mail is a local copy, never attachments. Subjects, senders and snippets are one bounded line; text <= 8000 characters.
+inbox_account(email PK, status CHECK(status IN ('connected','needs_reconnect','disconnected')), history_id NULL, connected_at, next_sync_at, last_sync_at NULL, last_ok_at NULL, last_error NULL,
+              failures, needs_reconnect_at NULL, calendar_synced_at NULL, gen, durable_task_id NULL, created_at, updated_at)   -- the row is the truth; the token file says ok / needs_reconnect and when the owner approved
+inbox_message(id INTEGER PK, account, gmail_id, thread_id, from_name, from_addr, to_addrs, subject, date, labels /* JSON */, bulk, snippet, body_text_trunc, hidden /* deleted, trashed, spam */,
+              deleted_at NULL, triage_json NULL, category NULL, urgency NULL, needs_human NULL, triage_source NULL /* jev | rules | owner */, provisional /* rules stood in for Jev */,
+              triaged_at NULL /* digests select by it */, created_at, UNIQUE(account, gmail_id))   -- + FTS5 inbox_message_fts over subject, sender, snippet, text, kept by triggers
+inbox_event(id PK, account, event_id, title, start_at, end_at, all_day, attendees /* JSON */, location, updated, UNIQUE(account, event_id))
+inbox_rule(id INTEGER PK, kind CHECK(kind IN ('sender','domain')), value, category, created_at, UNIQUE(kind, value))   -- what the owner approved (propose_sender_rule -> Approve)
+inbox_suggestion(id TEXT PK /* sg_xxxxxxxx */, kind CHECK(kind IN ('meeting','commitment')), title, counterpart, context, at, ends_at NULL, source_type, source_id, source_label, source_url NULL,
+                 status CHECK(status IN ('pending','added','dismissed','expired')), posted_at NULL, decided_at NULL, source_call_id UNIQUE, created_at)   -- the queue from the Inbox to the PA; a pending one expires after 7 days
+inbox_call(source_call_id PK, tool, subject, applied_at)   -- rule 8 for mark_triage
+inbox_digest(job, date, since_at, cutoff_at, PRIMARY KEY(job, date))   -- the window a digest first looked at: first writer wins
+inbox_state(key PK, value, updated_at)   -- small facts: why Jev last fell back
+inbox_read_failure(account, gmail_id, attempts, last_error, last_failed_at, skipped_at NULL, PRIMARY KEY(account, gmail_id))   -- a message Gmail would not hand over: retried at each sync until 5 syncs failed, then skipped and shown in Settings
+delegate_ask(id TEXT PK /* q_xxxxxxxx */, source_call_id UNIQUE, conversation_id /* the asker's */, agent CHECK(agent IN ('inbox','health','accountant')), question, request_id,
+             status CHECK(status IN ('waiting','answered','failed')), answer NULL, late, posted_at NULL, created_at, settled_at NULL)   -- ask_agent (module delegate)
 ```
 
 Preferences/personality memory is written only when the user explicitly asks. Factual updates come from domain
@@ -481,7 +522,7 @@ tools (e.g. `add_expense`), not free-form memory.
 | M2 Tasks & reminders (done)                                       | tasks extension + Reminder task + zero-token posts + Web Push + approvals for delete                                                                                                                                                                                                                                           | reminder fires after restart, posts card, push sent (mockable)                                                              |
 | M3 Follow-ups, agendas, birthdays, people (done)                  | FollowUp task, agenda capture, yearly birthday                                                                                                                                                                                                                                                                                 | follow-up loop works with fake clock                                                                                        |
 | M4 Briefing, wrap-up, journal, files, share target (done)                       | daily tasks, done-log, uploads + file tools, PWA share target |                                                                                                                             |
-| M5 Inbox                                                          | Gmail + Calendar read-only (multi-account), Jev triage, digest, handoff to PA                                                                                                                                                                                                                                                  |                                                                                                                             |
+| M5 Inbox (done)                                                   | Gmail + Calendar read-only (multi-account), Jev triage (rules without a key), digests at 12:30 and 19:00, suggestions to the PA, `ask_agent` | fakes for Google and Jev throughout; whole-server tests; browser check; the real services are the owner's first run (`SETUP.md`) |
 | M6 Health (done)                                                  | weight/lift tables, tools, trends, chart cards, facts for the wrap-up and briefing                                                                                                                                                                                                                                              | tools tested with replays; whole-server test; browser check                                                                 |
 | M7 Accountant (done)                                              | expenses (CSV/photo/chat), code-mode analysis, splits, invoice PDF from template                                                                                                                                                                                                                                               |                                                                                                                             |
 | M8 Memory/profile UI, activity log, usage dashboard, budget guard |                                                                                                                                                                                                                                                                                                                                |                                                                                                                             |
@@ -503,6 +544,13 @@ tools (e.g. `add_expense`), not free-form memory.
   account and category), so that "I paid Pema 250 from mBoB" reaches spending and the balance? The review recommended it; it
   couples the splits module to the ledger and was not in the coordinator's adjudication. And: an issued invoice keeps no snapshot of
   its address, payment details or notes, so a lost PDF cannot be made again under its own number (`docs/OPS.md` says to back it up).
+- (Decided in M5, cheap to reverse) Digest windows are saved per job and day (`inbox_digest`) rather than derived from the last run; Disconnect forgets the sign-in but keeps the mail; a
+  suggestion acts only through the owner's Add, on a message written by code and expires after 7 days; late `ask_agent` answers are cards, not prompt text; the briefing quotes the top three subjects; an empty
+  digest is a card and no push. After the M5 review (`review-m5.md`): one unreadable message cannot stall an account's sync (it is skipped after 5 tries and shown in Settings); `mark_triage` changes one mail and a
+  lasting sender rule needs the owner's Approve; a Jev that fails three mails in a row is paused for 15 minutes (Settings says so) and one sync gives Jev at most 90 s; `setup-google.md` recommends publishing the Google app
+  "In production" so that sign-ins do not expire weekly. Open, cannot be checked offline: Google's REST behaviour (the history 404, label records, a Desktop client's loopback redirect) and the 7-day expiry of a Testing-mode refresh
+  token are written from knowledge; Jev's request and answer shape were written without its documentation (`triage/jev-contract.ts`, `TODO(verify)`); no real model has driven the Inbox
+  instructions, the digests or `ask_agent`; `pnpm login:openai` still does not exist (`SETUP.md` says how to make the credential file by hand).
 - Backups (deferred by user).
 - PDFs are stored and shown but the PA cannot read them yet: text extraction is a dependency decision (M7 needs it for
   statements; bank CSVs and receipt photos already work).
