@@ -60,7 +60,16 @@ describe("migrations and agents", () => {
 			]),
 		);
 		const stored = await server.harness.snapshot(AgentDoc, paConversation(server) as ConversationId, ctx);
-		expect(stored?.extensions).toStrictEqual(["profile", "tasks", "followups", "people", "approvals", "tool-search"]);
+		expect(stored?.extensions).toStrictEqual([
+			"profile",
+			"tasks",
+			"followups",
+			"people",
+			"daily",
+			"files",
+			"approvals",
+			"tool-search",
+		]);
 		const other = server.db.get<{ conversation_id: number }>("SELECT conversation_id FROM agents WHERE id = 'health'");
 		const healthDoc = await server.harness.snapshot(AgentDoc, other?.conversation_id as ConversationId, ctx);
 		expect(healthDoc?.extensions).toStrictEqual(["profile"]); // capability by tool presence: only the PA has them
@@ -287,9 +296,12 @@ describe("the PA's tools", () => {
 			"add_task",
 			"complete_task",
 			"current_time",
+			"describe_file",
 			"list_tasks",
+			"read_file",
 			"record_outcome",
 			"record_wish",
+			"save_journal",
 			"snooze_reminder",
 			"tool_search",
 		]);

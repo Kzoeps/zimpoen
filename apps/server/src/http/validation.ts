@@ -1,3 +1,4 @@
+import { TIME_OF_DAY } from "@assistant/extensions";
 import {
 	type ApprovalDecision,
 	DEFAULT_HISTORY_PAGE,
@@ -10,6 +11,7 @@ import {
 	type SendMessageRequest,
 	THINKING_LEVELS,
 	type UpdateAgentSettingsRequest,
+	type UpdateScheduleRequest,
 } from "@assistant/shared";
 import type { Context, MiddlewareHandler } from "hono";
 import { ApiError, invalidRequest } from "./errors.ts";
@@ -23,8 +25,8 @@ import { ApiError, invalidRequest } from "./errors.ts";
  * this server never grants it. It works together with the checks in `guard.ts` (allowed `Host`, `Sec-Fetch-Site`), and
  * needs no token or cookie.
  *
- * Consequence for M2: a multipart upload cannot satisfy this rule, so `POST /api/uploads` will be an explicit,
- * single exception that relies on those `guard.ts` checks instead (see `docs/design-notes.md`). Do not widen the rule.
+ * A multipart upload cannot satisfy this rule, so `POST /api/uploads` is an explicit, single exception: it is registered
+ * before this middleware, and carries rules of its own (`uploads.ts`, `docs/design-notes.md`). Do not widen the rule.
  */
 export const requireJsonContentType: MiddlewareHandler = async (c, next) => {
 	if (
@@ -186,4 +188,18 @@ export function parseDecision(body: Record<string, unknown>): ApprovalDecision {
 		throw invalidRequest("'decision' must be 'approve' or 'deny'.");
 	}
 	return decision;
+}
+
+/** `PUT /api/settings/schedule/:job`: a time of day, whether the job runs, or both. */
+export function parseUpdateSchedule(body: Record<string, unknown>): UpdateScheduleRequest {
+	const { localTime, enabled } = body;
+	if (localTime !== undefined && (typeof localTime !== "string" || !TIME_OF_DAY.test(localTime))) {
+		throw invalidRequest("'localTime' must be a 24-hour time written HH:MM, for example 07:30.");
+	}
+	if (enabled !== undefined && typeof enabled !== "boolean") throw invalidRequest("'enabled' must be true or false.");
+	if (localTime === undefined && enabled === undefined) throw invalidRequest("Send 'localTime', 'enabled' or both.");
+	return {
+		...(localTime === undefined ? {} : { localTime }),
+		...(enabled === undefined ? {} : { enabled }),
+	};
 }

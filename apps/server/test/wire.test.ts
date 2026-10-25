@@ -47,6 +47,51 @@ describe("omitOpaque", () => {
 	});
 });
 
+describe("the bytes of an image in a tool result", () => {
+	const read = entry(7, "pi.toolResult", {
+		role: "toolResult",
+		toolCallId: "c1",
+		toolName: "read_file",
+		isError: false,
+		timestamp: 1,
+		content: [
+			{ type: "text", text: "fi_ab12cd34 “receipt.jpg”: image, image/jpeg, 2.0 MB." },
+			{ type: "image", data: "A".repeat(4000), mimeType: "image/jpeg" },
+		],
+	});
+
+	it("are replaced by a marker that keeps the type, the size left out and the file id; the text stays", () => {
+		const [wire] = toWireEntries([read]);
+		expect(wire?.model?.[0]).toMatchObject({
+			content: [
+				{ type: "text", text: "fi_ab12cd34 “receipt.jpg”: image, image/jpeg, 2.0 MB." },
+				{ type: "image", mimeType: "image/jpeg", omitted: 3000, fileId: "fi_ab12cd34" },
+			],
+		});
+		expect(JSON.stringify(wire)).not.toContain("AAAA");
+	});
+
+	it("do not leave the server in a snapshot, a history page or a live event, and the stored entry keeps them", () => {
+		const before = structuredClone(read);
+		expect(JSON.stringify(toStreamSnapshot(emptySnapshot([user(1), read])))).not.toContain("AAAA");
+		expect(JSON.stringify(toStreamEvent({ type: "entry_appended", entry: read } as AgentEvent))).not.toContain("AAAA");
+		expect(read).toStrictEqual(before);
+	});
+
+	it("carry no file id when the text does not name one, and an image without a type keeps none", () => {
+		const bare = entry(8, "pi.toolResult", {
+			role: "toolResult",
+			content: [
+				{ type: "text", text: "a screenshot" },
+				{ type: "image", data: "QUJD" },
+			],
+		});
+		const [wire] = toWireEntries([bare]);
+		const message = wire?.model?.[0] as { content: Array<Record<string, unknown>> } | undefined;
+		expect(message?.content[1]).toStrictEqual({ type: "image", omitted: 3 });
+	});
+});
+
 describe("toWireEntries", () => {
 	it("hides system-prompt entries and strips signatures, keeping order", () => {
 		const wire = toWireEntries([system(1), user(2), assistant(3)]);

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AppDb, coreMigrations, migrate } from "@assistant/db";
-import { approvalsModule, createApprovalService, createEntryPoster } from "@assistant/extensions";
+import { approvalsModule, createApprovalService, createEntryPoster, filesModule } from "@assistant/extensions";
 import type { StreamBatch, StreamEvent } from "@assistant/shared";
 import { type Config, type Env, loadConfig } from "../src/config.ts";
 import type { AppDeps } from "../src/http/app.ts";
@@ -135,7 +135,7 @@ export async function readSse(
 /** Everything `createApp` needs, from a runtime and its app database. Authentication off, listening on port 3001. */
 export function appDepsFor(runtime: Runtime, db: AppDb, overrides: Partial<AppDeps> = {}): AppDeps {
 	// The approval service looks at its table for every message the owner sends, so a test database needs it.
-	migrate(db, [...coreMigrations, ...approvalsModule.migrations]);
+	migrate(db, [...coreMigrations, ...approvalsModule.migrations, ...filesModule.migrations]);
 	return {
 		harness: runtime.harness,
 		db,
@@ -147,6 +147,16 @@ export function appDepsFor(runtime: Runtime, db: AppDb, overrides: Partial<AppDe
 			post: createEntryPoster(() => runtime.harness),
 		}),
 		push: { publicKey: "test-vapid-public-key" },
+		// The daily jobs and the uploads folder belong to tests of their own, which pass real ones.
+		daily: {
+			ensureRows: () => [],
+			list: () => [],
+			update: async (job) => {
+				throw new Error(`No daily job '${job}' in this test.`);
+			},
+		},
+		timezone: "Asia/Thimphu",
+		filesDir: join(tmpdir(), "assistant-test-no-uploads"),
 		auth: { mode: "off" },
 		hosts: createHostPolicy(3001, []),
 		...overrides,

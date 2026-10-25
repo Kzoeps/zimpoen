@@ -5,7 +5,14 @@ import {
 	listPushSubscriptions,
 	upsertPushSubscription,
 } from "@assistant/db";
-import { ApprovalConflict, ApprovalNotFound, type ApprovalService } from "@assistant/extensions";
+import {
+	ApprovalConflict,
+	ApprovalNotFound,
+	type ApprovalService,
+	type DailyService,
+	InvalidDailyTime,
+	UnknownDailyJob,
+} from "@assistant/extensions";
 import type {
 	AgentSettingsResponse,
 	AgentsResponse,
@@ -13,6 +20,7 @@ import type {
 	MessagesPage,
 	PushConfigResponse,
 	RetryTaskResponse,
+	ScheduleSettingsResponse,
 	SendMessageResponse,
 } from "@assistant/shared";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -35,8 +43,9 @@ import { runConversationStream } from "../stream.ts";
 import type { UnansweredReader } from "../unanswered.ts";
 import { toWireEntries } from "../wire.ts";
 import { authMiddleware } from "./auth.ts";
-import { ApiError, errorBody, errorHandler, notFound, notFoundHandler } from "./errors.ts";
+import { ApiError, errorBody, errorHandler, invalidRequest, notFound, notFoundHandler } from "./errors.ts";
 import { type HostPolicy, requestGuard } from "./guard.ts";
+import { createFilesApp, createUploadsApp } from "./uploads.ts";
 import {
 	parseDecision,
 	parseHistoryQuery,
@@ -44,6 +53,7 @@ import {
 	parsePushSubscribe,
 	parsePushUnsubscribe,
 	parseSendMessage,
+	parseUpdateSchedule,
 	parseUpdateSettings,
 	readJsonObject,
 	requireJsonContentType,
@@ -75,6 +85,12 @@ export type AppDeps = {
 	approvals: ApprovalService;
 	/** The VAPID public key browsers subscribe to Web Push with. */
 	push: PushConfigResponse;
+	/** The settings of the morning briefing and the evening wrap-up. */
+	daily: DailyService;
+	/** The owner's time zone, which the schedule's times are in. */
+	timezone: string;
+	/** Where uploads are kept (`<data>/files`, resolved). */
+	filesDir: string;
 	/** Clock for stored timestamps. Default `Date.now`. */
 	now?: () => number;
 	auth: AuthConfig;
@@ -102,6 +118,13 @@ export function createApp(deps: AppDeps): Hono {
 	// Order matters: refuse foreign hosts and cross-site browsers before identity, and size before parsing.
 	app.use("/api/*", requestGuard(deps.hosts));
 	app.use("/api/*", authMiddleware(deps.auth));
+	// The one write that is not JSON. It is registered before the JSON-only rule, which it must not reach, and carries its
+	// own rules (uploads.ts); every other route is behind that rule. Do not move it, and do not add another like it.
+	app.route(
+		"/api/uploads",
+		createUploadsApp({ db, filesDir: deps.filesDir, ...(deps.now === undefined ? {} : { now: deps.now }) }),
+	);
+	app.route("/api/files", createFilesApp({ db, filesDir: deps.filesDir }));
 	app.use("/api/*", requireJsonContentType);
 	app.use(
 		"/api/*",
@@ -234,6 +257,24 @@ export function createApp(deps: AppDeps): Hono {
 			agent: await updateAgentSettings(harness, conversationId, def, request, deps.models, context),
 			models: listModelOptions(deps.models),
 		};
+		return c.json(body);
+	});
+
+	app.get("/api/settings/schedule", (c) => {
+		const body: ScheduleSettingsResponse = { timezone: deps.timezone, jobs: deps.daily.list() };
+		return c.json(body);
+	});
+
+	app.put("/api/settings/schedule/:job", async (c) => {
+		const change = parseUpdateSchedule(await readJsonObject(c));
+		try {
+			await deps.daily.update(c.req.param("job"), change);
+		} catch (error) {
+			if (error instanceof UnknownDailyJob) throw notFound(error.message);
+			if (error instanceof InvalidDailyTime) throw invalidRequest(error.message);
+			throw error;
+		}
+		const body: ScheduleSettingsResponse = { timezone: deps.timezone, jobs: deps.daily.list() };
 		return c.json(body);
 	});
 

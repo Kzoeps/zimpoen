@@ -6,8 +6,10 @@ import type { AgentEvent, AgentState, EntryRecord, SnapshotEvent } from "@earend
  *
  * Three kinds of data never leave the server: the `pi.system` entries (prompt and tool declarations, which the user
  * did not write and the UI does not render), opaque provider signatures (encrypted reasoning replay data, large and
- * meaningless to a client), and the agent's `instructions` and `cwd` (the persona prompt and a server path). Everything
- * else passes through unchanged, so the UI is typed against Durable's own shapes.
+ * meaningless to a client), the bytes of images in tool results (a receipt the PA looked at: megabytes that every page
+ * load and every reconnect would download, and that the UI never shows; the model still has them in Durable's own
+ * storage), and the agent's `instructions` and `cwd` (the persona prompt and a server path). Everything else passes
+ * through unchanged, so the UI is typed against Durable's own shapes.
  */
 
 const OPAQUE_KEYS: ReadonlySet<string> = new Set(["thinkingSignature", "textSignature", "thoughtSignature"]);
@@ -21,8 +23,44 @@ export function omitOpaque<T>(value: T): T {
 	return strip(value) as T;
 }
 
+type ImageBlock = { type: "image"; data: string; mimeType?: string };
+
+const isImageBlock = (value: unknown): value is ImageBlock =>
+	typeof value === "object" &&
+	value !== null &&
+	(value as { type?: unknown }).type === "image" &&
+	typeof (value as { data?: unknown }).data === "string";
+
+/** The file tools write the file's id first in the text that goes with its image ("fi_ab12cd34 “receipt.jpg”: image, …"). */
+const LABELLED_FILE_ID = /^(fi_[0-9a-f]{8})\b/;
+
+function fileIdOf(blocks: readonly unknown[]): string | undefined {
+	for (const block of blocks) {
+		if (typeof block !== "object" || block === null || (block as { type?: unknown }).type !== "text") continue;
+		const id = LABELLED_FILE_ID.exec(String((block as { text?: unknown }).text ?? ""))?.[1];
+		if (id !== undefined) return id;
+	}
+	return undefined;
+}
+
+/**
+ * What stands in for an image's bytes: its type, how many bytes were left out, and the id of the file when the block says
+ * which one it is, so a client that wants the picture asks `GET /api/files/:id` instead of carrying it in every page.
+ */
+function withoutBytes(block: ImageBlock, fileId: string | undefined): Record<string, unknown> {
+	return {
+		type: "image",
+		...(block.mimeType === undefined ? {} : { mimeType: block.mimeType }),
+		omitted: Math.floor((block.data.length * 3) / 4),
+		...(fileId === undefined ? {} : { fileId }),
+	};
+}
+
 function strip(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(strip);
+	if (Array.isArray(value)) {
+		const fileId = fileIdOf(value);
+		return value.map((item) => (isImageBlock(item) ? withoutBytes(item, fileId) : strip(item)));
+	}
 	if (typeof value !== "object" || value === null) return value;
 	const copy: Record<string, unknown> = {};
 	for (const [key, child] of Object.entries(value)) {

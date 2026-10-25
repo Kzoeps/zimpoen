@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Harness, HarnessOptions, ReportInfo } from "@earendil-works/pi-durable";
+import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
+import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import { serve } from "@hono/node-server";
 import { buildAgents, countParkedTasks, type EnsureAgentsResult, ensureAgents, listUnrunnableTasks } from "./agents.ts";
 import type { Config } from "./config.ts";
@@ -35,6 +37,8 @@ export type StartServerOptions = {
 	setTimer?: HarnessOptions["setTimer"];
 	/** Replaces the push sender the configuration chooses, so tests can see what would have been sent. */
 	pushSender?: PushSender;
+	/** Replaces the image processor (Photon, in a worker thread) the PA's `read_file` shrinks images with. */
+	images?: ImageProcessor;
 	/** How often the running server does its upkeep (see {@link startMaintenance}). The defaults are for real use; tests shorten them. */
 	intervals?: { resumeMs?: number; sweepMs?: number };
 };
@@ -91,12 +95,16 @@ export async function startServer(config: Config, options: StartServerOptions = 
 				? createFakePushSender(config.paths.pushOutbox, logger)
 				: createWebPushSender(vapid, config.push.subject));
 		const notifier = createNotifier(db, sender, logger);
+		// Photon is loaded, in a worker thread, the first time an image is read; this only prepares to.
+		const images = options.images ?? (await createNodePhotonImages());
 		const domain = createDomain({
 			db,
 			timezone: config.profile.timezone,
 			now,
 			notify: notifier.notify,
 			schedule: config.schedule,
+			// The uploads folder is how files reach the PA, so it is named by `read_file`'s ids rather than as a place to look.
+			files: { readPaths: config.readPaths.filter((path) => path !== config.paths.files), images },
 		});
 		const migrations = migrate(db, [...coreMigrations, ...domain.migrations]);
 		if (migrations.applied.length > 0) logger.info(`[db] applied migrations: ${migrations.applied.join(", ")}`);
@@ -152,6 +160,9 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			unanswered: runtime.unanswered,
 			approvals: domain.approvals,
 			push: { publicKey: vapid.publicKey },
+			daily: domain.daily,
+			timezone: config.profile.timezone,
+			filesDir: config.paths.files,
 			now,
 			agents: agentDefs,
 			auth: config.auth,
@@ -400,6 +411,15 @@ function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
 			(id) => `move it to the assistant's new conversation: ${repoint("people_person", id)}`,
 		);
 
+	const dailyUnrepaired = (failures: RepairReport["reminders"]["failures"]): void =>
+		unrepaired(
+			"daily",
+			failures,
+			(id) => `the ${id} job its timer`,
+			(id) =>
+				`check that the PA has a conversation (sqlite3 "${appDb}" "SELECT * FROM agents WHERE id = 'pa'"), or switch the job off in Settings: ${id}`,
+		);
+
 	function unannounced(failures: RepairReport["approvals"]["failures"]): void {
 		for (const failure of failures) {
 			if (described.has(`approval:${failure.id}`)) continue;
@@ -412,18 +432,40 @@ function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
 		}
 	}
 
-	function timers(report: Pick<RepairReport, "reminders" | "followups" | "birthdays">): void {
+	function timers(
+		report: Pick<RepairReport, "reminders" | "followups" | "birthdays"> & { daily: RepairReport["daily"]["timers"] },
+	): void {
 		rescheduled("tasks", "reminder(s)", report.reminders.rescheduled);
 		tasksUnrepaired(report.reminders.failures);
 		rescheduled("followups", "follow-up(s)", report.followups.rescheduled);
 		followupsUnrepaired(report.followups.failures);
 		rescheduled("people", "birthday timer(s)", report.birthdays.rescheduled);
 		birthdaysUnrepaired(report.birthdays.failures);
+		rescheduled("daily", "daily job(s)", report.daily.rescheduled);
+		dailyUnrepaired(report.daily.failures);
 	}
 
 	return {
 		startup(report) {
-			timers(report);
+			const { created, redelivered, failures: undelivered } = report.daily.recovery;
+			// A job that got its row at this start has no timer because nobody has made one yet, not because one was lost.
+			const lost = report.daily.timers.rescheduled.filter((job) => !created.includes(job));
+			timers({ ...report, daily: { ...report.daily.timers, rescheduled: lost } });
+			if (created.length > 0) {
+				logger.info(`[daily] scheduled for the first time: ${created.join(", ")}. Change the times in Settings.`);
+			}
+			if (redelivered.length > 0) {
+				logger.warn(
+					`[daily] today's ${redelivered.join(" and ")} had been lost from Durable's database (a power cut takes its last writes) ` +
+						"and was written again from today's facts. One that is there is left as it is.",
+				);
+			}
+			for (const failure of undelivered) {
+				logger.error(
+					`[daily] could not check that today's ${failure.job} is in the thread: ${sentence(failure.message)} ` +
+						"The server keeps running; the next scheduled run is not affected.",
+				);
+			}
 			const { expired, executed, notified, failures } = report.approvals;
 			if (expired + executed + notified > 0) {
 				logger.info(

@@ -3,11 +3,19 @@ import {
 	type ApprovalService,
 	approvalsModule,
 	closingYesWindow,
+	closingYesWindowOnAsk,
 	collectMigrations,
 	createApprovalService,
 	createEntryPoster,
+	createInputSubmitter,
+	type DailyFactsProvider,
+	type DailyService,
+	type DailyStart,
 	type DomainDeps,
 	type DomainModule,
+	dailyModule,
+	type FilesDeps,
+	filesModule,
 	followupsModule,
 	peopleModule,
 	type ReconcileReport,
@@ -35,6 +43,8 @@ export type Domain = {
 	 */
 	paExtensions: Extension[];
 	approvals: ApprovalService;
+	/** The morning briefing and the evening wrap-up: their times and whether they run. */
+	daily: DailyService;
 	/** Hand over the open Harness. Until then anything that needs one throws, which only a bug can trigger. */
 	bind(harness: Harness): void;
 	/** Start-up repair of what a crash or a power cut can leave inconsistent between the two databases. */
@@ -51,6 +61,8 @@ export type RepairReport = {
 	reminders: ReconcileReport;
 	followups: ReconcileReport;
 	birthdays: ReconcileReport;
+	/** The daily jobs: today's runs written again if a power cut took them, and their timers. */
+	daily: { recovery: DailyStart; timers: ReconcileReport };
 	approvals: RecoveryReport;
 };
 
@@ -60,6 +72,7 @@ export type SweepReport = {
 	reminders: ReconcileReport;
 	followups: ReconcileReport;
 	birthdays: ReconcileReport;
+	daily: ReconcileReport;
 };
 
 export type DomainOptions = {
@@ -70,10 +83,19 @@ export type DomainOptions = {
 	notify: (payload: PushPayload) => Promise<unknown>;
 	/** When follow-ups and birthdays fire (`ASSISTANT_AGENDA_LEAD_MINUTES` and friends). Omitted: the defaults. */
 	schedule?: Partial<ScheduleSettings>;
+	/** The folders the PA may read and the image processor, for the file tools. */
+	files?: FilesDeps;
 };
 
 /** The modules in the order their migrations and extensions are installed. */
-export const MODULES: readonly DomainModule[] = [tasksModule, followupsModule, peopleModule, approvalsModule];
+export const MODULES: readonly DomainModule[] = [
+	tasksModule,
+	followupsModule,
+	peopleModule,
+	approvalsModule,
+	dailyModule,
+	filesModule,
+];
 
 export function createDomain(options: DomainOptions): Domain {
 	let harness: Harness | undefined;
@@ -82,30 +104,41 @@ export function createDomain(options: DomainOptions): Domain {
 		return harness;
 	};
 	const plainPost = createEntryPoster(getHarness);
-	// The approval service writes its own outcome notices with the plain poster; the modules' cards close the YES window.
+	// The approval service writes its own outcome notices with the plain poster; the modules' cards close the YES window,
+	// and so do the questions a module asks the model by itself (the briefing, the wrap-up).
 	const approvals = createApprovalService({ db: options.db, now: options.now, post: plainPost });
+	// What every module can say for the daily jobs. The modules need `deps` to build their providers, and the jobs read
+	// them only when they run, so the list is filled in right after `deps` exists.
+	let providers: readonly DailyFactsProvider[] = [];
 	const deps: DomainDeps = {
 		db: options.db,
 		timezone: options.timezone,
 		now: options.now,
 		harness: getHarness,
 		post: closingYesWindow(plainPost, approvals),
+		ask: closingYesWindowOnAsk(createInputSubmitter(getHarness), approvals),
+		facts: () => providers,
 		notify: async (payload) => void (await options.notify(payload)),
 		approvals,
 		...(options.schedule === undefined ? {} : { schedule: options.schedule }),
+		...(options.files === undefined ? {} : { files: options.files }),
 	};
 	for (const module of MODULES) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
+	providers = MODULES.flatMap((module) => module.facts?.(deps) ?? []);
 
 	const tasks = tasksModule.extension(deps);
 	const followups = followupsModule.extension(deps);
 	const people = peopleModule.extension(deps);
+	const daily = dailyModule.extension(deps);
+	const files = filesModule.extension(deps);
 	const guard = approvalsModule.extension(deps);
 	const toolSearch = createToolSearchExtension();
 	return {
 		migrations: collectMigrations(MODULES),
-		extensions: [tasks, followups, people, guard, toolSearch],
-		paExtensions: [tasks, followups, people, guard, toolSearch],
+		extensions: [tasks, followups, people, daily, files, guard, toolSearch],
+		paExtensions: [tasks, followups, people, daily, files, guard, toolSearch],
 		approvals,
+		daily: dailyModule.service(deps),
 		bind: (open) => {
 			harness = open;
 		},
@@ -121,6 +154,8 @@ export function createDomain(options: DomainOptions): Domain {
 				reminders: await tasksModule.scheduler(deps).reconcile(),
 				followups: await followupsModule.scheduler(deps).reconcile(),
 				birthdays,
+				// Rows first, then what a power cut took, then the timers: a timer must not post a run the recovery is about to.
+				daily: { recovery: await dailyModule.start(deps), timers: await dailyModule.scheduler(deps).reconcile() },
 				approvals: await approvals.recover(),
 			};
 		},
@@ -129,6 +164,7 @@ export function createDomain(options: DomainOptions): Domain {
 			reminders: await tasksModule.scheduler(deps).reconcile(),
 			followups: await followupsModule.scheduler(deps).reconcile(),
 			birthdays: await peopleModule.scheduler(deps).reconcile(),
+			daily: await dailyModule.scheduler(deps).reconcile(),
 		}),
 	};
 }
