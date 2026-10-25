@@ -372,3 +372,59 @@ export function markReminded(db: AppDb, taskId: string, gen: number, now: number
 export function isCurrentReminder(row: TaskRow | undefined, input: { gen: number; at: number }): row is TaskRow {
 	return row !== undefined && row.status === "open" && row.remindGen === input.gen && row.remindAt === input.at;
 }
+
+/**
+ * Open tasks that are due or have a reminder in `[from, to)`, soonest first: what a day holds. A task with both is one row.
+ * The daily briefing reads it (`DomainModule.facts`).
+ */
+export function openForDay(db: AppDb, from: number, to: number): TaskRow[] {
+	return db
+		.all<DbRow>(
+			`SELECT ${COLUMNS} FROM tasks_item
+			 WHERE status = 'open' AND ((due_at >= ? AND due_at < ?) OR (remind_at >= ? AND remind_at < ?))`,
+			from,
+			to,
+			from,
+			to,
+		)
+		.map(fromRecord)
+		.sort((a, b) => firstMoment(a, from, to) - firstMoment(b, from, to) || a.id.localeCompare(b.id));
+}
+
+/** The earliest of a task's due time and reminder time that falls in `[from, to)`. */
+function firstMoment(row: TaskRow, from: number, to: number): number {
+	const inDay = [row.dueAt, row.remindAt].filter((at): at is number => at !== undefined && at >= from && at < to);
+	return inDay.length === 0 ? to : Math.min(...inDay);
+}
+
+/** Open tasks that were due before `before`, oldest first. */
+export function openOverdue(db: AppDb, before: number): TaskRow[] {
+	return db
+		.all<DbRow>(
+			`SELECT ${COLUMNS} FROM tasks_item WHERE status = 'open' AND due_at IS NOT NULL AND due_at < ? ORDER BY due_at, id`,
+			before,
+		)
+		.map(fromRecord);
+}
+
+/** Tasks completed in `[from, to)`, in the order they were completed. */
+export function doneBetween(db: AppDb, from: number, to: number): TaskRow[] {
+	return db
+		.all<DbRow>(
+			`SELECT ${COLUMNS} FROM tasks_item WHERE status = 'done' AND done_at >= ? AND done_at < ? ORDER BY done_at, id`,
+			from,
+			to,
+		)
+		.map(fromRecord);
+}
+
+/** Tasks whose reminder was sent in `[from, to)`, in the order they were sent. */
+export function remindedBetween(db: AppDb, from: number, to: number): TaskRow[] {
+	return db
+		.all<DbRow>(
+			`SELECT ${COLUMNS} FROM tasks_item WHERE reminded_at >= ? AND reminded_at < ? ORDER BY reminded_at, id`,
+			from,
+			to,
+		)
+		.map(fromRecord);
+}

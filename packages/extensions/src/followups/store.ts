@@ -564,3 +564,33 @@ export function deleteFollowup(db: AppDb, id: string): { deleted: boolean; durab
 		return { deleted: true, ...optional("durableTaskId", row.durableTaskId ?? null) };
 	});
 }
+
+/** Meetings and commitments that are not resolved and start in `[from, to)`, soonest first. */
+export function openBetween(db: AppDb, from: number, to: number): FollowupRow[] {
+	return db
+		.all<DbRow>(
+			`SELECT ${COLUMNS} FROM followups_item
+			 WHERE status IN ('waiting', 'asked') AND event_at >= ? AND event_at < ? ORDER BY event_at, id`,
+			from,
+			to,
+		)
+		.map(fromRecord);
+}
+
+/** Follow-ups the owner was asked about and has not answered: the open loops, the one asked longest ago first. */
+export function askedUnanswered(db: AppDb): FollowupRow[] {
+	return db
+		.all<DbRow>(`SELECT ${COLUMNS} FROM followups_item WHERE status = 'asked' ORDER BY asked_at, id`)
+		.map(fromRecord);
+}
+
+/** Follow-ups resolved in `[from, to)`, in the order they were resolved. */
+export function resolvedBetween(db: AppDb, from: number, to: number): FollowupRow[] {
+	return db
+		.all<DbRow>(
+			`SELECT ${COLUMNS} FROM followups_item WHERE status = 'resolved' AND resolved_at >= ? AND resolved_at < ? ORDER BY resolved_at, id`,
+			from,
+			to,
+		)
+		.map(fromRecord);
+}

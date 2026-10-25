@@ -3,6 +3,7 @@ import type { DomainDeps, DomainModule } from "../module.ts";
 import { addDays, localDate } from "../time.ts";
 import type { TimerScheduler } from "../timers.ts";
 import { dayText, nextOccurrence, occurrenceDate, turnsIn } from "./birthdays.ts";
+import { createPeopleFacts } from "./facts.ts";
 import { peopleMigrations } from "./migrations.ts";
 import { type CardRecovery, recoverCards } from "./recovery.ts";
 import { createBirthdayScheduler } from "./scheduler.ts";
@@ -107,6 +108,7 @@ export const peopleModule: PeopleModule = {
 		});
 	},
 	actions: (deps) => [createDeletePersonAction(deps, piecesFor(deps).scheduler)],
+	facts: (deps) => [createPeopleFacts(deps)],
 };
 
 export * as birthdays from "./birthdays.ts";

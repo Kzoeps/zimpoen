@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Harness } from "@earendil-works/pi-durable";
 import type { ApprovalService } from "./approvals/service.ts";
-import { conversationIdOf, type EntryPoster } from "./module.ts";
+import { conversationIdOf, type EntryPoster, type InputSubmitter } from "./module.ts";
 
 /**
  * The zero-token post of PLAN §5.3: a `write` submission appends an entry to a conversation without asking the model
@@ -42,5 +42,48 @@ export function closingYesWindow(post: EntryPoster, approvals: Pick<ApprovalServ
 	return async (conversationId, entry) => {
 		approvals.closeYesWindow(conversationId);
 		return await post(conversationId, entry);
+	};
+}
+
+/**
+ * The way a timer asks the model something (`DomainDeps.ask`): the briefing and the wrap-up. It places an `input` like
+ * the owner's own message, which starts a run and costs tokens, so it is for the few moments a day when that is the
+ * point. `whenBusy: "followUp"`: a run that is working when the time comes is not interrupted, the request waits for
+ * it. The same `requestId` returns the first submission, which makes asking safe to repeat after a crash.
+ *
+ * `entry` is how the thread shows the input: as a card of the module's own kind instead of a user bubble. The model
+ * still reads `content` as a user message.
+ */
+export function createInputSubmitter(harness: () => Harness): InputSubmitter {
+	return async (conversationId, input) => {
+		const conversation = await harness().conversation(conversationIdOf(conversationId), BACKGROUND_CONTEXT);
+		if (conversation === undefined) {
+			throw new Error(
+				`Conversation ${conversationId} does not exist in durable.sqlite, so '${input.requestId}' could not be asked. ` +
+					"The two databases are out of sync.",
+			);
+		}
+		const submission = await conversation.submit(
+			{
+				type: "input",
+				content: input.content,
+				requestId: input.requestId,
+				whenBusy: "followUp",
+				...(input.entry === undefined ? {} : { entry: input.entry }),
+			},
+			BACKGROUND_CONTEXT,
+		);
+		return { submissionId: Number(submission.id) };
+	};
+}
+
+/** {@link closingYesWindow} for inputs: a question the assistant asks by itself must not turn a later "yes" into an approval. */
+export function closingYesWindowOnAsk(
+	ask: InputSubmitter,
+	approvals: Pick<ApprovalService, "closeYesWindow">,
+): InputSubmitter {
+	return async (conversationId, input) => {
+		approvals.closeYesWindow(conversationId);
+		return await ask(conversationId, input);
 	};
 }

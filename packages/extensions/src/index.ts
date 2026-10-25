@@ -15,6 +15,51 @@ export {
 	type RecoveryReport,
 } from "./approvals/index.ts";
 export {
+	BRIEFING_JOB,
+	BRIEFING_PUSH,
+	collectFacts,
+	DAILY_EXTENSION_NAME,
+	DAILY_JOBS,
+	DAILY_TASK_NAME,
+	DAILY_URL,
+	type DailyFactsProvider,
+	type DailyInput,
+	type DailyJob,
+	type DailyModule,
+	type DailyService,
+	type DailyStart,
+	type DayWindow,
+	dailyModule,
+	dailyStore,
+	dayWindow,
+	describeJournal,
+	InvalidDailyTime,
+	nextOccurrence as nextDailyOccurrence,
+	occurrenceOn as dailyOccurrenceOn,
+	type RunRecovery,
+	renderJournalSection,
+	renderRequest as renderDailyRequest,
+	TIME_OF_DAY,
+	toJournalItem,
+	UnknownDailyJob,
+	WRAPUP_JOB,
+	WRAPUP_PUSH,
+} from "./daily/index.ts";
+export {
+	type Detected,
+	detectBinary,
+	FILES_EXTENSION_NAME,
+	fileStore,
+	filesModule,
+	imageSize,
+	judgeUpload,
+	type ReadOutcome,
+	readForModel,
+	renderFilesSection,
+	SNIFF_BYTES,
+	safeName,
+} from "./files/index.ts";
+export {
 	AGENDA_GRACE_MS,
 	AGENDA_PUSH,
 	describeFollowup,
@@ -34,11 +79,14 @@ export {
 	toCardItem as toFollowupCardItem,
 } from "./followups/index.ts";
 export {
+	type AskedInput,
 	collectMigrations,
 	conversationIdOf,
 	type DomainDeps,
 	type DomainModule,
 	type EntryPoster,
+	type FilesDeps,
+	type InputSubmitter,
 	type PostedEntry,
 } from "./module.ts";
 export {
@@ -56,7 +104,7 @@ export {
 	renderPeopleSection,
 	toCardItem as toPersonCardItem,
 } from "./people/index.ts";
-export { closingYesWindow, createEntryPoster } from "./post.ts";
+export { closingYesWindow, closingYesWindowOnAsk, createEntryPoster, createInputSubmitter } from "./post.ts";
 export { createProfileExtension, PROFILE_EXTENSION_NAME, type ProfileFacts, renderProfile } from "./profile.ts";
 export { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings, scheduleOf } from "./schedule.ts";
 export {

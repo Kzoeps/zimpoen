@@ -414,3 +414,22 @@ export function advanceCycle(db: AppDb, id: string, gen: number, next: CycleRow,
 		).changes > 0
 	);
 }
+
+/** What the owner said about birthdays in `[from, to)` (wished, or not yet), with the person, in the order they said it. */
+export function wishesBetween(
+	db: AppDb,
+	from: number,
+	to: number,
+): Array<{ person: PersonRow; year: number; wished: boolean; recordedAt: number }> {
+	const wishes = db.all<{ person_id: string; year: number; wished: number; recorded_at: number }>(
+		"SELECT person_id, year, wished, recorded_at FROM people_wish WHERE recorded_at >= ? AND recorded_at < ? ORDER BY recorded_at, person_id",
+		from,
+		to,
+	);
+	return wishes.flatMap((wish) => {
+		const person = getPerson(db, wish.person_id);
+		return person === undefined
+			? []
+			: [{ person, year: wish.year, wished: wish.wished === 1, recordedAt: wish.recorded_at }];
+	});
+}

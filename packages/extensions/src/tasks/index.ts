@@ -1,6 +1,7 @@
 import { defineExtension, section } from "@earendil-works/pi-durable";
 import type { DomainDeps, DomainModule } from "../module.ts";
 import { formatLocal } from "../time.ts";
+import { createTaskFacts } from "./facts.ts";
 import { tasksMigrations } from "./migrations.ts";
 import { createReminderTask, type ReminderTask } from "./reminder.ts";
 import { createReminderScheduler, type ReminderScheduler } from "./scheduler.ts";
@@ -94,6 +95,7 @@ export const tasksModule: TasksModule = {
 		});
 	},
 	actions: (deps) => [createDeleteTaskAction(deps, piecesFor(deps).scheduler)],
+	facts: (deps) => [createTaskFacts(deps)],
 };
 
 export { REMINDER_PUSH, REMINDER_TASK_NAME, REMINDER_URL, type ReminderInput } from "./reminder.ts";

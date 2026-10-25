@@ -2,7 +2,9 @@ import type { AppDb, Migration } from "@assistant/db";
 import type { PushPayload } from "@assistant/shared";
 import type { JsonValue } from "@earendil-works/chord";
 import type { ConversationId, Extension, Harness } from "@earendil-works/pi-durable";
+import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import type { ApprovalAction, ApprovalService } from "./approvals/service.ts";
+import type { DailyFactsProvider } from "./daily/facts.ts";
 import type { ScheduleSettings } from "./schedule.ts";
 
 /** What a domain module may ask of the server it runs in. Built once by the server and shared by every module. */
@@ -24,10 +26,41 @@ export type DomainDeps = {
 	post: EntryPoster;
 	/** Send a Web Push to every subscribed device. Never throws: a failed push must not fail the work that triggered it. */
 	notify: (payload: PushPayload) => Promise<void>;
+	/**
+	 * Put a message to the model in a conversation, as the owner's message would be placed, and start a run (PLAN §5.3
+	 * is the zero-token `post`; this is the one that costs tokens: the daily briefing and wrap-up). Writing the same
+	 * `requestId` twice asks once.
+	 */
+	ask: InputSubmitter;
+	/**
+	 * What every module can say for the daily briefing and wrap-up, read when a job runs: the providers modules
+	 * contribute with `DomainModule.facts`. A function because the modules need `deps` to build theirs.
+	 */
+	facts: () => readonly DailyFactsProvider[];
 	approvals: ApprovalService;
 	/** When follow-ups and birthdays fire, where the server configured it; anything left out takes {@link DEFAULT_SCHEDULE}. */
 	schedule?: Partial<ScheduleSettings>;
+	/** What the file tools need from the server. Omitted: no folder is offered to the model and images pass through as they are. */
+	files?: FilesDeps;
 };
+
+export type FilesDeps = {
+	/** The folders the model may read (`ASSISTANT_READ_PATHS` and the uploads folder), absolute: told to it in a prompt section. */
+	readPaths: readonly string[];
+	/** Resizes and turns images upright for the model. Without one, an image within the limits passes as it is. */
+	images?: ImageProcessor;
+};
+
+export type AskedInput = {
+	/** What the model reads as the user's message. */
+	content: string;
+	/** Deduplication key, scoped to the conversation: derive it from what is asked, so a rerun asks nothing new. */
+	requestId: string;
+	/** How the thread shows the input instead of a user bubble: a custom kind (not `pi.*`) and the data its card renders. */
+	entry?: { kind: string; data: JsonValue };
+};
+
+export type InputSubmitter = (conversationId: number, input: AskedInput) => Promise<{ submissionId: number }>;
 
 export type PostedEntry = {
 	/** The custom entry kind, for example `app.reminder`. */
@@ -52,6 +85,8 @@ export type DomainModule = {
 	extension: (deps: DomainDeps) => Extension;
 	/** Destructive actions this module owns: its tools that need the owner's approval, and how to carry them out. */
 	actions?: (deps: DomainDeps) => readonly ApprovalAction[];
+	/** What this module can say for the morning briefing and the evening wrap-up (see `DailyFactsProvider`). */
+	facts?: (deps: DomainDeps) => readonly DailyFactsProvider[];
 };
 
 /** Every migration of every module, in module order. */

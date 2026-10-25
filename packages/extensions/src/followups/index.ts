@@ -2,6 +2,7 @@ import { defineExtension, section } from "@earendil-works/pi-durable";
 import type { DomainDeps, DomainModule } from "../module.ts";
 import { formatLocal } from "../time.ts";
 import type { TimerScheduler } from "../timers.ts";
+import { createFollowupFacts } from "./facts.ts";
 import { followupsMigrations } from "./migrations.ts";
 import { createFollowupScheduler } from "./scheduler.ts";
 import * as store from "./store.ts";
@@ -84,6 +85,7 @@ export const followupsModule: FollowupsModule = {
 		});
 	},
 	actions: (deps) => [createDeleteFollowupAction(deps, piecesFor(deps).scheduler)],
+	facts: (deps) => [createFollowupFacts(deps)],
 };
 
 export { matchMeetings, significantWords } from "./match.ts";

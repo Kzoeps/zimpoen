@@ -58,6 +58,33 @@ export {
 	toolCardOf,
 } from "./cards.ts";
 export {
+	DAILY_ENTRY_KIND,
+	DAILY_JOB_IDS,
+	type DailyEntryData,
+	type DailyJobId,
+	type DailySection,
+	isDailyJobId,
+	type JournalCard,
+	type JournalCardItem,
+	type ScheduleJobSettings,
+	type ScheduleSettingsResponse,
+	type UpdateScheduleRequest,
+} from "./daily.ts";
+export {
+	type AttachmentRef,
+	attachmentLine,
+	type FileCard,
+	type FileKind,
+	type FileListCard,
+	type FileSummary,
+	formatSize,
+	MAX_UPLOAD_BYTES,
+	splitAttachments,
+	UPLOAD_ACCEPT,
+	type UploadResponse,
+	withAttachments,
+} from "./files.ts";
+export {
 	type AgentEvent,
 	type AssistantChatMessage,
 	type ChatMessage,

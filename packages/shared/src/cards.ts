@@ -6,6 +6,8 @@
  * - the server and the timers write `app.*` entries (a reminder, an agenda, a follow-up question, a birthday, a notice)
  *   without calling the model.
  */
+import type { JournalCard } from "./daily.ts";
+import type { FileCard, FileListCard } from "./files.ts";
 
 /** Entry kind of a reminder that fired. Its `data` is a {@link ReminderEntryData}. */
 export const REMINDER_ENTRY_KIND = "app.reminder";
@@ -205,7 +207,10 @@ export type ToolCard =
 	| FollowupCard
 	| FollowupListCard
 	| PersonCard
-	| PeopleListCard;
+	| PeopleListCard
+	| JournalCard
+	| FileCard
+	| FileListCard;
 
 const CARD_TYPES: readonly string[] = [
 	"task_list",
@@ -215,6 +220,9 @@ const CARD_TYPES: readonly string[] = [
 	"followup_list",
 	"person",
 	"people_list",
+	"journal",
+	"file",
+	"file_list",
 ];
 
 /**
