@@ -466,6 +466,21 @@ describe("the morning briefing and the evening wrap-up through the whole server"
 					enabled: true,
 					nextRunText: "Sun 25 Oct 2026, 21:00",
 				},
+				// 14:00 on the first day: the midday digest's time has passed, the evening one's has not.
+				{
+					job: "digest_midday",
+					label: "Inbox digest (midday)",
+					localTime: "12:30",
+					enabled: true,
+					nextRunText: "Mon 26 Oct 2026, 12:30",
+				},
+				{
+					job: "digest_evening",
+					label: "Inbox digest (evening)",
+					localTime: "19:00",
+					enabled: true,
+					nextRunText: "Sun 25 Oct 2026, 19:00",
+				},
 			],
 		});
 		const put = (
@@ -571,7 +586,7 @@ describe("what the log says about the daily jobs at start", () => {
 		const { h, server } = await start();
 
 		expect(dailyLines(h)).toStrictEqual([
-			"info [daily] scheduled for the first time: briefing, wrapup. Change the times in Settings.",
+			"info [daily] scheduled for the first time: briefing, wrapup, digest_midday, digest_evening. Change the times in Settings.",
 		]);
 		expect(h.logs.join("\n")).not.toMatch(/had no live timer/);
 

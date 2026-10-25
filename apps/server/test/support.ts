@@ -155,6 +155,16 @@ export function appDepsFor(runtime: Runtime, db: AppDb, overrides: Partial<AppDe
 				throw new Error(`No daily job '${job}' in this test.`);
 			},
 		},
+		// The Inbox belongs to tests of its own, which pass a real one.
+		inbox: {
+			settings: async () => {
+				throw new Error("No Inbox in this test.");
+			},
+			disconnect: async () => false,
+			decideSuggestion: async (id) => {
+				throw new Error(`No suggestion '${id}' in this test.`);
+			},
+		},
 		timezone: "Asia/Thimphu",
 		filesDir: join(tmpdir(), "assistant-test-no-uploads"),
 		auth: { mode: "off" },

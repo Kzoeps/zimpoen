@@ -8,7 +8,8 @@
 		"dev": "cd ../.. && env ASSISTANT_AUTH=${ASSISTANT_AUTH:-off} node --watch apps/server/src/main.ts",
 		"build": "node scripts/build.mjs",
 		"start": "cd ../.. && env NODE_ENV=production node apps/server/dist/main.js",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"connect:google": "cd ../.. && env NODE_ENV=production node apps/server/src/connect-google.ts"
 	},
 	"dependencies": {
 		"@assistant/db": "workspace:*",

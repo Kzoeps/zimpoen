@@ -11,6 +11,8 @@ import {
 	type ApprovalService,
 	type DailyService,
 	InvalidDailyTime,
+	SuggestionConflict,
+	SuggestionNotFound,
 	UnknownDailyJob,
 } from "@assistant/extensions";
 import type {
@@ -38,6 +40,7 @@ import {
 	listParkedTasks,
 } from "../agents.ts";
 import type { AuthConfig } from "../config.ts";
+import type { InboxFacade } from "../domain.ts";
 import { listModelOptions, readAgentSettings, updateAgentSettings } from "../settings.ts";
 import { runConversationStream } from "../stream.ts";
 import type { UnansweredReader } from "../unanswered.ts";
@@ -48,11 +51,13 @@ import { type HostPolicy, requestGuard } from "./guard.ts";
 import { createFilesApp, createUploadsApp } from "./uploads.ts";
 import {
 	parseDecision,
+	parseDisconnectGoogle,
 	parseHistoryQuery,
 	parseId,
 	parsePushSubscribe,
 	parsePushUnsubscribe,
 	parseSendMessage,
+	parseSuggestionDecision,
 	parseUpdateSchedule,
 	parseUpdateSettings,
 	readJsonObject,
@@ -85,8 +90,10 @@ export type AppDeps = {
 	approvals: ApprovalService;
 	/** The VAPID public key browsers subscribe to Web Push with. */
 	push: PushConfigResponse;
-	/** The settings of the morning briefing and the evening wrap-up. */
+	/** The settings of the morning briefing, the evening wrap-up and the inbox digests. */
 	daily: DailyService;
+	/** The Inbox's Google accounts, and what the owner answers to its suggestions. */
+	inbox: InboxFacade;
 	/** The owner's time zone, which the schedule's times are in. */
 	timezone: string;
 	/** Where uploads are kept (`<data>/files`, resolved). */
@@ -285,6 +292,29 @@ export function createApp(deps: AppDeps): Hono {
 		}
 		const body: ScheduleSettingsResponse = { timezone: deps.timezone, jobs: deps.daily.list() };
 		return c.json(body);
+	});
+
+	app.get("/api/settings/google", async (c) => c.json(await deps.inbox.settings()));
+
+	app.delete("/api/settings/google/accounts", async (c) => {
+		const { email } = parseDisconnectGoogle(await readJsonObject(c));
+		// Local only: the saved sign-in is forgotten and the sync stops. The owner's own action, so no approval is asked (rule 3 is about the assistant deleting).
+		if (!(await deps.inbox.disconnect(email))) {
+			throw notFound(`There is no connected account '${email}'. GET /api/settings/google lists them.`);
+		}
+		deps.logger?.info?.(`[google] ${email} was disconnected from Settings.`);
+		return c.json(await deps.inbox.settings());
+	});
+
+	app.post("/api/suggestions/:id", async (c) => {
+		const decision = parseSuggestionDecision(await readJsonObject(c));
+		try {
+			return c.json(await deps.inbox.decideSuggestion(c.req.param("id"), decision));
+		} catch (error) {
+			if (error instanceof SuggestionNotFound) throw notFound(error.message);
+			if (error instanceof SuggestionConflict) throw new ApiError(409, "conflict", error.message);
+			throw error;
+		}
 	});
 
 	app.get("/api/conversations/:id/messages", async (c) => {

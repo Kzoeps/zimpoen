@@ -2,6 +2,7 @@ import { access, chmod, constants, mkdir, realpath, stat } from "node:fs/promise
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings } from "@assistant/extensions/schedule";
+import type { GoogleMode } from "@assistant/shared";
 import { isInside } from "./paths.ts";
 
 export type ModelMode = "faux" | "openai";
@@ -33,6 +34,17 @@ export type HealthConfig = {
 	heightCm?: number;
 };
 
+/** How the Inbox agent reaches Google (M5). */
+export type GoogleConfig = {
+	/**
+	 * `real`: Gmail and Calendar through their REST APIs, with the sign-ins `pnpm connect:google` saved. `fake`: a scripted
+	 * mailbox in memory, nothing leaves this machine (development and tests; the default outside production).
+	 */
+	mode: GoogleMode;
+	/** Minutes between two syncs of one account (`ASSISTANT_INBOX_SYNC_MINUTES`, default 10). */
+	syncMinutes: number;
+};
+
 /** What the profile calls the owner when `ASSISTANT_OWNER_NAME` is not set. A module that needs a real name checks against it. */
 export const DEFAULT_OWNER_NAME = "the owner";
 
@@ -61,6 +73,12 @@ export type Config = {
 		vapid: string;
 		/** What the fake push sender would have sent, one JSON object per line. Only written in `fake` push mode. */
 		pushOutbox: string;
+		/** The Google Cloud OAuth client the owner created (a Desktop app): its id and secret. Inside `secrets`; read by `pnpm connect:google` and the server. */
+		googleOAuth: string;
+		/** One refresh token per connected Google account, written by `pnpm connect:google`. Mode 0600, inside `secrets`. */
+		googleAccounts: string;
+		/** The TypeSafe Jev key, `{ "JEV_API_KEY": "..." }`. Optional: without it mail is classified by local rules. Inside `secrets`. */
+		jev: string;
 	};
 	/** Absolute directories agents may read: `ASSISTANT_READ_PATHS` (or its defaults) plus `<data>/files`. */
 	readPaths: readonly string[];
@@ -71,6 +89,7 @@ export type Config = {
 	health: HealthConfig;
 	/** When follow-ups and birthdays fire. */
 	schedule: ScheduleSettings;
+	google: GoogleConfig;
 	modelMode: ModelMode;
 	push: {
 		mode: PushMode;
@@ -119,6 +138,34 @@ function defaultDataDir(env: Env): string {
 const MODEL_MODES: readonly ModelMode[] = ["faux", "openai"];
 
 /**
+ * Where the data directory is and what is in it, without reading any other setting. `pnpm connect:google` needs only this
+ * (the production server's authentication settings are none of its business), and the server builds its paths from it.
+ */
+export function resolveDataPaths(
+	env: Env,
+	context: ConfigContext = { cwd: process.cwd(), homeDir: homedir() },
+): { dataDir: string; paths: Config["paths"] } {
+	const dataDir = resolve(context.cwd, nonEmpty(env.ASSISTANT_DATA_DIR) ?? defaultDataDir(env));
+	return {
+		dataDir,
+		paths: {
+			appDb: join(dataDir, "app.sqlite"),
+			durableDb: join(dataDir, "durable.sqlite"),
+			files: join(dataDir, "files"),
+			workspace: join(dataDir, "workspace"),
+			templates: join(dataDir, "templates"),
+			secrets: join(dataDir, "secrets"),
+			credentials: join(dataDir, "secrets", "credentials.json"),
+			vapid: join(dataDir, "secrets", "vapid.json"),
+			pushOutbox: join(dataDir, "dev-push-outbox.jsonl"),
+			googleOAuth: join(dataDir, "secrets", "google-oauth.json"),
+			googleAccounts: join(dataDir, "secrets", "google-accounts.json"),
+			jev: join(dataDir, "secrets", "jev.json"),
+		},
+	};
+}
+
+/**
  * Read settings from `env`. Pure: touches no files, so every rule here is cheap to test.
  * Use {@link loadConfig} at startup, which also prepares and verifies the directories.
  */
@@ -126,18 +173,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 	const problems: ConfigProblem[] = [];
 	const problem = (setting: string, message: string): void => void problems.push({ setting, message });
 
-	const dataDir = resolve(context.cwd, nonEmpty(env.ASSISTANT_DATA_DIR) ?? defaultDataDir(env));
-	const paths = {
-		appDb: join(dataDir, "app.sqlite"),
-		durableDb: join(dataDir, "durable.sqlite"),
-		files: join(dataDir, "files"),
-		workspace: join(dataDir, "workspace"),
-		templates: join(dataDir, "templates"),
-		secrets: join(dataDir, "secrets"),
-		credentials: join(dataDir, "secrets", "credentials.json"),
-		vapid: join(dataDir, "secrets", "vapid.json"),
-		pushOutbox: join(dataDir, "dev-push-outbox.jsonl"),
-	};
+	const { dataDir, paths } = resolveDataPaths(env, context);
 
 	const configured = parseReadPaths(env.ASSISTANT_READ_PATHS, context.homeDir, problem);
 	const config: Config = {
@@ -153,6 +189,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 		},
 		health: parseHeight(env.ASSISTANT_OWNER_HEIGHT_CM, problem),
 		schedule: parseSchedule(env, problem),
+		google: parseGoogle(env, problem),
 		modelMode: parseModelMode(env, problem),
 		push: parsePush(env, problem),
 		http: {
@@ -225,6 +262,9 @@ export async function canonicalizeDataPaths(config: Config): Promise<Config> {
 		credentials: join(secrets, "credentials.json"),
 		vapid: join(secrets, "vapid.json"),
 		pushOutbox: join(dataDir, "dev-push-outbox.jsonl"),
+		googleOAuth: join(secrets, "google-oauth.json"),
+		googleAccounts: join(secrets, "google-accounts.json"),
+		jev: join(secrets, "jev.json"),
 	};
 	return { ...config, dataDir, paths, writePath: workspace };
 }
@@ -360,6 +400,39 @@ function parseModelMode(env: Env, problem: ReportProblem): ModelMode {
 	if ((MODEL_MODES as readonly string[]).includes(raw)) return raw as ModelMode;
 	problem("ASSISTANT_MODEL_MODE", `'${raw}' is not valid. Use 'faux' (scripted dev model, no network) or 'openai'.`);
 	return fallback;
+}
+
+const GOOGLE_MODES: readonly GoogleMode[] = ["real", "fake"];
+const DEFAULT_SYNC_MINUTES = 10;
+
+/** `ASSISTANT_GOOGLE_MODE` and `ASSISTANT_INBOX_SYNC_MINUTES`. */
+function parseGoogle(env: Env, problem: ReportProblem): GoogleConfig {
+	const fallback: GoogleMode = env.NODE_ENV === "production" ? "real" : "fake";
+	const raw = nonEmpty(env.ASSISTANT_GOOGLE_MODE);
+	let mode = fallback;
+	if (raw !== undefined) {
+		if ((GOOGLE_MODES as readonly string[]).includes(raw)) mode = raw as GoogleMode;
+		else {
+			problem(
+				"ASSISTANT_GOOGLE_MODE",
+				`'${raw}' is not valid. Use 'real' (Gmail and Calendar through Google's APIs) or 'fake' (a scripted mailbox; nothing leaves this machine, for development).`,
+			);
+		}
+	}
+	const minutes = nonEmpty(env.ASSISTANT_INBOX_SYNC_MINUTES);
+	let syncMinutes = DEFAULT_SYNC_MINUTES;
+	if (minutes !== undefined) {
+		const value = /^\d+$/.test(minutes) ? Number(minutes) : Number.NaN;
+		if (!Number.isInteger(value) || value < 1 || value > MAX_SCHEDULE_MINUTES) {
+			problem(
+				"ASSISTANT_INBOX_SYNC_MINUTES",
+				`'${minutes}' is not a number of minutes. Use a whole number from 1 to ${MAX_SCHEDULE_MINUTES} (default ${DEFAULT_SYNC_MINUTES}).`,
+			);
+		} else {
+			syncMinutes = value;
+		}
+	}
+	return { mode, syncMinutes };
 }
 
 const PUSH_MODES: readonly PushMode[] = ["web-push", "fake"];

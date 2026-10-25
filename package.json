@@ -13,7 +13,8 @@
 		"start": "pnpm --filter @assistant/server start",
 		"typecheck": "pnpm -r typecheck",
 		"test": "vitest run",
-		"lint": "biome check ."
+		"lint": "biome check .",
+		"connect:google": "pnpm --filter @assistant/server connect:google"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.3",

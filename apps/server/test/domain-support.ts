@@ -1,5 +1,6 @@
 import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createFakeGoogle } from "@assistant/extensions";
 import type { MessagesPage, PushPayload, SendMessageResponse } from "@assistant/shared";
 import { toolCardOf } from "@assistant/shared";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -59,6 +60,9 @@ export async function setup(env: Record<string, string> = {}): Promise<Harness> 
 				devModel: { tokensPerSecond: 1_000_000 },
 				now: () => clock.now,
 				pushSender: sender,
+				// The default fake Google is a seeded demo mailbox, which would add an Inbox line to every briefing and a digest at
+				// 12:30 and 19:00 to tests that are about something else. A test of the Inbox passes its own through `more`.
+				fakeGoogle: createFakeGoogle({ now: () => clock.now }),
 				...(intervals === undefined ? {} : { intervals }),
 				...more,
 			});

@@ -67,6 +67,7 @@ describe("migrations and agents", () => {
 			"people",
 			"daily",
 			"files",
+			"delegate",
 			"approvals",
 			"tool-search",
 		]);
@@ -295,6 +296,7 @@ describe("the PA's tools", () => {
 			"add_followup",
 			"add_person",
 			"add_task",
+			"ask_agent",
 			"complete_task",
 			"current_time",
 			"describe_file",
@@ -384,7 +386,8 @@ describe("birthday cards after a power cut", () => {
 		const ran = await h.start();
 		await waitFor(async () => (await ofKind(ran, BIRTHDAY_ENTRY_KIND)).length === 1, { what: "the evening question" });
 		await waitFor(() => peopleStore.listPeople(ran.db)[0]?.cycleYear === 2027, { what: "the cycle to move on" });
-		await waitFor(() => h.sender.sent.length === 1, { what: "its push" });
+		const birthdayPushes = () => h.sender.sent.filter((sent) => sent.payload.tag === "birthday");
+		await waitFor(() => birthdayPushes().length === 1, { what: "its push" });
 		await ran.close();
 		h.servers.pop();
 
@@ -400,7 +403,7 @@ describe("birthday cards after a power cut", () => {
 			year: 2026,
 			name: "Pema",
 		});
-		expect(h.sender.sent).toHaveLength(1); // the owner was nudged when it was first asked
+		expect(birthdayPushes()).toHaveLength(1); // the owner was nudged when it was first asked
 	});
 });
 

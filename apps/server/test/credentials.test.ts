@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
@@ -35,6 +35,30 @@ describe("FileCredentialStore", () => {
 		expect((await stat(join(dir, "secrets"))).mode & 0o777).toBe(0o700);
 		expect(await new FileCredentialStore(path).read("openai")).toStrictEqual(oauth(100));
 		expect(JSON.parse(await readFile(path, "utf8"))).toStrictEqual({ openai: oauth(100) });
+	});
+
+	it("takes a record copied by hand out of pi's auth.json, as docs/SETUP.md says to, and keeps every key of it through a refresh", async () => {
+		// What pi writes for a ChatGPT sign-in: the type, the tokens, and keys of its own (docs/SETUP.md step 2).
+		const fromPi = {
+			type: "oauth" as const,
+			access: "access-token",
+			refresh: "refresh-token",
+			expires: 1_800_000_000_000,
+			clientId: "app_xxx",
+			scopes: ["openid"],
+		};
+		await mkdir(join(dir, "secrets"), { recursive: true, mode: 0o700 });
+		await writeFile(path, JSON.stringify({ openai: fromPi }), { mode: 0o644 });
+		const store = new FileCredentialStore(path);
+
+		expect(await store.ensurePrivate()).toBe(true);
+		expect(await store.read("openai")).toStrictEqual(fromPi);
+		await store.modify("openai", async (current) => ({ ...(current as typeof fromPi), access: "renewed", expires: 2 }));
+
+		expect(JSON.parse(await readFile(path, "utf8"))).toStrictEqual({
+			openai: { ...fromPi, access: "renewed", expires: 2 },
+		});
+		expect((await stat(path)).mode & 0o777).toBe(0o600);
 	});
 
 	it("hands the current credential to modify() and keeps it when modify() returns undefined", async () => {

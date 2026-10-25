@@ -32,6 +32,9 @@ describe("parseConfig", () => {
 			credentials: "/work/assistant/state/secrets/credentials.json",
 			vapid: "/work/assistant/state/secrets/vapid.json",
 			pushOutbox: "/work/assistant/state/dev-push-outbox.jsonl",
+			googleOAuth: "/work/assistant/state/secrets/google-oauth.json",
+			googleAccounts: "/work/assistant/state/secrets/google-accounts.json",
+			jev: "/work/assistant/state/secrets/jev.json",
 		});
 		expect(config.writePath).toBe("/work/assistant/state/workspace");
 	});
@@ -114,6 +117,30 @@ describe("parseConfig", () => {
 		);
 	});
 
+	it("reads Gmail and Calendar through a scripted mailbox outside production and through Google in production, unless told otherwise", () => {
+		const owner = { ASSISTANT_OWNER_LOGIN: "a@b.c", ASSISTANT_PUSH_SUBJECT: "mailto:a@b.c" };
+
+		expect(parseConfig({ ...auth }, context).google).toStrictEqual({ mode: "fake", syncMinutes: 10 });
+		expect(parseConfig({ ...owner, NODE_ENV: "production" }, context).google.mode).toBe("real");
+		expect(parseConfig({ ...owner, NODE_ENV: "production", ASSISTANT_GOOGLE_MODE: "fake" }, context).google.mode).toBe(
+			"fake",
+		);
+		expect(parseConfig({ ...auth, ASSISTANT_GOOGLE_MODE: "real" }, context).google.mode).toBe("real");
+	});
+
+	it("takes the minutes between two syncs of an account, as a whole number from 1 to a day", () => {
+		expect(parseConfig({ ...auth, ASSISTANT_INBOX_SYNC_MINUTES: "3" }, context).google.syncMinutes).toBe(3);
+		expect(parseConfig({ ...auth, ASSISTANT_INBOX_SYNC_MINUTES: "1440" }, context).google.syncMinutes).toBe(1440);
+		for (const bad of ["0", "1441", "ten", "2.5", "-1", "1e2"]) {
+			expect(problemsOf({ ...auth, ASSISTANT_INBOX_SYNC_MINUTES: bad })).toStrictEqual([
+				"ASSISTANT_INBOX_SYNC_MINUTES",
+			]);
+		}
+		expect(() => parseConfig({ ...auth, ASSISTANT_INBOX_SYNC_MINUTES: "0" }, context)).toThrow(
+			/ASSISTANT_INBOX_SYNC_MINUTES: '0' is not a number of minutes\. Use a whole number from 1 to 1440 \(default 10\)/,
+		);
+	});
+
 	it("sends no real push outside production, real ones in production, unless told otherwise", () => {
 		const owner = { ASSISTANT_OWNER_LOGIN: "a@b.c" };
 
@@ -155,6 +182,7 @@ describe("parseConfig", () => {
 		["ASSISTANT_AUTH", { ASSISTANT_AUTH: "maybe" }],
 		["ASSISTANT_MODEL_MODE", { ...auth, ASSISTANT_MODEL_MODE: "gpt" }],
 		["ASSISTANT_PUSH_MODE", { ...auth, ASSISTANT_PUSH_MODE: "fcm" }],
+		["ASSISTANT_GOOGLE_MODE", { ...auth, ASSISTANT_GOOGLE_MODE: "gmail" }],
 		["ASSISTANT_PUSH_SUBJECT", { ...auth, ASSISTANT_PUSH_SUBJECT: "assistant@example.com" }],
 		["ASSISTANT_PUSH_SUBJECT", { ...auth, ASSISTANT_PUSH_SUBJECT: "http://example.com" }],
 		["ASSISTANT_PORT", { ...auth, ASSISTANT_PORT: "70000" }],

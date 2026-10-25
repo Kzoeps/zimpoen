@@ -2,6 +2,7 @@ import { TIME_OF_DAY } from "@assistant/extensions";
 import {
 	type ApprovalDecision,
 	DEFAULT_HISTORY_PAGE,
+	type DisconnectGoogleRequest,
 	isThinkingLevel,
 	MAX_HISTORY_PAGE,
 	MAX_MESSAGE_CHARS,
@@ -9,6 +10,7 @@ import {
 	type PushSubscribeRequest,
 	REQUEST_ID_PATTERN,
 	type SendMessageRequest,
+	type SuggestionDecision,
 	THINKING_LEVELS,
 	type UpdateAgentSettingsRequest,
 	type UpdateScheduleRequest,
@@ -188,6 +190,22 @@ export function parseDecision(body: Record<string, unknown>): ApprovalDecision {
 		throw invalidRequest("'decision' must be 'approve' or 'deny'.");
 	}
 	return decision;
+}
+
+/** `POST /api/suggestions/:id`: add the suggested follow-up (the PA is asked to), or dismiss it. */
+export function parseSuggestionDecision(body: Record<string, unknown>): SuggestionDecision {
+	const { decision } = body;
+	if (decision !== "add" && decision !== "dismiss") throw invalidRequest("'decision' must be 'add' or 'dismiss'.");
+	return decision;
+}
+
+/** `DELETE /api/settings/google/accounts`: the address of the account to disconnect, in the body (an address is not a safe thing to put in a path). */
+export function parseDisconnectGoogle(body: Record<string, unknown>): DisconnectGoogleRequest {
+	const { email } = body;
+	if (typeof email !== "string" || email.length === 0 || email.length > 200 || !email.includes("@")) {
+		throw invalidRequest("'email' must be the address of a connected account.");
+	}
+	return { email: email.trim().toLowerCase() };
 }
 
 /** `PUT /api/settings/schedule/:job`: a time of day, whether the job runs, or both. */

@@ -3,7 +3,14 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
-import { type AccountantDeps, seedInvoiceTemplate } from "@assistant/extensions";
+import {
+	type AccountantDeps,
+	type DelegateDeps,
+	type FakeGoogle,
+	inboxStore,
+	type SyncSettings,
+	seedInvoiceTemplate,
+} from "@assistant/extensions";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Harness, HarnessOptions, ReportInfo } from "@earendil-works/pi-durable";
 import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
@@ -14,6 +21,7 @@ import { type Config, DEFAULT_OWNER_NAME } from "./config.ts";
 import type { DevProviderOptions } from "./dev-model.ts";
 import { createDomain, type Domain, type DomainOptions, type RepairReport, type SweepReport } from "./domain.ts";
 import { acquireFileLock, type FileLock, LockHeldError } from "./file-lock.ts";
+import { createGoogleSetup, createTriageSetup } from "./google/setup.ts";
 import { createApp } from "./http/app.ts";
 import { errorBody } from "./http/errors.ts";
 import { createHostPolicy } from "./http/guard.ts";
@@ -45,6 +53,15 @@ export type StartServerOptions = {
 	intervals?: { resumeMs?: number; sweepMs?: number };
 	/** How long a code mode script may run (default 30 s, at most 2 minutes). Tests shorten it. */
 	codemodeLimits?: DomainOptions["codemodeLimits"];
+	/** Replaces the scripted Google of `ASSISTANT_GOOGLE_MODE=fake`, so that a test can add mail to it. */
+	fakeGoogle?: FakeGoogle;
+	/** Replaces `fetch` for Google in `real` mode, and for Jev: a test plays the servers. Only their own hosts are reachable. */
+	google?: { fetch?: typeof fetch; allowHosts?: readonly string[] };
+	jevFetch?: typeof fetch;
+	/** How the Inbox sync runs (the interval is `ASSISTANT_INBOX_SYNC_MINUTES` unless this says otherwise). Tests shorten it. */
+	inboxSync?: Partial<SyncSettings>;
+	/** How long `ask_agent` waits for an answer. Tests shorten it. */
+	delegate?: DelegateDeps;
 };
 
 /** How often sleeping tasks that came due are woken. A reminder is at most this late after a suspend or a clock step. */
@@ -101,6 +118,17 @@ export async function startServer(config: Config, options: StartServerOptions = 
 		const notifier = createNotifier(db, sender, logger);
 		// Photon is loaded, in a worker thread, the first time an image is read; this only prepares to.
 		const images = options.images ?? (await createNodePhotonImages());
+		const google = await createGoogleSetup(config, {
+			logger,
+			now,
+			...(options.google?.fetch === undefined ? {} : { fetch: options.google.fetch }),
+			...(options.google?.allowHosts === undefined ? {} : { allowHosts: options.google.allowHosts }),
+			...(options.fakeGoogle === undefined ? {} : { fake: options.fakeGoogle }),
+		});
+		const triage = await createTriageSetup(config, {
+			logger,
+			...(options.jevFetch === undefined ? {} : { fetch: options.jevFetch }),
+		});
 		const domain = createDomain({
 			db,
 			timezone: config.profile.timezone,
@@ -112,10 +140,19 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			health: config.health,
 			accountant: await accountantDeps(config, logger),
 			...(options.codemodeLimits === undefined ? {} : { codemodeLimits: options.codemodeLimits }),
+			inbox: {
+				google: google.gateway,
+				triage: triage.triage,
+				sync: { intervalMs: config.google.syncMinutes * 60_000, ...options.inboxSync },
+			},
+			...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 		});
 		undo.push(() => domain.close());
 		const migrations = migrate(db, [...coreMigrations, ...domain.migrations]);
 		if (migrations.applied.length > 0) logger.info(`[db] applied migrations: ${migrations.applied.join(", ")}`);
+		// A Jev key that is there and no good is told in Settings (the triage badge) as well as in the log.
+		if (triage.problem === undefined) inboxStore.clearState(db, "triage_error");
+		else inboxStore.setState(db, "triage_error", triage.problem, now());
 
 		const runtime = await openRuntime(config, {
 			onReport: (error, info) => reportDurable(logger, error, info),
@@ -138,6 +175,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			pa: domain.paExtensions,
 			health: domain.healthExtensions,
 			accountant: domain.accountantExtensions,
+			inbox: domain.inboxExtensions,
 		});
 		const agents = await ensureAgents(harness, db, {
 			agents: agentDefs,
@@ -173,6 +211,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			approvals: domain.approvals,
 			push: { publicKey: vapid.publicKey },
 			daily: domain.daily,
+			inbox: domain.inbox,
 			timezone: config.profile.timezone,
 			filesDir: config.paths.files,
 			workspaceDir: config.paths.workspace,
@@ -462,6 +501,47 @@ function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
 				`check that the PA has a conversation (sqlite3 "${appDb}" "SELECT * FROM agents WHERE id = 'pa'"), or switch the job off in Settings: ${id}`,
 		);
 
+	const inboxUnrepaired = (failures: RepairReport["reminders"]["failures"]): void =>
+		unrepaired(
+			"inbox",
+			failures,
+			(id) => `the Google account ${id} its sync timer`,
+			() =>
+				`check that the Inbox agent has a conversation (sqlite3 "${appDb}" "SELECT * FROM agents WHERE id = 'inbox'"), or disconnect the account in Settings`,
+		);
+
+	/** What the Inbox found out about its accounts: said once, when it changed, not every ten minutes. */
+	function accountsChanged(accounts: SweepReport["inbox"]["accounts"]): void {
+		if (accounts.added.length > 0)
+			logger.info(`[inbox] new Google account(s) found: ${accounts.added.join(", ")}. Syncing.`);
+		if (accounts.reconnected.length > 0) {
+			logger.info(`[inbox] connected again: ${accounts.reconnected.join(", ")}. Syncing again.`);
+		}
+		if (accounts.revoked.length > 0) {
+			logger.warn(
+				`[inbox] Google no longer accepts the sign-in of ${accounts.revoked.join(", ")}: its mail is not being read. Run pnpm connect:google (docs/setup-google.md).`,
+			);
+		}
+		if (accounts.disconnected.length > 0) {
+			logger.warn(`[inbox] no saved sign-in any more for ${accounts.disconnected.join(", ")}: their sync stopped.`);
+		}
+	}
+
+	function delegated(report: RepairReport["delegate"]): void {
+		if (report.settled + report.posted > 0) {
+			logger.info(
+				`[delegate] settled ${report.settled} answer(s) of questions asked to other agents and posted ${report.posted} that nobody had waited for.`,
+			);
+		}
+		for (const failure of report.failures) {
+			if (described.has(`delegate:${failure.id}`)) continue;
+			described.add(`delegate:${failure.id}`);
+			logger.error(
+				`[delegate] could not settle the question ${failure.id} put to another agent: ${sentence(failure.message)}`,
+			);
+		}
+	}
+
 	function unannounced(failures: RepairReport["approvals"]["failures"]): void {
 		for (const failure of failures) {
 			if (described.has(`approval:${failure.id}`)) continue;
@@ -475,7 +555,10 @@ function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
 	}
 
 	function timers(
-		report: Pick<RepairReport, "reminders" | "followups" | "birthdays"> & { daily: RepairReport["daily"]["timers"] },
+		report: Pick<RepairReport, "reminders" | "followups" | "birthdays"> & {
+			daily: RepairReport["daily"]["timers"];
+			inbox: RepairReport["inbox"]["timers"];
+		},
 	): void {
 		rescheduled("tasks", "reminder(s)", report.reminders.rescheduled);
 		tasksUnrepaired(report.reminders.failures);
@@ -485,6 +568,8 @@ function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
 		birthdaysUnrepaired(report.birthdays.failures);
 		rescheduled("daily", "daily job(s)", report.daily.rescheduled);
 		dailyUnrepaired(report.daily.failures);
+		rescheduled("inbox", "account sync timer(s)", report.inbox.rescheduled);
+		inboxUnrepaired(report.inbox.failures);
 	}
 
 	return {
@@ -492,10 +577,22 @@ function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
 			const { created, redelivered, failures: undelivered } = report.daily.recovery;
 			// A job that got its row at this start has no timer because nobody has made one yet, not because one was lost.
 			const lost = report.daily.timers.rescheduled.filter((job) => !created.includes(job));
-			timers({ ...report, daily: { ...report.daily.timers, rescheduled: lost } });
+			timers({ ...report, daily: { ...report.daily.timers, rescheduled: lost }, inbox: report.inbox.timers });
 			if (created.length > 0) {
 				logger.info(`[daily] scheduled for the first time: ${created.join(", ")}. Change the times in Settings.`);
 			}
+			accountsChanged(report.inbox.start.accounts);
+			if (report.inbox.start.suggestions > 0) {
+				logger.info(
+					`[inbox] posted ${report.inbox.start.suggestions} suggestion card(s) that had never reached the PA's thread.`,
+				);
+			}
+			for (const failure of report.inbox.start.failures) {
+				logger.error(
+					`[inbox] could not ${failure.what === "accounts" ? "read the saved Google sign-ins" : "post the waiting suggestions"}: ${sentence(failure.message)} The server keeps running and tries again every few minutes.`,
+				);
+			}
+			delegated(report.delegate);
 			if (redelivered.length > 0) {
 				logger.warn(
 					`[daily] today's ${redelivered.join(" and ")} had been lost from Durable's database (a power cut takes its last writes) ` +
@@ -518,7 +615,9 @@ function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
 			unannounced(failures);
 		},
 		sweep(report) {
-			timers(report);
+			timers({ ...report, inbox: report.inbox.timers });
+			accountsChanged(report.inbox.accounts);
+			delegated(report.delegate);
 		},
 	};
 }

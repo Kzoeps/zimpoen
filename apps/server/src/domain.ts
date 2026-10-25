@@ -15,24 +15,31 @@ import {
 	type DailyService,
 	type DailyStart,
 	DEFAULT_CODEMODE_LIMITS,
+	type DelegateDeps,
+	type DelegateService,
 	type DomainDeps,
 	type DomainModule,
 	dailyModule,
+	delegateModule,
 	type FilesDeps,
 	filesModule,
 	followupsModule,
 	type HealthDeps,
 	healthModule,
+	type InboxDeps,
+	type InboxStart,
+	inboxModule,
 	invoicesModule,
 	ledgerModule,
 	peopleModule,
 	type ReconcileReport,
 	type RecoveryReport,
+	type RefreshReport,
 	type ScheduleSettings,
 	splitsModule,
 	tasksModule,
 } from "@assistant/extensions";
-import type { PushPayload } from "@assistant/shared";
+import type { GoogleSettingsResponse, PushPayload, SuggestionDecision, SuggestionState } from "@assistant/shared";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { Extension, Harness } from "@earendil-works/pi-durable";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
@@ -63,6 +70,15 @@ export type Domain = {
 	 * ledger's query tools instead of adding up in its head. The PA and the Health agent do not get them.
 	 */
 	accountantExtensions: Extension[];
+	/**
+	 * What the Inbox agent selects: its read-only tools (search, read, calendar, mark, propose a rule, suggest) and the account
+	 * sync that lives in its conversation. No file tools (PLAN rule 6: it processes untrusted email text), no `ask_agent`, no
+	 * approval hook (no tool it has needs one: a lasting rule is only asked for, and the server applies it when the owner taps
+	 * Approve): the suggestion queue is its only way to the PA, and server code owns that.
+	 */
+	inboxExtensions: Extension[];
+	/** The Inbox's accounts, as Settings shows and changes them, and the owner's answers to what it suggests. */
+	inbox: InboxFacade;
 	approvals: ApprovalService;
 	/** The morning briefing and the evening wrap-up: their times and whether they run. */
 	daily: DailyService;
@@ -80,6 +96,14 @@ export type Domain = {
 	close(): Promise<void>;
 };
 
+/** What the HTTP API may ask of the Inbox module (nothing else of it is reachable from a request). */
+export type InboxFacade = {
+	settings(): Promise<GoogleSettingsResponse>;
+	/** Forget an account's sign-in and stop its sync; its mail stays. False when there is no such account. */
+	disconnect(email: string): Promise<boolean>;
+	decideSuggestion(id: string, decision: SuggestionDecision): Promise<SuggestionState>;
+};
+
 export type RepairReport = {
 	reminders: ReconcileReport;
 	followups: ReconcileReport;
@@ -87,6 +111,10 @@ export type RepairReport = {
 	/** The daily jobs: today's runs written again if a power cut took them, and their timers. */
 	daily: { recovery: DailyStart; timers: ReconcileReport };
 	approvals: RecoveryReport;
+	/** The accounts found in the saved sign-ins, the suggestions posted again, and the sync timers. */
+	inbox: { start: InboxStart; timers: ReconcileReport };
+	/** Answers that came while nobody waited for them, posted to the PA's thread. */
+	delegate: Awaited<ReturnType<DelegateService["recover"]>>;
 };
 
 export type SweepReport = {
@@ -96,6 +124,8 @@ export type SweepReport = {
 	followups: ReconcileReport;
 	birthdays: ReconcileReport;
 	daily: ReconcileReport;
+	inbox: { accounts: RefreshReport; timers: ReconcileReport; suggestions: number };
+	delegate: Awaited<ReturnType<DelegateService["recover"]>>;
 };
 
 export type DomainOptions = {
@@ -114,6 +144,10 @@ export type DomainOptions = {
 	accountant?: AccountantDeps;
 	/** How long a code mode script may run. Default: {@link DEFAULT_CODEMODE_LIMITS}; tests shorten it. */
 	codemodeLimits?: Partial<CodemodeLimits>;
+	/** What the Inbox module reads Google through and how it classifies mail. */
+	inbox?: InboxDeps;
+	/** How long the PA's `ask_agent` waits for an answer; tests shorten it. */
+	delegate?: DelegateDeps;
 };
 
 /**
@@ -135,6 +169,8 @@ export const MODULES: readonly DomainModule[] = [
 	ledgerModule,
 	splitsModule,
 	invoicesModule,
+	inboxModule,
+	delegateModule,
 ];
 
 export function createDomain(options: DomainOptions): Domain {
@@ -164,6 +200,8 @@ export function createDomain(options: DomainOptions): Domain {
 		...(options.files === undefined ? {} : { files: options.files }),
 		...(options.health === undefined ? {} : { health: options.health }),
 		...(options.accountant === undefined ? {} : { accountant: options.accountant }),
+		...(options.inbox === undefined ? {} : { inbox: options.inbox }),
+		...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 	};
 	for (const module of MODULES) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = MODULES.flatMap((module) => module.facts?.(deps) ?? []);
@@ -177,6 +215,8 @@ export function createDomain(options: DomainOptions): Domain {
 	const ledger = ledgerModule.extension(deps);
 	const splits = splitsModule.extension(deps);
 	const invoices = invoicesModule.extension(deps);
+	const inbox = inboxModule.extension(deps);
+	const delegate = delegateModule.extension(deps);
 	const guard = approvalsModule.extension(deps);
 	const toolSearch = createToolSearchExtension();
 	// `models: false` leaves out `models.classify()` and `models.generateImages()`: they are paid calls to a model provider,
@@ -188,12 +228,40 @@ export function createDomain(options: DomainOptions): Domain {
 		timeoutMs: codemodeLimits.maxTimeoutMs,
 	});
 	const codemode = createBoundedCodemodeExtension({ sandbox, models: false, limits: codemodeLimits });
+	/** A sign-in saved or lost while the server runs, the timers of the accounts, and suggestions that never reached the PA. */
+	const sweepInbox = async (): Promise<SweepReport["inbox"]> => ({
+		accounts: await inboxModule.accounts(deps).refresh(),
+		timers: await inboxModule.scheduler(deps).reconcile(),
+		suggestions: await inboxModule.suggestions(deps).deliver(),
+	});
+
 	return {
 		migrations: collectMigrations(MODULES),
-		extensions: [tasks, followups, people, daily, files, health, ledger, splits, invoices, guard, toolSearch, codemode],
-		paExtensions: [tasks, followups, people, daily, files, guard, toolSearch],
+		extensions: [
+			tasks,
+			followups,
+			people,
+			daily,
+			files,
+			health,
+			ledger,
+			splits,
+			invoices,
+			inbox,
+			delegate,
+			guard,
+			toolSearch,
+			codemode,
+		],
+		paExtensions: [tasks, followups, people, daily, files, delegate, guard, toolSearch],
 		healthExtensions: [health, guard, toolSearch],
 		accountantExtensions: [ledger, splits, invoices, files, guard, toolSearch, codemode],
+		inboxExtensions: [inbox],
+		inbox: {
+			settings: () => inboxModule.accounts(deps).settings(),
+			disconnect: (email) => inboxModule.accounts(deps).disconnect(email),
+			decideSuggestion: (id, decision) => inboxModule.suggestions(deps).decide(id, decision),
+		},
 		approvals,
 		daily: dailyModule.service(deps),
 		bind: (open) => {
@@ -214,6 +282,9 @@ export function createDomain(options: DomainOptions): Domain {
 				// Rows first, then what a power cut took, then the timers: a timer must not post a run the recovery is about to.
 				daily: { recovery: await dailyModule.start(deps), timers: await dailyModule.scheduler(deps).reconcile() },
 				approvals: await approvals.recover(),
+				// The accounts first (a sign-in saved while the server was off), then their timers.
+				inbox: { start: await inboxModule.start(deps), timers: await inboxModule.scheduler(deps).reconcile() },
+				delegate: await delegateModule.service(deps).recover(),
 			};
 		},
 		sweep: async () => ({
@@ -222,6 +293,8 @@ export function createDomain(options: DomainOptions): Domain {
 			followups: await followupsModule.scheduler(deps).reconcile(),
 			birthdays: await peopleModule.scheduler(deps).reconcile(),
 			daily: await dailyModule.scheduler(deps).reconcile(),
+			inbox: await sweepInbox(),
+			delegate: await delegateModule.service(deps).recover(),
 		}),
 		close: () => sandbox.close(),
 	};

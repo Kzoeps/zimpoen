@@ -98,7 +98,8 @@ describe("the Health agent through the whole server", () => {
 		expect(await offered(server, "pa")).not.toContain("log_weight");
 		const inbox = server.db.get<{ conversation_id: number }>("SELECT conversation_id FROM agents WHERE id = 'inbox'");
 		const inboxDoc = await server.harness.snapshot(AgentDoc, inbox?.conversation_id as ConversationId, ctx);
-		expect(inboxDoc?.extensions).toStrictEqual(["profile"]);
+		// The Inbox agent has its own tools (M5); none of the Health agent's.
+		expect(inboxDoc?.extensions).toStrictEqual(["profile", "inbox"]);
 	});
 
 	it("is the only agent that can log a weight: the PA's call is refused before it runs", async () => {
