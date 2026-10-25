@@ -1,7 +1,7 @@
 # Personal assistant — implementation plan
 
-Status: approved direction. Milestones 1, 2 and 3 are implemented (see `progress-m1.md`, `progress-m2.md`,
-`progress-m3.md`); this document was updated at the end of M3 to describe what was built. Owner: Dorje.
+Status: approved direction. Milestones 1, 2, 3 and 4 are implemented (see `progress-m1.md`, `progress-m2.md`,
+`progress-m3.md`, `progress-m4.md`); this document was updated at the end of M4 to describe what was built. Owner: Dorje.
 
 ## 1. Goal
 
@@ -148,6 +148,7 @@ type DomainModule = {
 	migrations: readonly Migration[]; // { id: "tasks/001_items", up(db) }
 	extension: (deps: DomainDeps) => Extension; // Durable extension: tools, sections, hooks, tasks
 	actions?: (deps: DomainDeps) => readonly ApprovalAction[]; // destructive operations it owns (§5.6)
+	facts?: (deps: DomainDeps) => readonly DailyFactsProvider[]; // what it can tell the daily jobs (§5.4): "Tasks due today", ...
 };
 type DomainDeps = {
 	db: AppDb;
@@ -157,13 +158,16 @@ type DomainDeps = {
 	post: EntryPoster; // zero-token write into a conversation (§5.3)
 	notify: (payload: PushPayload) => Promise<void>; // Web Push to every device; never throws
 	approvals: ApprovalService;
+	ask: InputSubmitter; // a message to the model that starts a run (the briefing, the wrap-up), once per requestId; unlike `post` it costs tokens
+	facts: () => readonly DailyFactsProvider[]; // every module's providers, read when a daily job runs; one that throws is left out and reported
+	files?: FilesDeps; // { readPaths, images? }: the folders the PA is told it may read, and the image processor for read_file
 	schedule?: Partial<ScheduleSettings>; // when follow-ups and birthdays fire (ASSISTANT_AGENDA_LEAD_MINUTES, ...); defaults otherwise
 };
 ```
 
 The server (`apps/server/src/domain.ts`) lists the modules, concatenates their migrations after the core ones
 (`migrate(db, [...coreMigrations, ...domain.migrations])`), installs every extension in the registry, and gives each agent
-the ones it should have (`buildAgents`: the PA gets `tasks` and `approvals`; capability is tool presence). A module never
+the ones it should have (`buildAgents`: the PA gets `tasks`, `followups`, `people`, `approvals`, `daily` and `files`; capability is tool presence). A module never
 imports server code: everything it needs arrives in `DomainDeps`.
 
 **Migrations.** An id is `<module>/<NNN>[_name]`. Ordering is a rule within one module only: its migrations must be
@@ -213,8 +217,8 @@ reask_wait --sleepUntil(next morning 09:00 local)--> reask --(the same question 
 //  next link (a commitment with its own timer, parent_id = this one), so the chain runs until one resolves with no follow-up.
 //  update_followup moves or renames one (a new generation when the time changes; agenda points stay). A date given without a
 //  time takes the default time (10:00, `ASSISTANT_FOLLOWUP_DEFAULT_TIME`) and the tool says so (`time_assumed`).
-//  Asked twice at most: what is still unanswered after that is for the morning briefing (M4: list the follow-ups with
-//  status `asked`, they are the open loops), not for a nagging timer.
+//  Asked twice at most: what is still unanswered after that is for the morning briefing (it lists the follow-ups with
+//  status `asked`: they are the open loops), not for a nagging timer.
 // Birthday (implemented, `people` module): one Durable task per person and year, `app.birthday`, input { personId, gen }.
 remind_wait --sleepUntil(09:00 local)--> remind (card + push) --> check_wait --sleepUntil(18:00 local)--> check
   (question card + push unless the owner said they wished or the birthday is more than 2 days ago; moves the row to next
@@ -223,9 +227,25 @@ remind_wait --sleepUntil(09:00 local)--> remind (card + push) --> check_wait --s
 // is back from before its own card (design-notes.md: "Follow-ups, agendas and birthdays"). What no timer can repair is a
 // birthday card that Durable's database lost AFTER the cycle ended (the row has moved on): the row keeps the latest morning
 // card and evening question (`reminded_year/at`, `asked_year/at`), and the server posts them again at start (`recoverCards`).
-MorningBriefing (daily 07:30 Asia/Thimphu): gather (code: tasks due, today's meetings and birthdays, open asked follow-ups,
-                inbox digest) -> submit input to pa ("compose briefing", requestId per date)
-EveningWrapUp  (daily 21:00): gather done-log facts (code) -> submit input to pa -> user replies -> pa_journal row
+// Daily jobs (implemented, `daily` module): one Durable task per job, `app.daily`, input { job, gen }; `schedule_daily` is the truth
+// (local time, enabled, the run that is waiting, last_run_date). Settings: GET|PUT /api/settings/schedule.
+wait --sleepUntil(due_at)--> run
+//  wait: ends as superseded when the row no longer wants this timer (time edited, job off, a run done), else sleeps
+//  run:  re-checks the row; the day's facts are gathered by CODE from every module's facts provider and kept in a durable memo
+//        (the first attempt's plan stands after a crash); then, once per local day (last_run_date):
+MorningBriefing (07:30 Asia/Thimphu; late window to 11:00): facts = tasks and reminders today, overdue tasks, meetings and
+                follow-ups today (agenda counts), open asked follow-ups, birthdays today and in 3 days, items carried over by the
+                last answered journal day (within 3 days). Facts -> deps.ask(pa, input with entry kind app.daily, requestId
+                briefing:<date>, whenBusy followUp) + push "Your morning briefing". NOTHING to report -> an app.daily write with
+                no model message (a card, zero tokens, requestId briefing:<date>:empty). The instructions live in the PA's rules.
+EveningWrapUp  (21:00; late window to midnight): what the system recorded today (tasks completed, follow-ups resolved, birthdays
+                wished, reminders fired; later modules register providers) -> input to pa, requestId wrapup:<date> (always asks),
+                a pa_journal row is created (asked_at, auto_summary) -> the owner answers -> the PA calls save_journal(date, user_log,
+                carried_over[]) -> tomorrow's briefing carries the items over. Tools: save_journal (replay-safe by call id; a later
+                call for the day replaces), get_journal(date | from,to).
+//  A first row is never "late", nor is an edit in Settings; a day that ran never runs again. At start, a job that ran today
+//  is delivered again with the same request id and no push (a power cut can lose it from Durable's database). Every question
+//  the jobs ask closes the YES window (an approval cannot be answered by a "yes" typed to a wrap-up).
 ```
 
 **The row is the truth, the Durable task is a timer.** `tasks_item` and `durable.sqlite` are two databases, so nothing can
@@ -260,8 +280,13 @@ POST /api/push/subscribe                  { endpoint, keys: { p256dh, auth } } -
 DELETE /api/push/subscribe                { endpoint } -> { removed }
 POST /api/approvals/:id                   { decision: "approve"|"deny" } -> ApprovalState; 404 unknown, 409 expired/answered
 POST /api/admin/tasks/:id/retry           runs a task Durable parked after repeated crashes; 404 if it is not parked
-POST /api/uploads                         (M4)   GET /api/files/:id (M4)
+GET  /api/settings/schedule               -> { timezone, jobs: [{ job, label, localTime, enabled, defaultTime, nextRunAt?, nextRunText?, lastRunDate? }] }
+PUT  /api/settings/schedule/:job          { localTime?: "HH:MM", enabled? } -> the same body; takes effect at once (404 unknown job, 400 bad time)
+POST /api/uploads                         multipart, ONE `file` field, <= 20 MB -> 201 { file: FileSummary }; the only non-JSON write
+GET  /api/files/:id                       an upload's bytes (nosniff, sandbox CSP; inline for images, download for the rest)
 ```
+The web app also has two routes of its own that are not under `/api`: `POST /share` (the Android share target: it stores the
+files through `/api/uploads` and redirects with 303 to `/capture`) and the page `/capture`.
 
 Errors are `{ error: { code, message } }` (`unauthorized`, `forbidden`, `invalid_json`, `invalid_request`,
 `payload_too_large`, `not_found`, `conflict`, `too_many_requests`, `unavailable`, `internal_error`).
@@ -270,11 +295,13 @@ SSE: `apps/server/src/stream.ts` is the only user of `watchEvents` (experimental
 (newest 200 entries, system entries and opaque provider signatures removed, plus why recent messages were never answered);
 then Durable's batches, partial commits every 100 ms. The keep-alive is a named `ping` event, not a comment, because
 `EventSource` never shows comments; the browser reconnects after 40 s of silence and when the tab or network returns.
-Reconnect = a fresh snapshot, no replay. At most 8 streams are open; bodies are limited to 256 KB.
+Reconnect = a fresh snapshot, no replay. At most 8 streams are open; JSON bodies are limited to 256 KB, an upload to 20 MB.
 
 Auth and request guards (all in both auth modes unless noted): the `Host` header must be a name the server answers to
 (loopback names on its port plus `ASSISTANT_PUBLIC_HOST`; this stops DNS rebinding), a state-changing request the browser
-marks `Sec-Fetch-Site: cross-site` is refused, and every POST/PUT/PATCH/DELETE must be `Content-Type: application/json`.
+marks `Sec-Fetch-Site: cross-site` is refused, and every POST/PUT/PATCH/DELETE must be `Content-Type: application/json`. The
+one exception is `POST /api/uploads`: it is registered before that rule (order of registration, not a path list) and instead
+**requires** `Sec-Fetch-Site` to be `same-origin` or `none`.
 With `ASSISTANT_AUTH=on` (the default; `off` is refused in production) the peer must be loopback and
 `Tailscale-User-Login` must equal `ASSISTANT_OWNER_LOGIN`. The reasoning is in `design-notes.md`.
 
@@ -312,14 +339,21 @@ fed by `EventSource` → adapter (`applyEvent(state, event)`) → `convertMessag
   as `role: "system"` messages whose card travels in `metadata.custom.card`.
 - Tool cards from `details` (typed in `packages/shared`, `toolCardOf`): approval card (Approve/Deny, state derived from
   notices), task list, single task; chart and invoice download later.
-- Composer: text, attachments (upload), stop button.
-- Settings: per-agent model + thinking level (curated list: models whose id starts with `gpt-6`, "Show all" toggle; the
+- Composer: text, attachments (a paperclip; each file uploads as it is picked, with its own progress and a way to remove it,
+  and a message may carry up to 10), stop button. Sent files are shown as chips (a thumbnail for an image) above the text;
+  a message of files only has no bubble.
+- Daily cards: the briefing or wrap-up request is a card (the facts folded, "sent late" when it was) and the PA's first answer
+  after it carries a "Morning briefing" / "Evening wrap-up" chip until the owner speaks again; a briefing with nothing in it
+  is one line. `save_journal` / `get_journal` and the file tools (`describe_file`, `search_files`, `read_file_path`) have cards.
+- Capture page `/capture` (the Android share target lands here): the shared files as chips, the shared text editable, an
+  agent picker (default `pa`), "Send to X".
+- Settings: the daily schedule (a time and an on/off switch for each job) and per-agent model + thinking level (curated list: models whose id starts with `gpt-6`, "Show all" toggle; the
   agent's current model is always listed; a server with no curated model lists everything) and the Enable
   notifications control (permission → register `/sw.js` → subscribe with the VAPID key → `POST /api/push/subscribe`).
 - PWA (M2): `manifest.ts`, generated icons (`apps/web/scripts/make-icons.mjs`), `public/sw.js` (push, notificationclick and
   pushsubscriptionchange; no caching), Web Push with VAPID; `PushSync` re-registers the device's subscription whenever the
-  app opens. Web Share Target (Android "Share → Assistant") is M4. iOS delivers pushes only to an installed (Home Screen)
-  web app.
+  app opens. Web Share Target (M4: Android "Share → Assistant" posts to `/share`, which stores the files and opens `/capture`;
+  needs the installed app over https; untried on a device). iOS delivers pushes only to an installed (Home Screen) web app.
 - A banner reports tasks Durable parked after repeated crashes, with a Retry button.
 
 ## 7. Data model (app.sqlite) — initial domains
@@ -360,12 +394,25 @@ people_person(id TEXT PK /* p_xxxxxxxx */, name, relation, birthday_md TEXT NOT 
               gen, durable_task_id NULL, conversation_id, source_call_id UNIQUE, created_at, updated_at)
 people_wish(person_id REFERENCES people_person ON DELETE CASCADE, year, wished INTEGER, recorded_at, PRIMARY KEY(person_id, year))
 people_call(source_call_id PK, tool, person_id, applied_at)   -- rule 8 for update_person, record_wish
-pa_journal(date TEXT PK /* YYYY-MM-DD local */, user_log, auto_summary, carried_over_json)
+-- daily (module daily, PA; the tables keep the plan's names, so they do not start with the module's)
+schedule_daily(job TEXT PK /* 'briefing' | 'wrapup' */, local_time CHECK 'HH:MM', enabled INTEGER,
+               due_date TEXT, due_at INTEGER,   -- the run that is waiting (the row is the truth; the Durable task is its timer)
+               last_run_date TEXT NULL, last_run_at NULL,   -- a day runs at most once
+               gen INTEGER, durable_task_id INTEGER NULL, updated_at)
+pa_journal(date TEXT PK /* YYYY-MM-DD local */, user_log NULL /* NULL while the wrap-up waits for an answer */,
+           auto_summary TEXT /* what the system recorded, as the wrap-up was asked */, carried_over_json,
+           asked_at NULL, saved_at NULL, updated_at)
+daily_call(source_call_id PK, tool, subject, applied_at)   -- rule 8 for save_journal
 
--- memory / files
+-- files (module files)
+files_index(id TEXT PK /* fi_xxxxxxxx */, path UNIQUE /* absolute, links resolved */, name, mime, kind CHECK(kind IN
+            ('image','pdf','csv','text','other')), size, source CHECK(source IN ('upload','path')),
+            description, tags, added_at, updated_at)   -- an upload, or a file the PA found in an allowed folder
+files_call(source_call_id PK, tool, file_id, applied_at)   -- rule 8 for describe_file and read_file_path
+
+-- memory (M8)
 memory_fact(id PK, scope /* 'shared' | agent id */, kind /* 'preference' | 'fact' */, text,
             source_call_id UNIQUE, created_at, updated_at)   -- FTS5 virtual table for recall
-files_index(id PK, path, description, tags, added_at)
 
 -- later milestones: health_weight, health_lift, ledger_expense, ledger_balance, splits_bill,
 -- splits_share, invoice_state, inbox_message(triage) ...
@@ -381,7 +428,7 @@ tools (e.g. `add_expense`), not free-form memory.
 | **M1 Foundation** (done)                                          | pnpm monorepo; server with Harness (durable.sqlite), app.sqlite + migration runner, config + allowlist validation, `ensureAgents` (all four agents created, only PA has tools beyond profile); HTTP API (agents, messages, stream, abort, history); web chat with sidebar + streaming via assistant-ui; faux-provider dev mode | `pnpm test`, `pnpm typecheck`, `pnpm build` pass; dev mode chat streams from faux model end to end; restart mid-run resumes |
 | M2 Tasks & reminders (done)                                       | tasks extension + Reminder task + zero-token posts + Web Push + approvals for delete                                                                                                                                                                                                                                           | reminder fires after restart, posts card, push sent (mockable)                                                              |
 | M3 Follow-ups, agendas, birthdays, people (done)                  | FollowUp task, agenda capture, yearly birthday                                                                                                                                                                                                                                                                                 | follow-up loop works with fake clock                                                                                        |
-| M4 Briefing, wrap-up, journal, share target                       | daily tasks, done-log, PWA share target                                                                                                                                                                                                                                                                                        |                                                                                                                             |
+| M4 Briefing, wrap-up, journal, files, share target (done)                       | daily tasks, done-log, uploads + file tools, PWA share target |                                                                                                                             |
 | M5 Inbox                                                          | Gmail + Calendar read-only (multi-account), Jev triage, digest, handoff to PA                                                                                                                                                                                                                                                  |                                                                                                                             |
 | M6 Health                                                         | weight/lift tables, chart cards                                                                                                                                                                                                                                                                                                |                                                                                                                             |
 | M7 Accountant                                                     | expenses (CSV/photo/chat), code-mode analysis, splits, invoice PDF from template                                                                                                                                                                                                                                               |                                                                                                                             |
@@ -392,5 +439,12 @@ tools (e.g. `add_expense`), not free-form memory.
 
 - Invoice PDF template source format (user has a PDF; may need to recreate as HTML/Typst template). M7.
 - Backups (deferred by user).
+- PDFs are stored and shown but the PA cannot read them yet: text extraction is a dependency decision (M7 needs it for
+  statements; bank CSVs and receipt photos already work).
+- An upload whose row insert is cut off by a crash between the rename and the insert leaves an orphan file; there is no sweep.
+- The Android share target is untried on a device (Chrome is assumed to send `Sec-Fetch-Site: none` for the share POST).
+- `experimental.proxyClientMaxBodySize` is how Next lets a proxied upload through; it can be renamed by a Next upgrade
+  (`docs/OPS.md`).
+- `search_files` is a plain word match over name, description and tags; add ranking (or FTS5, with `memory_fact`) if it is not enough.
 - (Resolved in M1) Durable conversation-creation and event APIs were confirmed against the installed 1.4.0 package; where
   it differs from the repository checkout the code follows the package (progress-m1.md §2.1).

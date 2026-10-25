@@ -14,25 +14,60 @@ every `/api/*` request, with auth on or off:
    at 127.0.0.1 so that the browser treats the API as same-origin with the attacker's page. Behind the Next dev proxy
    (which rewrites `Host`), `X-Forwarded-Host` must also be one of those names.
 2. **`Sec-Fetch-Site`**. A POST/PUT/PATCH/DELETE that the browser marks as anything other than `same-origin` or `none` is
-   refused. Requests without the header (curl, older browsers) are not refused by this rule.
+   refused. Requests without the header (curl, older browsers) are not refused by this rule, except for uploads (below),
+   where it is required.
 3. **JSON-only writes** (`validation.ts`). Every POST/PUT/PATCH/DELETE must carry `Content-Type: application/json`. A page
    cannot send that cross-origin without a CORS preflight, and the server never answers preflights. This is what protects
    browsers that do not send `Sec-Fetch-Site`.
 
 No cookies or CSRF tokens exist, so there is nothing to steal or forget.
 
-### Uploads (planned, M4): `POST /api/uploads`, multipart
+### Uploads: `POST /api/uploads`, multipart
 
-A multipart body cannot satisfy rule 3. The plan, to be done when uploads are built (no upload code exists yet):
+A multipart body cannot satisfy rule 3, so uploads are the one write that is not JSON, and they are built to make that
+exception as small as possible (`apps/server/src/http/uploads.ts`, mounted in `http/app.ts`):
 
-- Exempt **only** that route from the JSON rule, by an explicit route-level allowance, never by loosening the middleware.
-- Rely on rules 1 and 2 for it, and make rule 2 **required** on that route: a request without `Sec-Fetch-Site`, or with a
-  value other than `same-origin`/`none`, is refused. Every browser the owner uses sends it; curl callers add
-  `-H 'Sec-Fetch-Site: none'`.
-- Apply its own body limit (the global one is 256 KB), a file-type allowlist, and store files under `<data>/files` with
-  server-generated names.
-- Add a test per rule: wrong `Host` → 403, `cross-site` → 403, missing `Sec-Fetch-Site` → 403, and a JSON POST to the same
-  path still → 415.
+- **The exemption is the order of registration.** Hono runs middleware and handlers in the order they were registered, so
+  the upload route is mounted after the `Host` guard and auth and *before* `requireJsonContentType`; every other route is
+  behind that rule, and there is no list of exempt paths inside the middleware to extend by accident. A test proves both
+  halves: the upload route refuses JSON (415), and every other write still refuses a form (415). Do not move the route and
+  do not add another like it.
+- **Rule 2 is required, not optional, on that route.** A request without `Sec-Fetch-Site`, or with anything but
+  `same-origin` or `none`, is refused (403). Every browser the owner uses sends it and a page on another site cannot forge
+  it; curl callers add `-H 'Sec-Fetch-Site: none'`. Rule 1 (`Host`) applies as everywhere.
+- **One file per request, 20 MB** (`MAX_UPLOAD_BYTES`; a streamed body is counted, so it cannot be bigger than it
+  announces): 413 with the size and the limit. `formData()` buffers, which is fine for one owner and 20 MB.
+- **Judged by content, never by name or by the type the sender claimed** (`packages/extensions/src/files/sniff.ts`): PNG,
+  JPEG, GIF, WebP and PDF by their signatures; otherwise UTF-8 text without a NUL byte, CSV when the name ends in `.csv`.
+  Text that holds a private key is refused (415) so that a pasted key cannot end up in a file the PA will read. The stored
+  extension follows the content (a PNG called `x.txt` is `x.png`).
+- **Stored where the server decides**: `<data>/files/<yyyy-mm>/<id>-<safe name>.<ext>`, mode 0600, written to a temp
+  file and renamed, then a `files_index` row. A failed insert removes the file; a crash between the rename and the insert
+  leaves an orphan file (no sweep yet; it costs disk, nothing else).
+- **Served back by `GET /api/files/:id`** only for uploads, only from inside the uploads folder (the path is resolved
+  through links again), with `nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, inline for images and as a
+  download for everything else, so an uploaded HTML or SVG cannot run in the assistant's origin.
+- **The message names the files**, not the request: the web app writes one `[Attached file: name · type · size · id fi_…]`
+  line per file after the text (`withAttachments` / `splitAttachments` in `@assistant/shared`), and `POST …/messages` is
+  unchanged. The model reads the lines and opens a file with `read_file`; the thread shows them as chips. A name that tries
+  to carry a line break or a bracket cannot add a reference of its own.
+
+**Behind the Next dev proxy.** Next buffers a proxied request body and, past `experimental.proxyClientMaxBodySize`
+(10 MB by default, and it applies to the `/api/*` rewrite too), stops forwarding it: an 11 MB upload hangs and the browser
+gets a 500. `apps/web/next.config.ts` sets the limit to the upload cap plus 1 MiB, so the server, which explains itself,
+is what refuses a file that is too big. Production behind Tailscale Serve has no proxy; `next start` without Serve does.
+
+**The Android share target** (`share_target` in the manifest → `app/share/route.ts` → `lib/share.ts`). The share sheet
+POSTs multipart to `/share`; a page cannot read a POST body, so the route does, sends each file to the upload route and
+redirects (303) to `/capture?…`, where the owner picks the agent and sends. The route does not vouch for the request
+itself: it refuses unless `Sec-Fetch-Site` is `none` or `same-origin` (the API checks the same for a file, but a share with
+no files never reaches it), and it passes `Tailscale-User-Login`, `Sec-Fetch-Site` and the page's host (as
+`X-Forwarded-Host`) on to the API, so the API makes the same decisions it would for the browser itself. Text longer than
+1500 characters would not fit an address and is stored as `shared-text.txt`; a refused file becomes a notice on the capture
+page with the server's reason. The capture address is read defensively (ids must look like `fi_` and eight hex digits,
+names lose line breaks and brackets). Untried on a device: Chrome is assumed to send `Sec-Fetch-Site: none` for the
+share-sheet POST; if it does not, the share is refused with 403 and the fix is here. An installed web app (https) is
+required for Android to offer it.
 
 ## Two databases, two durability levels
 
@@ -317,3 +352,66 @@ The model gets what it needs another way:
 
 Rejected: a timestamp on every user message. It changes every message, spends tokens on every turn for a need that arises
 rarely, and would change what the dev model echoes for every agent.
+
+## The daily jobs: the row is the truth, once more
+
+The morning briefing and the evening wrap-up (`packages/extensions/src/daily/`) follow the reminder design
+([Reminders: the row is the truth](#reminders-the-row-is-the-truth)) with one row per job instead of one per item.
+
+- **`schedule_daily`** holds the job, its local time, whether it is on, the run that is waiting (`due_date`, `due_at`), the
+  latest day that ran (`last_run_date`), a generation and the Durable task that is its timer. A Durable task `app.daily`
+  (phases `wait → run`, input `{ job, gen }`) sleeps until `due_at`; a timer acts only while it carries the row's
+  generation, so editing a time, switching a job off or a run finishing leaves the old timer stale and it ends itself.
+  `reconcile()` (`createTimerScheduler`, at start and in the 10-minute sweep) recreates the timer of a job that is on and has
+  none. The rows are created at start by `ensureRows()`; that first timer is a set-up, which the log says apart from a
+  repair (`DailyStart.created`).
+- **Time arithmetic is calendar arithmetic** (`occurrence.ts`: `addDays` and `atLocalTime`, never "plus 24 hours"), so 07:30
+  stays 07:30 across a clock change; tested for New York on 8 March and 1 November 2026. A wall time that does not exist
+  moves to the later instant, one that happens twice takes the first (as `time.ts`).
+- **The late window** is for a server that was down at the time: a briefing that wakes late still runs until 11:00 (210
+  minutes after the default 07:30), a wrap-up for 180 minutes, both capped at the end of the local day; after that the day
+  is skipped. It is deliberately **not** applied to a job's first row (a new data directory has no past: without this, a
+  test run at 08:09 got a briefing nobody asked for) nor to an edit in Settings (setting 07:00 at 07:45, or switching a
+  job on after its time, means tomorrow). A day that ran never runs again, however the time is edited.
+- **The day's facts are a durable memo** (`TaskRuntime.memo`, first writer wins): if the process dies between gathering
+  them and posting the request, the rerun uses the first attempt's plan, and the request id `briefing:<date>` /
+  `wrapup:<date>` makes the post happen once. After a power cut, which can lose the request from Durable's database while
+  `app.sqlite` remembers the run, start-up (`recoverRuns`) makes the request again for a job whose `last_run_date` is today:
+  a thread that has it keeps one, a thread that lost it gets it. No second push for something old.
+- **The request is a Durable input with a custom entry kind** (`app.daily`, `whenBusy: followUp`): the model reads the same
+  text as a user message and starts a run; the thread shows a card (the facts folded) instead of a bubble and puts a chip on
+  the first answer after it. The instructions for writing the briefing and for the wrap-up are in the PA's own rules
+  (`PA_DAILY_RULES`), so the day's input is only facts. A briefing with nothing in it is a `write` with no model message: it
+  never starts a run, so it costs no tokens, and the card says so. A wrap-up always asks (even with no facts) and creates its
+  `pa_journal` row when asked.
+- **Every question the jobs ask closes the YES window** (`closingYesWindowOnAsk`, like the timer cards): a "YES" typed to a
+  wrap-up cannot approve a deletion that was proposed earlier.
+- **Facts come from providers each module registers** (`DomainModule.facts` → `DomainDeps.facts()`): tasks (today with
+  reminders, overdue), follow-ups (meetings today with agenda counts, open questions), people (birthdays today and in three
+  days) and the journal (what the last answered day carried over, within three days). A provider that throws is left out and
+  reported, the others still speak. Health and expenses add theirs later without touching the jobs; the wrap-up's "what the
+  system knows happened today" comes the same way.
+- **The journal** is `pa_journal` (one row per local day: the auto-summary the wrap-up was asked with, the owner's answer,
+  the items carried over) plus `daily_call`, the call ledger of rule 8: `save_journal` replayed by Durable changes nothing,
+  and a later call for the same day replaces the earlier answer (the model is told to merge). A date in the future is
+  refused. The `journal` prompt section names the wrap-ups still waiting (last three days) so that "I paid the rent" typed
+  the next morning finds its day.
+
+## Files the PA can read
+
+`read_file`, `describe_file` (offered), `search_files`, `list_dir` and `read_file_path` (loaded by `tool_search`;
+`packages/extensions/src/files/`):
+
+- **Their own reader** (`read.ts`), not Durable's nested `read` tool: it can be tested without a harness, bounded the way the
+  PA needs (text and CSV: 200 lines or 32 KB per call, with `offset` and `limit` to go on), and holds the one answer for what
+  cannot be read. Images go through Durable's image processor (`createNodePhotonImages()`, created in `server.ts`, so the model
+  sees receipts at a size it accepts); PDFs and other binaries answer that the PA cannot read them yet. Text extraction from
+  PDFs is a dependency decision for later.
+- **The deny list holds through them, because they use the scoped file environment** (`api.env`: `canonicalPath` and
+  `listDir` apply the path policy, links resolved, protected entries hidden). `list_dir` does not show `.env*`, `id_*`,
+  keys, `auth.json`, `.ssh`, `.npmrc` or `<data>/secrets`; a direct read says why it refuses ("…is protected", "…is
+  outside the folders the assistant may read (…)"). The whole-server test tries each, and links into them.
+- **A file found in an allowed folder is registered in `files_index` when it is used** (`read_file_path`, idempotent by
+  path), so the PA can `describe_file` it ("the March bank CSV") and `search_files` finds it again by name, description or
+  tags (a `LIKE` over the three, every word must match; no ranking). Nothing is copied: a `path` file stays where it is.
+- **Nothing here writes**: the only place the assistant may write remains `<data>/workspace`.
