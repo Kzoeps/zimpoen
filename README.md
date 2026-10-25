@@ -5,12 +5,15 @@ ChatGPT-style web chat. Several themed agents (`pa`, `inbox`, `health`, `account
 crash-safe conversation on [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable): if the
 process dies mid-answer, the next start picks the work up where it stopped.
 
-Status: **Milestone 2 (tasks, reminders, approvals)**. You can open the web UI, pick an agent, chat, and watch the answer
-stream in. The `pa` agent now keeps a task list: it captures tasks and reminders from chat, reminds you at the right time
-(also after a restart, and without calling the model) and sends a Web Push notification to your phone. Deleting a task
-needs your explicit approval. In dev mode the model is a scripted stand-in and pushes go to a file, so nothing leaves the
-machine. The other agents have no tools yet; follow-ups, briefings, mail, health and accounting arrive in later
-milestones. The full design and milestone list is in [`docs/PLAN.md`](docs/PLAN.md).
+Status: **Milestone 3 (follow-ups, meeting agendas, birthdays)**. You can open the web UI, pick an agent, chat, and watch
+the answer stream in. The `pa` agent keeps a task list and reminds you at the right time; it also follows your meetings:
+after one it asks how it went and, if something has to be followed up, when, and then asks about that follow-up in turn;
+through the day you add agenda points, and shortly before the meeting it posts them; and it keeps your friends' and
+family's birthdays, reminding you in the morning to wish them well and asking in the evening whether you did. All of it
+survives a restart, costs no model tokens until you answer, and also sends a Web Push notification to your phone. Deleting
+anything needs your explicit approval. In dev mode the model is a scripted stand-in and pushes go to a file, so nothing
+leaves the machine. The other agents have no tools yet; briefings, mail, health and accounting arrive in later milestones.
+The full design and milestone list is in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Quickstart
 
@@ -30,7 +33,28 @@ The scripted model has no judgement, so it never decides to use a tool itself. T
 model, tell it what to call: `/tool <name> {json}`. For example `/tool add_task {"title":"Stretch","remind_in_minutes":1}`
 saves a task with a reminder one minute from now, and a minute later the reminder card appears in the thread. The tools
 are `current_time`, `add_task`, `list_tasks`, `update_task`, `complete_task`, `snooze_reminder` and `propose_delete_task`
-(arguments: `packages/extensions/src/tasks/tools.ts`). Dev mode also keeps pushes on the machine
+(arguments: `packages/extensions/src/tasks/tools.ts`).
+
+The same works for the M3 tools (arguments in `packages/extensions/src/followups/tools.ts` and `people/tools.ts`):
+`add_followup`, `add_agenda_point`, `list_followups`, `update_followup`, `record_outcome`, `resolve_followup`,
+`propose_delete_followup`, `add_person`, `update_person`, `list_people`, `record_wish` and `propose_delete_person`.
+
+**Rarely used tools are not offered until loaded.** The PA is offered `current_time`, `add_task`, `list_tasks`,
+`complete_task`, `snooze_reminder`, `add_followup`, `add_agenda_point`, `record_outcome`, `add_person`, `record_wish` and
+`tool_search`; `update_task`, `list_followups`, `update_followup`, `resolve_followup`, `list_people`, `update_person`, the
+`propose_delete_*` tools and the `delete_*` tools load when the model calls `tool_search` (the real model does; its
+instructions name them). The dev model's `/tool` is refused with "Tool X is not available" until you load the tool the
+same way: `/tool tool_search {"query":"propose delete task"}` first, then `/tool propose_delete_task {...}`. To watch a meeting go through its
+whole life in a few minutes, start the server with `ASSISTANT_FOLLOWUP_ASK_DELAY_MINUTES=1` and say
+`/tool add_followup {"title":"Meeting about the house","counterpart":"Dabtonog Realty","event_in_minutes":3,"agenda_lead_minutes":1}`,
+then `/tool add_agenda_point {"text":"Ask about the price","meeting":"Dabtonog"}`: the agenda card arrives two minutes
+later and the question at minute four; answer it with `/tool record_outcome {"followup_id":"f_…","outcome":"They
+agreed","needs_followup":true,"next_in_minutes":2}` and the chained follow-up (a commitment: a "due now" card at its time, the
+question half a delay later) is asked about two minutes after that. A question nobody answers is asked once more the next
+morning (`ASSISTANT_FOLLOWUP_REASK_TIME`).
+Birthdays fire at the configured times of day (`ASSISTANT_BIRTHDAY_REMIND_TIME`, `ASSISTANT_BIRTHDAY_CHECK_TIME`): save one
+for today with `/tool add_person {"name":"Pema","birthday":"1990-10-25"}` (use today's month and day) and set the check time
+a minute or two ahead. Dev mode also keeps pushes on the machine
 (`ASSISTANT_PUSH_MODE=fake`): after you press **Enable notifications** in Settings, each reminder appends one line per
 subscribed device to `./data-dev/dev-push-outbox.jsonl`, which is what your phone would have been sent.
 
@@ -60,7 +84,7 @@ apps/
 packages/
   shared/        API contracts: DTOs, error shape, stream event types, card types (types, plus tiny constants and guards)
   db/            app.sqlite: node:sqlite wrapper and the migration runner (ids per module), core tables
-  extensions/    Durable extensions the server installs: domain modules `tasks` and `approvals`, and `profile`; more later
+  extensions/    Durable extensions the server installs: domain modules `tasks`, `followups`, `people` and `approvals`, and `profile`; more later
 docs/            PLAN.md (architecture), design-notes.md (security and durability reasoning), handoff and progress notes
 ```
 
@@ -83,7 +107,13 @@ use a systemd unit.
 | `ASSISTANT_MODEL_MODE` | `faux`, or `openai` when `NODE_ENV=production` | `faux` is the scripted dev model; `openai` is gpt via ChatGPT sign-in |
 | `ASSISTANT_PUSH_MODE` | `fake`, or `web-push` when `NODE_ENV=production` | `web-push` sends reminders through the browser vendors' push services (FCM, Apple), the only outbound call a reminder makes. `fake` sends nothing: it appends what it would have sent to `<data>/dev-push-outbox.jsonl` |
 | `ASSISTANT_PUSH_SUBJECT` | `mailto:assistant@localhost` in `fake` mode; **required** in `web-push` mode | How a push service can contact the operator (the VAPID `sub` claim): a `mailto:` or `https:` URL you control, sent with every push. Some push services may refuse a placeholder, so the server will not start in `web-push` mode without one |
-| `ASSISTANT_TIMEZONE` | `Asia/Thimphu` | IANA time zone told to every agent |
+| `ASSISTANT_TIMEZONE` | `Asia/Thimphu` | IANA time zone told to every agent, and the one the times below are in (also across a change of the clock) |
+| `ASSISTANT_AGENDA_LEAD_MINUTES` | `15` | A meeting's agenda is posted this long before it starts, when it has points (1 to 1440). A tool call can set it for one meeting |
+| `ASSISTANT_FOLLOWUP_ASK_DELAY_MINUTES` | `30` | The owner is asked how a meeting went this long after it started, unless it has an end time (1 to 1440) |
+| `ASSISTANT_FOLLOWUP_REASK_TIME` | `09:00` | Local time of day of the one re-ask of a follow-up question nobody answered: the morning after it was asked |
+| `ASSISTANT_FOLLOWUP_DEFAULT_TIME` | `10:00` | Local time of day a follow-up starts when the owner gave a date and no time ("on Monday"); the PA is told it chose it |
+| `ASSISTANT_BIRTHDAY_REMIND_TIME` | `09:00` | Local time of day (24-hour `HH:MM`) of the birthday reminder |
+| `ASSISTANT_BIRTHDAY_CHECK_TIME` | `18:00` | Local time of day of the evening question whether the owner wished them well; later than the reminder |
 | `ASSISTANT_CURRENCY` | `BTN` | ISO 4217 default currency told to every agent |
 | `ASSISTANT_OWNER_NAME` | `the owner` | Your name, as agents address you |
 | `ASSISTANT_PORT` | `3001` | API port. It always binds to `127.0.0.1` |
@@ -138,8 +168,9 @@ first before it touches either database. A lock left behind by a crash is recogn
 
 - **No outbound actions, no bash:** no such tools exist. The file environment's `exec` always fails
   (`apps/server/src/env/scoped-env.ts`).
-- **Deletes need your approval (rule 3):** the model can only ask. `delete_task` is blocked by a `beforeTool` hook in code
-  unless an approved request exists for exactly that task in that conversation, whatever the model says
+- **Deletes need your approval (rule 3):** the model can only ask. `delete_task`, `delete_followup` and `delete_person` are
+  blocked by a `beforeTool` hook in code unless an approved request exists for exactly that task, follow-up or person in that
+  conversation, whatever the model says
   (`packages/extensions/src/approvals`). You answer with the **Approve/Deny** buttons (`POST /api/approvals/:id`) or by
   replying exactly `YES`, which the server handles itself before the model sees it (only when one request is waiting and
   you have sent nothing else since it was made; otherwise use the buttons); the server then carries out the deletion. A
@@ -155,8 +186,9 @@ first before it touches either database. A lock left behind by a crash is recogn
   running beside the server, and removes temp files a crashed write left behind. The data directory is set to 0700 at
   every start.
 - **Pushes carry no content:** a push travels through Google's or Apple's servers, so it says only "Reminder" and
-  "1 reminder" and links to the chat (`packages/extensions/src/tasks/reminder.ts`). Task titles stay on this machine and in
-  the chat. Only `apps/server/src/push/sender.ts` talks to a push service; a subscription it reports gone (404/410) is
+  "1 reminder", "1 meeting is about to start", "1 question: how did it go?" or "1 birthday today" and links to the chat
+  (`reminder.ts`, `followups/task.ts`, `people/task.ts`). Task titles, meeting names, agenda points and people's names stay
+  on this machine and in the chat. Only `apps/server/src/push/sender.ts` talks to a push service; a subscription it reports gone (404/410) is
   deleted.
 - **Network:** the server binds `127.0.0.1` only. For every API request, in both auth modes: the `Host` header must be one
   the server is meant to answer to (the loopback names on its port, plus `ASSISTANT_PUBLIC_HOST`), which defeats DNS
@@ -201,6 +233,17 @@ browser ──/api/*──► Next (dev proxy)  ──►  Hono API ──► Du
   that wakes from suspend catches up (it does not wake itself: [`docs/OPS.md`](docs/OPS.md)). The model learns what time it
   is from the `current_time` tool, works in `ASSISTANT_TIMEZONE`, and times are stored as UTC.
   Reasoning: [`docs/design-notes.md`](docs/design-notes.md).
+- **Follow-ups and birthdays work the same way as reminders** (the `followups` and `people` modules): a row in `app.sqlite`
+  is the truth and a Durable task is its timer, with the repair at start and every ten minutes shared with reminders
+  (`packages/extensions/src/timers.ts`). A meeting's timer sleeps until the agenda is due, posts it only if there are
+  points, sleeps until the end of the meeting and posts the question (a commitment is also nudged when it is due), and asks
+  once more the next morning if nobody answered; the answer comes through the `record_outcome` tool, which resolves it and,
+  when something has to be followed up, creates the next link of the chain. A person's timer wakes in the morning of their
+  birthday and in the evening, then starts next year's; the birthday cards that a power cut took from Durable's database
+  after the cycle had ended are posted again at start. A card that a timer posts is display-only
+  and costs no model call; the `followups` and `people` prompt sections (from the database, no clock beyond the local date)
+  tell the model which questions are open, so "they agreed to a viewing on Friday" and "yes, I did" find what they answer.
+  Reasoning: [`docs/design-notes.md`](docs/design-notes.md).
 - **Parked tasks:** a task cut off by crashes (not by a normal stop) five times in a row is parked by Durable and does
   nothing until retried. The server logs it as an error at every start and the web app shows a banner with a **Retry**
   button (`POST /api/admin/tasks/:id/retry`; from a shell it needs `Content-Type: application/json` even without a body, see
@@ -226,9 +269,19 @@ SIGKILL, and the web reducer and store. M2 added, all with a fake clock and a fa
   rows of a conversation that is gone are reported and do not stop the server;
 - push: the sender gets the minimal payload, a 404/410 removes the subscription, the key file is created 0600, endpoints
   that are not public hosts are refused, the subscription follows the server's key and the push service's changes;
-- the web: reminder, notice, task and approval cards rendered from a recording of the real server, the service worker
+- the web: reminder, notice, task and approval cards rendered from a recording of the real server, the agenda, question and
+  birthday cards, the service worker
   (including addresses that leave the site only after URL parsing), the notification setup, and the API client's approval
   and retry calls.
+
+M3 added, again with a fake clock and a fake push sender: the follow-up life cycle (the agenda only when there are points and
+only before the meeting began, the question after the end time, the chain of follow-ups until one resolves, repair, a
+restart, a crash between posting and recording, Durable's database coming back older than app.sqlite), agenda points matched
+to meetings by words (and the list of candidates when it is ambiguous), the birthday cycle (local morning and evening, skipped
+when wished, 29 February, years missed during a long stop, across a change of the clock), the prompt sections, the
+configuration of the times, and the whole server over HTTP for both. The review fixes added: a YES typed to a question a timer
+asked, birthday cards lost to a power cut (also over the whole server), a birthday corrected within the year, the re-ask, the
+nudge of a commitment, a date without a time, `update_followup`, and which tools the PA is offered.
 
 The web reducer is tested against event streams recorded from the real server (`apps/web/test/fixtures/*.json`; M2 added
 `reminders-approvals.json`: a reminder firing and a deletion approved with the button). Durable's event protocol is

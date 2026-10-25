@@ -1,7 +1,7 @@
 # Personal assistant — implementation plan
 
-Status: approved direction. Milestones 1 and 2 are implemented (see `progress-m1.md`, `progress-m2.md`); this document
-was updated at the end of M2 to describe what was built. Owner: Dorje.
+Status: approved direction. Milestones 1, 2 and 3 are implemented (see `progress-m1.md`, `progress-m2.md`,
+`progress-m3.md`); this document was updated at the end of M3 to describe what was built. Owner: Dorje.
 
 ## 1. Goal
 
@@ -157,6 +157,7 @@ type DomainDeps = {
 	post: EntryPoster; // zero-token write into a conversation (§5.3)
 	notify: (payload: PushPayload) => Promise<void>; // Web Push to every device; never throws
 	approvals: ApprovalService;
+	schedule?: Partial<ScheduleSettings>; // when follow-ups and birthdays fire (ASSISTANT_AGENDA_LEAD_MINUTES, ...); defaults otherwise
 };
 ```
 
@@ -200,11 +201,30 @@ wait --sleepUntil(at)--> fire --(posted memo, requestId reminder:<item>:<gen>)--
 //  fire:   re-checks the row (open, same gen and remind_at; `reminded_at` is not asked, so a timer that a power cut set
 //          back to before its card re-posts it), posts the app.reminder card (zero tokens), marks the row, checkpoints to notify
 //  notify: pushes (at least once; one tag, so a duplicate replaces the banner), then completes
-// Recurrence (birthdays yearly, briefing daily) = on terminal, create the next instance in the same commit.
+// Recurrence (birthdays yearly, briefing daily) = when a cycle ends, the next one goes into the ROW first (a new generation,
+// no timer), then its timer is created; if that fails the periodic repair creates it (every person always wants one).
 
-FollowUp: wait(until event end) -> ask (write app.followup question, push)
-          -> await_outcome (completed by tool record_outcome) -> maybe schedule next FollowUp
-MorningBriefing (daily 07:30 Asia/Thimphu): gather (code) -> submit input to pa ("compose briefing", requestId per date)
+// FollowUp (implemented, `followups` module): one Durable task per meeting or commitment, `app.followup`, input { itemId, gen }.
+agenda_wait --sleepUntil(event - lead)--> agenda_ping --(only with points, only before it began: app.agenda card + push)-->
+  commitment: nudge_wait --sleepUntil(event)--> nudge --(card + push, only while before the question's time)-->
+ask_wait --sleepUntil(end, or event + 30 min)--> ask --(app.followup question card, row -> asked, push)-->
+reask_wait --sleepUntil(next morning 09:00 local)--> reask --(the same question once more, only if still unanswered; card + push)--> terminal
+//  The answer is not a phase: the tool record_outcome resolves the row and, if something has to be followed up, creates the
+//  next link (a commitment with its own timer, parent_id = this one), so the chain runs until one resolves with no follow-up.
+//  update_followup moves or renames one (a new generation when the time changes; agenda points stay). A date given without a
+//  time takes the default time (10:00, `ASSISTANT_FOLLOWUP_DEFAULT_TIME`) and the tool says so (`time_assumed`).
+//  Asked twice at most: what is still unanswered after that is for the morning briefing (M4: list the follow-ups with
+//  status `asked`, they are the open loops), not for a nagging timer.
+// Birthday (implemented, `people` module): one Durable task per person and year, `app.birthday`, input { personId, gen }.
+remind_wait --sleepUntil(09:00 local)--> remind (card + push) --> check_wait --sleepUntil(18:00 local)--> check
+  (question card + push unless the owner said they wished or the birthday is more than 2 days ago; moves the row to next
+  year's cycle, creates that timer) --> terminal
+// Both: the row is the truth, exactly as for reminders (below); the cards are display-only; the phases tolerate a timer that
+// is back from before its own card (design-notes.md: "Follow-ups, agendas and birthdays"). What no timer can repair is a
+// birthday card that Durable's database lost AFTER the cycle ended (the row has moved on): the row keeps the latest morning
+// card and evening question (`reminded_year/at`, `asked_year/at`), and the server posts them again at start (`recoverCards`).
+MorningBriefing (daily 07:30 Asia/Thimphu): gather (code: tasks due, today's meetings and birthdays, open asked follow-ups,
+                inbox digest) -> submit input to pa ("compose briefing", requestId per date)
 EveningWrapUp  (daily 21:00): gather done-log facts (code) -> submit input to pa -> user replies -> pa_journal row
 ```
 
@@ -323,11 +343,23 @@ tasks_item(id TEXT PK /* t_xxxxxxxx */, title, notes, status CHECK(status IN ('o
            durable_task_id INTEGER NULL, reminded_at INTEGER NULL, conversation_id INTEGER,
            source_call_id TEXT UNIQUE, created_at, updated_at, done_at)
 tasks_call(source_call_id TEXT PK, tool, task_id, applied_at)   -- rule 8 for tools that change an existing row
-followups_item(id PK, subject, context, event_at, ask_at, status('waiting','asked','resolved'),
-               outcome TEXT, next_followup_id, source_call_id UNIQUE, ...)
-agenda_item(id PK, followup_id/meeting ref, text, source_call_id UNIQUE, created_at)
-people_person(id PK, name, relation, birthday_md TEXT /* MM-DD */, birthday_year NULL, notes, source_call_id UNIQUE)
-people_wish(person_id, year, wished INTEGER, PRIMARY KEY(person_id, year))
+-- followups (module followups, PA)
+followups_item(id TEXT PK /* f_xxxxxxxx */, title, counterpart, context, kind CHECK(kind IN ('meeting','commitment')),
+               event_at, ends_at NULL, ask_at /* ends_at, or event_at + 30 min */, agenda_lead_minutes /* default 15 */,
+               status CHECK(status IN ('waiting','asked','resolved')), outcome NULL,
+               parent_id NULL REFERENCES followups_item ON DELETE SET NULL, next_followup_id NULL,
+               time_assumed INTEGER /* the owner gave a date and no time: event_at is the default time */,
+               gen, durable_task_id NULL, agenda_pinged_at NULL, asked_at NULL, reasked_at NULL /* the one re-ask */, resolved_at NULL,
+               conversation_id, source_call_id UNIQUE, created_at, updated_at)
+followups_agenda(id INTEGER PK, followup_id REFERENCES followups_item ON DELETE CASCADE, text, source_call_id UNIQUE, created_at)
+followups_call(source_call_id PK, tool, followup_id, applied_at)   -- rule 8 for record_outcome, resolve_followup, update_followup
+-- people (module people, PA; shared profile-level data, only the PA has the tools for now)
+people_person(id TEXT PK /* p_xxxxxxxx */, name, relation, birthday_md TEXT NOT NULL /* MM-DD */, birthday_year NULL, notes,
+              cycle_year, remind_at NULL, check_at,   -- the yearly cycle waiting to run
+              reminded_year NULL, reminded_at NULL, asked_year NULL, asked_at NULL,   -- the latest cards: outlive the cycle
+              gen, durable_task_id NULL, conversation_id, source_call_id UNIQUE, created_at, updated_at)
+people_wish(person_id REFERENCES people_person ON DELETE CASCADE, year, wished INTEGER, recorded_at, PRIMARY KEY(person_id, year))
+people_call(source_call_id PK, tool, person_id, applied_at)   -- rule 8 for update_person, record_wish
 pa_journal(date TEXT PK /* YYYY-MM-DD local */, user_log, auto_summary, carried_over_json)
 
 -- memory / files
@@ -348,7 +380,7 @@ tools (e.g. `add_expense`), not free-form memory.
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
 | **M1 Foundation** (done)                                          | pnpm monorepo; server with Harness (durable.sqlite), app.sqlite + migration runner, config + allowlist validation, `ensureAgents` (all four agents created, only PA has tools beyond profile); HTTP API (agents, messages, stream, abort, history); web chat with sidebar + streaming via assistant-ui; faux-provider dev mode | `pnpm test`, `pnpm typecheck`, `pnpm build` pass; dev mode chat streams from faux model end to end; restart mid-run resumes |
 | M2 Tasks & reminders (done)                                       | tasks extension + Reminder task + zero-token posts + Web Push + approvals for delete                                                                                                                                                                                                                                           | reminder fires after restart, posts card, push sent (mockable)                                                              |
-| M3 Follow-ups, agendas, birthdays, people                         | FollowUp task, agenda capture, yearly birthday                                                                                                                                                                                                                                                                                 | follow-up loop works with fake clock                                                                                        |
+| M3 Follow-ups, agendas, birthdays, people (done)                  | FollowUp task, agenda capture, yearly birthday                                                                                                                                                                                                                                                                                 | follow-up loop works with fake clock                                                                                        |
 | M4 Briefing, wrap-up, journal, share target                       | daily tasks, done-log, PWA share target                                                                                                                                                                                                                                                                                        |                                                                                                                             |
 | M5 Inbox                                                          | Gmail + Calendar read-only (multi-account), Jev triage, digest, handoff to PA                                                                                                                                                                                                                                                  |                                                                                                                             |
 | M6 Health                                                         | weight/lift tables, chart cards                                                                                                                                                                                                                                                                                                |                                                                                                                             |

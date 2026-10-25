@@ -35,7 +35,7 @@ next start and says so in its log (`[tasks] … had no live timer … scheduled 
 
 ## Clearing what the server cannot repair
 
-At start, and every ten minutes while it runs, the server repairs reminders and approval notices that a power cut or a crash
+At start, and every ten minutes while it runs, the server repairs reminders, meetings, birthdays and approval notices that a power cut or a crash
 left inconsistent. One that cannot be repaired does not stop the server: it is logged once per run with the command that
 clears it, for example after `DELETE FROM agents` (which makes new conversations and leaves the old tasks pointing at ones
 Durable no longer has):
@@ -43,11 +43,26 @@ Durable no longer has):
 ```sh
 # the task keeps existing; only its reminder is dropped
 sqlite3 <data>/app.sqlite "UPDATE tasks_item SET remind_at = NULL WHERE id = 't_ab12cd34'"
+# a meeting or a person whose conversation is gone: point it at the assistant's current conversation, and the next repair
+# gives it its timer again
+sqlite3 <data>/app.sqlite "UPDATE followups_item SET conversation_id = (SELECT conversation_id FROM agents WHERE id = 'pa') WHERE id = 'f_ab12cd34'"
+sqlite3 <data>/app.sqlite "UPDATE people_person SET conversation_id = (SELECT conversation_id FROM agents WHERE id = 'pa') WHERE id = 'p_ab12cd34'"
 # the owner's answer is saved; stop trying to write its notice into a thread that is gone
 sqlite3 <data>/app.sqlite "UPDATE pending_actions SET notified_at = 0 WHERE id = 'ap_ab12cd34'"
 ```
 
 Stop the server before editing `app.sqlite` by hand, or at least expect it to be busy for a moment.
+
+Two things the server does without being asked, and does not log unless something is wrong:
+
+- **Birthday cards a power cut took.** A birthday's card is written to `durable.sqlite` (which can lose its last writes in a
+  power cut) and the row moves on to next year in `app.sqlite` (which cannot). At every start the server posts again the
+  evening question of the last 24 hours that nobody answered, and the morning card while its day is not over, with the same
+  request id (a thread that has them keeps one) and no push.
+- **Tasks that cannot run.** `[durable] N task(s) cannot run` at start means Durable has a sleeping timer that no installed
+  definition fits (its extension is gone, or its version has no migration): the reminder, meeting or birthday it stood for is
+  silent. Put back the code that defined it, or add the migration (`docs/design-notes.md`, "Changing a task that may be
+  sleeping"). This is not the parked state and **Retry** does nothing for it.
 
 ## Calling the admin endpoint from a shell
 

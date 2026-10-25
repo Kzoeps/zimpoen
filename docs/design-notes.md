@@ -146,7 +146,12 @@ Rule 3 of the plan (deletes need explicit approval) is enforced in code, in thre
   other message of the owner, because a "yes" typed after "shall I list tomorrow's tasks?" answers that question, not the
   card. Every message that is not taken as an answer closes the YES window of the requests that were waiting
   (`pending_actions.yes_ok`, set by `ApprovalService.tryYes`, the one place every message of the owner passes); the buttons
-  keep working, and the card says so. A resent `requestId` returns the same notice and never approves a second request.
+  keep working, and the card says so. So does every card a module posts by itself: a timer asks yes/no questions of its own
+  ("did you wish Tashi a happy birthday?") at any moment of the 24 hours, and the owner's "yes" to it must not approve a
+  deletion that was waiting before it. The poster the modules get (`closingYesWindow`) closes the window *before* it writes,
+  so a card is never visible while a YES can still approve something; the approval service's own notices use the plain
+  poster. A start-up repair that posts a card again closes the window too (a restart can cost a YES; the button never).
+  A resent `requestId` returns the same notice and never approves a second request.
 
 The outcome notice is display-only (no model text, see [Reminders](#reminders-the-row-is-the-truth)): the model finds out
 whether an approved deletion went through by looking at the list (`list_tasks`), and the tool result of `propose_delete_task`
@@ -183,6 +188,112 @@ A push goes browser vendor → phone, so a subscription has a life of its own th
   would refuse a vendor that is not on the list, and only the owner can send an endpoint (identity, `Host`,
   `Sec-Fetch-Site` and JSON-only rules). A subscription whose `p256dh` is not a valid curve point is still only found out
   when a send fails; nothing prunes it.
+
+## Follow-ups, agendas and birthdays: the reminder design again
+
+M3 adds two more things that wait for a time and then post a card: a meeting (`followups` module) and a person's birthday
+(`people`). They use the design of [Reminders](#reminders-the-row-is-the-truth) unchanged: the row in `app.sqlite` is the
+truth, the Durable task is a timer carrying `{ id, gen }`, a generation is taken before the task exists, `reconcile()` repairs
+the pairing at start and every ten minutes, the cards are display-only writes, and the push is at least once. What they
+share is code (`packages/extensions/src/timers.ts`: `createTimerScheduler`, one `TimerKind` per module); what differs is below.
+
+- **A phase has to tolerate a timer that is back from before its own card.** A reminder has one phase that posts. A meeting
+  has four (`agenda_wait → agenda_ping → ask_wait → ask`), so after a power cut Durable's database can bring the timer back to
+  `agenda_wait` while `app.sqlite` already says the owner was asked. Treating that timer as superseded (the first version
+  did, and a test with a rewound database caught it) would lose the question from the thread. So every phase accepts any row
+  that is not resolved and has the timer's generation; the phases before the post fall through (an agenda that is too late is
+  not posted, and the waits are already past) and `ask` posts again, idempotently. A birthday cannot do the same for the
+  last phase of its cycle: finishing a cycle moves the row on with a new generation, so the rewound timer finds itself
+  superseded and nothing posts the cards again. That one case is repaired by the row, not the timer: it keeps the latest
+  morning card and evening question (`reminded_year/at`, `asked_year/at`, which outlive the cycle), and the server posts
+  them again at start (`recoverCards`: the unanswered evening question of the last 24 hours, the morning card while its day
+  is not over; same `requestId`, so a thread that has them keeps one, no push). Correcting a birthday forgets them.
+- **The `requestId` of a card names what the card is about, not the timer.** `agenda:<followup>:<event time>`,
+  `followup:<followup>:<ask time>[:reask]`, `followup:<followup>:<event time>:nudge`,
+  `birthday:remind|check:<person>:<day>`. The *day*, not the year: a birthday corrected within the year must not have the
+  new day's card swallowed by the old one's. A generation belongs to one timer, and the timer of a later generation (after a
+  repair, say) must not post a second agenda or question for the same meeting; a meeting that moves gets a new time and so
+  a new card.
+- **The agenda is posted only when there are points, and only before the meeting began** (five minutes of grace). A timer that
+  wakes late because the server was down all morning does not post "today's agenda" after the meeting; it goes on to the
+  question, which is still worth asking whenever it is. A point added after the ping time is saved and shown by
+  `list_followups`, and is not posted: there is no one to post it for.
+- **The question is asked, and once more the next morning; the answer is a tool call.** After the question the timer waits
+  for the morning after (09:00 local, `ASSISTANT_FOLLOWUP_REASK_TIME`; the next calendar day, so a question asked at 07:00 is
+  not repeated at 09:00) and asks again if the row is still open, then stops: twice at most, the same card with a different
+  stage. `record_outcome` (or `resolve_followup`) resolves the row and aborts the timer, and `record_outcome` with
+  `needs_followup` creates the next link in the same transaction as the call ledger entry, so a replay makes no second
+  link. A follow-up with no time is an error that tells the model to ask the owner when (the tool never guesses), and so is
+  the contradiction "no follow-up, but here is when". What is still unanswered after the second question stays in the prompt
+  section and in `list_followups`, and is an open loop for the morning briefing (M4), not for a nagging timer. A row that is
+  `asked` and has not been asked again still wants a timer (`WANTS_TIMER`), and one made by the repair for such a row starts
+  at the wait for the re-ask (`input.asked`), so a repair never asks the first question twice.
+- **A commitment is due at its time.** A meeting is something the owner goes to; a commitment ("call the bank on Monday") is
+  something they have to do, so its timer posts a nudge card and push at `event_at`, before the question at `ask_at`. A
+  nudge that would arrive after the time of its question (the server was down) is left out: the question is enough. The
+  nudge has its own push tag, so the question half an hour later does not replace it in the tray.
+- **A date without a time of day takes a default time.** "On Monday" is accepted (`ASSISTANT_FOLLOWUP_DEFAULT_TIME`, 10:00
+  local); the tool's result tells the model it chose the time, so that it tells the owner and can change it with
+  `update_followup`. The choice is saved (`time_assumed`), so a call that Durable replays after a crash says the same, and
+  `list_followups` shows it until the time is confirmed or changed. An end time (`ends_at`) is still required in full.
+- **A meeting that moves keeps its agenda.** `update_followup` changes the title, who it is with and the time. A change of
+  time bumps the generation in the same transaction as the ledger entry (the old timer is stale at once), puts an asked row
+  back to waiting (the question was about a time that is no longer the time) and keeps the agenda points; a meeting that has
+  an end keeps its length unless the new end is given.
+- **A birthday is a yearly cycle kept in the row** (`cycle_year`, `remind_at`, `check_at`). When a cycle begins after its
+  morning moment (a person added at noon on their birthday) the row has no `remind_at`, and the timer goes straight to the
+  evening question. When it wakes late, the reminder is posted only within the day (a reminder to wish someone well tomorrow
+  is no use), and neither card is posted for a birthday the owner said they wished. A recorded "not yet" does not silence
+  the evening question; it is what it is for (and a "not yet" recorded earlier in the day does not count as the answer to
+  the question that came after it). The evening question is also left out for a birthday more than two days ago: after a
+  long stop "did you wish her?" about a birthday of months ago is noise. The cards say the date, so a late one is not
+  mistaken for today's.
+- **Finishing a cycle changes the row first.** The evening phase posts, then moves the row to the next cycle (a new
+  generation, no timer), then creates the successor, then ends. If creating it fails the end of the cycle still happens and
+  the periodic repair creates the timer, because every person always wants one. The next cycle is the first whose evening
+  question is still to come, so a server that was off for two years does not post a card for every birthday it missed, only
+  for the one it was waiting for.
+- **Times of day are wall-clock times in the owner's zone** (`atLocalTime`, built on the same `zonedToUtc` as `parseWhen`), so
+  09:00 is 09:00 on both sides of a change of the clock, and a time the clock skips moves to the later instant. 29 February
+  falls on 28 February in a year without one (`occurrenceDate`).
+- **People are shared data, the cards are not.** `people_person` is profile-level data (other agents may use it later), but
+  for now only the PA has the tools, and a birthday card is posted into the conversation that created the person, like a
+  reminder. Two things assume that the PA is the only one: the pushes link to `/chat/pa` whatever conversation the card
+  went to, and `people_person.notes` is free text with no scope. Before another agent gets `add_person` or `list_people`
+  (M5, M6): link the push to the card's conversation, and give `notes` a scope.
+- **The `people` prompt section is the one that reads the date.** "Birthdays in the next 7 days" cannot be written without
+  one, so it reads the Harness clock for the owner's local *calendar day* and prints absolute dates only: it renders the same
+  bytes all day, and changes when a birthday enters or leaves the week (seven days, today included, like `list_people
+  upcoming_days: 7`), when the evening question is asked or answered (it lists the open ones for three days) or when people
+  change. The `followups` section needs no clock at all. A changed section does not re-render the prompt: Durable appends a
+  system entry holding the section's whole new text, so the prefix stays cacheable and each change costs one such entry
+  until the conversation is compacted (a handful per birthday and year), not a cache miss.
+
+## Which tools the PA is offered
+
+Every tool of the PA is in every request, so the PA carries only what it uses every day: `add_task`, `list_tasks`,
+`complete_task`, `snooze_reminder`, `current_time`, `add_followup`, `add_agenda_point`, `record_outcome`, `add_person`,
+`record_wish`. The rest (`update_task`, `list_followups`, `update_followup`, `resolve_followup`, `list_people`,
+`update_person`, the three `propose_delete_*` and the three `delete_*`) are `deferred: true`: not offered until the model
+loads them with `tool_search` (`@earendil-works/pi-durable/tool-search`, installed with the PA's extensions), which stays
+loaded on that branch, also after a compaction. The PA's instructions name them, or the model would never look.
+
+- **The approval hook does not depend on it.** A deferred `delete_*` tool can still be loaded (a search for "delete a task"
+  finds it) and called, and the hook blocks it exactly as before: the guard is the hook, not the tool's absence.
+- **A call to a tool that is not loaded fails before it runs** ("Tool X is not available"). That includes the dev model's
+  `/tool`: it has to be preceded by `/tool tool_search {"query":"..."}` for these tools (README).
+- **Tests that are about what a tool does** load every deferred tool up front (`openFixture`); the whole-server tests load
+  them the way a model does.
+
+## Changing a task that may be sleeping
+
+A timer can sleep for a year (a birthday). Durable runs it again with whatever definition is installed *then*: a task whose
+`version` does not match, with no `migrate` from the stored one, is **blocked** (`task_too_old`, `migration_failed`), and so
+is one whose extension is gone (`missing_task`). A blocked timer never wakes, and the repair counts it as live, so the
+reminder, meeting or birthday it stood for stops without a word. So: never rename or remove a phase of a task that has
+shipped; add phases (the stored phases stay valid) or bump `version` and write `migrate`. The server logs blocked tasks at
+every start (`[durable] N task(s) cannot run`), separately from the parked ones. The follow-up task grew its nudge and re-ask
+phases before M3 shipped, so it is still version 1.
 
 ## Time in prompts
 
