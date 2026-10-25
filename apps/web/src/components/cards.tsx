@@ -14,6 +14,7 @@ import {
 	type TaskCardItem,
 } from "@assistant/shared";
 import { useAui } from "@assistant-ui/react";
+import Link from "next/link";
 import { useState } from "react";
 import { ApiRequestError, decideApproval, decideSuggestion } from "../lib/api.ts";
 import {
@@ -61,6 +62,7 @@ import {
 	SuggestionSentView,
 	SuggestionView,
 } from "./inbox-cards.tsx";
+import { MemoryCardView, MemoryListView } from "./memory-cards.tsx";
 
 export { FileChip };
 
@@ -100,6 +102,10 @@ export function CardView({ card }: { card: UiCard }) {
 			);
 		case "daily":
 			return <DailyCard data={card.data} />;
+		case "memory":
+			return <MemoryCardView card={card} />;
+		case "memory_list":
+			return <MemoryListView card={card} />;
 		case "journal":
 			return <JournalCardView event={card.event} entries={card.entries} />;
 		case "file":
@@ -274,6 +280,13 @@ function DailyCard({ data }: { data: DailyEntryData }) {
 				<span aria-hidden="true">{icon}</span> {name} <span className="card__muted">· {data.dateText}</span>
 				{data.late === true ? <span className="chip chip--late">sent late</span> : null}
 			</header>
+			{data.degraded !== undefined ? (
+				<p className="card__muted" data-testid="degraded-note">
+					Plain version: this agent has used its weekly token limit ({data.degraded.usedTokens.toLocaleString("en-US")}{" "}
+					of {data.degraded.limitTokens.toLocaleString("en-US")}), so no model wrote this. The facts are below; what you
+					type still gets an answer. <Link href="/usage">Usage and limits</Link>
+				</p>
+			) : null}
 			{data.empty === true ? (
 				<p className="card__title">
 					{digest
@@ -281,7 +294,7 @@ function DailyCard({ data }: { data: DailyEntryData }) {
 						: "Nothing on your list today: no tasks, meetings or birthdays. Enjoy the day."}
 				</p>
 			) : (
-				<details className="card__facts" open={digest}>
+				<details className="card__facts" open={digest || data.degraded !== undefined}>
 					<summary>
 						{digest ? "Mail the assistant picked out" : "What the assistant looked at"}{" "}
 						<span className="card__muted">

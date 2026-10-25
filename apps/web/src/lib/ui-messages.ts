@@ -25,6 +25,8 @@ import {
 	type JournalCard,
 	LATE_ANSWER_ENTRY_KIND,
 	type LateAnswerEntryData,
+	type MemoryCard,
+	type MemoryListCard,
 	NOTICE_ENTRY_KIND,
 	type NoticeEntryData,
 	type PeopleListCard,
@@ -107,6 +109,9 @@ export type UiCard =
 	| (ImportPreviewCard & { answered?: boolean })
 	/** The Inbox agent's cards: mail, events, a note, a suggestion it made, and what the PA's `ask_agent` got back. */
 	| InboxCard
+	/** What `remember` kept and what `recall` found. */
+	| MemoryCard
+	| MemoryListCard
 	/** In the PA's thread: the Inbox suggests a follow-up. The owner's Add or Dismiss settles it (`state`). */
 	| { type: "suggestion"; data: SuggestionEntryData; state: SuggestionCardState }
 	/** In a specialist's thread: the question the PA put to this agent. */

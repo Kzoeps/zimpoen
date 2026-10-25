@@ -1,4 +1,5 @@
 import type {
+	ActivityResponse,
 	AgentSettingsResponse,
 	AgentsResponse,
 	AllAgentSettingsResponse,
@@ -8,7 +9,10 @@ import type {
 	DecideSuggestionRequest,
 	DisconnectGoogleRequest,
 	GoogleSettingsResponse,
+	MemoryFactResponse,
+	MemoryResponse,
 	MessagesPage,
+	ProfileResponse,
 	PushConfigResponse,
 	PushSubscribeRequest,
 	RetryTaskResponse,
@@ -18,9 +22,14 @@ import type {
 	SuggestionDecision,
 	SuggestionState,
 	UpdateAgentSettingsRequest,
+	UpdateBudgetRequest,
+	UpdateMemoryRequest,
+	UpdatePreferencesRequest,
 	UpdateScheduleRequest,
 	UploadResponse,
+	UsageResponse,
 } from "@assistant/shared";
+import { type ActivityQuery, activityQueryString, type MemoryQuery, memoryQueryString } from "./owner-pages.ts";
 
 /** A failed call to the server, with a message fit to show the user. `status` is 0 when the server was unreachable. */
 export class ApiRequestError extends Error {
@@ -123,6 +132,34 @@ export const fetchGoogleSettings = (): Promise<GoogleSettingsResponse> => reques
  */
 export const disconnectGoogleAccount = (email: string): Promise<GoogleSettingsResponse> =>
 	request("/api/settings/google/accounts", json({ email } satisfies DisconnectGoogleRequest, "DELETE"));
+
+/** The owner's pages (M8): the profile and what the assistant remembers, what the agents did, what they spent. */
+export const fetchProfile = (): Promise<ProfileResponse> => request("/api/profile");
+
+export const updatePreferences = (change: UpdatePreferencesRequest): Promise<ProfileResponse> =>
+	request("/api/profile/preferences", json(change, "PUT"));
+
+export const fetchMemory = (query: MemoryQuery): Promise<MemoryResponse> =>
+	request(`/api/memory${memoryQueryString(query)}`);
+
+export const updateMemory = (id: string, change: UpdateMemoryRequest): Promise<MemoryFactResponse> =>
+	request(`/api/memory/${encodeURIComponent(id)}`, json(change, "PATCH"));
+
+/** The owner's own deletion: no approval is asked (rule 3 is about what the assistant deletes). */
+export const deleteMemory = (id: string): Promise<{ removed: boolean }> =>
+	request(`/api/memory/${encodeURIComponent(id)}`, json({}, "DELETE"));
+
+export const fetchActivity = (query: ActivityQuery): Promise<ActivityResponse> =>
+	request(`/api/activity${activityQueryString(query)}`);
+
+export const fetchUsage = (): Promise<UsageResponse> => request("/api/usage");
+
+/** Set an agent's weekly token limit (`null`: none). Answers with the dashboard as it is now. */
+export const updateBudget = (agent: string, weeklyTokens: number | null): Promise<UsageResponse> =>
+	request(
+		`/api/settings/budget/${encodeURIComponent(agent)}`,
+		json({ weeklyTokens } satisfies UpdateBudgetRequest, "PUT"),
+	);
 
 /** Where an uploaded file can be opened: images are shown, everything else downloads. */
 export const fileUrl = (id: string): string => `/api/files/${encodeURIComponent(id)}`;

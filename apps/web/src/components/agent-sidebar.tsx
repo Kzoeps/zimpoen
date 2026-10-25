@@ -4,6 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useChat } from "./chat-context.tsx";
 
+/** The owner's own pages, under the agents: what the assistant knows about them, did, and spent. */
+const OWNER_PAGES = [
+	{ href: "/profile", label: "Profile", icon: "👤" },
+	{ href: "/activity", label: "Activity", icon: "📋" },
+	{ href: "/usage", label: "Usage", icon: "📊" },
+] as const;
+
 export function AgentSidebar() {
 	const { agents, error } = useChat();
 	const pathname = usePathname();
@@ -33,6 +40,19 @@ export function AgentSidebar() {
 					);
 				})}
 			</ul>
+			{OWNER_PAGES.map((page) => (
+				<Link
+					key={page.href}
+					href={page.href}
+					className={`agent${pathname === page.href ? " agent--active" : ""}`}
+					aria-current={pathname === page.href ? "page" : undefined}
+				>
+					<span className="agent__avatar" aria-hidden="true">
+						{page.icon}
+					</span>
+					<span className="agent__name">{page.label}</span>
+				</Link>
+			))}
 			<Link
 				href="/settings"
 				className={`agent agent--settings${pathname === "/settings" ? " agent--active" : ""}`}

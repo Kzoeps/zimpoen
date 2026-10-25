@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentSummary, ServerHealth } from "@assistant/shared";
+import type { AgentSummary, BudgetHealth, ServerHealth } from "@assistant/shared";
 import { useCallback, useEffect, useState } from "react";
 import { ApiRequestError, fetchAgents } from "./api.ts";
 
@@ -11,6 +11,8 @@ export type AgentsState = {
 	agents: AgentSummary[] | undefined;
 	/** What the server says about itself; undefined until the first answer. */
 	health: ServerHealth | undefined;
+	/** The agents that reached their weekly token limit; undefined until the first answer. */
+	budget: BudgetHealth | undefined;
 	error: string | undefined;
 	refresh: () => void;
 };
@@ -22,6 +24,7 @@ export type AgentsState = {
 export function useAgents(): AgentsState {
 	const [agents, setAgents] = useState<AgentSummary[]>();
 	const [health, setHealth] = useState<ServerHealth>();
+	const [budget, setBudget] = useState<BudgetHealth>();
 	const [error, setError] = useState<string>();
 
 	const refresh = useCallback(() => {
@@ -29,6 +32,7 @@ export function useAgents(): AgentsState {
 			(next) => {
 				setAgents(next.agents);
 				setHealth(next.health);
+				setBudget(next.budget);
 				setError(undefined);
 			},
 			(failure: unknown) =>
@@ -49,5 +53,5 @@ export function useAgents(): AgentsState {
 		};
 	}, [refresh]);
 
-	return { agents, health, error, refresh };
+	return { agents, health, budget, error, refresh };
 }

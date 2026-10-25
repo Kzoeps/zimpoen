@@ -1737,3 +1737,160 @@ button {
 	font-size: 13px;
 	overflow-wrap: anywhere;
 }
+
+/* The owner's pages (M8): profile and memory, activity, usage */
+
+.owner-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.owner-tab,
+.owner-button,
+.owner-select {
+	padding: 6px 12px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+	font-size: 14px;
+	cursor: pointer;
+}
+
+.owner-tab[aria-pressed="true"] {
+	border-color: transparent;
+	background: var(--accent);
+	color: var(--accent-text);
+}
+
+.owner-button:disabled,
+.owner-select:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.owner-button--danger {
+	color: var(--danger);
+}
+
+.owner-input,
+.owner-textarea {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 9px 10px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: var(--bg);
+	color: var(--text);
+	font: inherit;
+}
+
+.owner-limit {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+}
+
+.owner-limit .owner-input {
+	flex: 1 1 160px;
+	width: auto;
+	min-width: 0;
+}
+
+.owner-filters {
+	gap: 6px;
+	font-size: 14px;
+}
+
+.owner-list {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.owner-row {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 10px 0;
+	border-top: 1px solid var(--border);
+	overflow-wrap: anywhere;
+}
+
+.owner-row:first-child {
+	border-top: 0;
+}
+
+.owner-row__text {
+	margin: 0;
+}
+
+.owner-row--failed .owner-row__text {
+	color: var(--danger);
+}
+
+.owner-row__meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 10px;
+	margin: 0;
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+.owner-row__actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	font-size: 14px;
+}
+
+.usage-figure {
+	margin: 0;
+}
+
+.usage-bar {
+	height: 8px;
+	border-radius: 999px;
+	background: var(--border);
+	overflow: hidden;
+}
+
+.usage-bar__fill {
+	height: 100%;
+	border-radius: 999px;
+	background: var(--accent);
+}
+
+.usage-bar__fill--over {
+	background: var(--danger);
+}
+
+.usage-history {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	font-size: 14px;
+}
+
+.usage-history__row {
+	display: grid;
+	grid-template-columns: minmax(80px, 110px) 1fr auto;
+	align-items: center;
+	gap: 8px;
+}
+
+@media (max-width: 760px) {
+	.usage-history__row {
+		grid-template-columns: 1fr;
+		gap: 2px;
+	}
+}

@@ -1,6 +1,7 @@
 "use client";
 
-import type { ServerHealth } from "@assistant/shared";
+import type { BudgetHealth, ServerHealth } from "@assistant/shared";
+import Link from "next/link";
 import { type ReactNode, useMemo, useState } from "react";
 import { ApiRequestError, retryTask } from "../lib/api.ts";
 import { createThreadStore } from "../lib/thread-store.ts";
@@ -10,9 +11,12 @@ import { ChatContext } from "./chat-context.tsx";
 
 /** Sidebar plus the open thread. Lives in the layout, so switching agents keeps the sidebar and its polling. */
 export function ChatShell({ children }: { children: ReactNode }) {
-	const { agents, health, error, refresh } = useAgents();
+	const { agents, health, budget, error, refresh } = useAgents();
 	const [store] = useState(createThreadStore);
-	const value = useMemo(() => ({ agents, health, error, refresh, store }), [agents, health, error, refresh, store]);
+	const value = useMemo(
+		() => ({ agents, health, budget, error, refresh, store }),
+		[agents, health, budget, error, refresh, store],
+	);
 
 	return (
 		<ChatContext.Provider value={value}>
@@ -20,6 +24,7 @@ export function ChatShell({ children }: { children: ReactNode }) {
 				<AgentSidebar />
 				<main className="main">
 					{health !== undefined && health.parkedTasks > 0 ? <ParkedBanner health={health} refresh={refresh} /> : null}
+					{budget !== undefined && budget.over.length > 0 ? <BudgetBanner budget={budget} /> : null}
 					{children}
 				</main>
 			</div>
@@ -64,6 +69,24 @@ function ParkedBanner({ health, refresh }: { health: ServerHealth; refresh: () =
 				{retrying ? "Retrying…" : "Retry"}
 			</button>
 			{error !== undefined ? ` ${error}` : null}
+		</p>
+	);
+}
+
+/**
+ * An agent has used its weekly token limit. A soft limit: the briefing, the wrap-up and the digests of that agent are plain
+ * cards (no model, no tokens) until the week turns on Monday, and whatever the owner types still gets an answer.
+ */
+export function BudgetBanner({ budget }: { budget: BudgetHealth }) {
+	const names = budget.over.map((alert) => alert.name).join(" and ");
+	const [first] = budget.over;
+	return (
+		<p className="banner banner--error" role="alert" data-testid="budget-banner">
+			{names} {budget.over.length === 1 ? "has" : "have"} used {budget.over.length === 1 ? "its" : "their"} weekly token
+			limit
+			{first === undefined ? "" : ` (${first.used.toLocaleString("en-US")} of ${first.limit.toLocaleString("en-US")})`}.
+			Briefings, wrap-ups and digests are plain cards until Monday; what you type still gets an answer.{" "}
+			<Link href="/usage">Usage and limits</Link>
 		</p>
 	);
 }

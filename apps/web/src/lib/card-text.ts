@@ -117,9 +117,15 @@ export function cardSummary(card: UiCard): string {
 			return `Approval needed: ${card.summary}`;
 		case "daily": {
 			const name = DAILY_LABEL[card.data.job].name;
+			if (card.data.degraded !== undefined)
+				return `${name}, ${card.data.dateText} (plain version: the weekly token limit was reached)`;
 			if (card.data.empty !== true) return `${name}, ${card.data.dateText}`;
 			return `${name}, ${card.data.dateText}: nothing ${isDigest(card.data.job) ? "new" : "today"}`;
 		}
+		case "memory":
+			return `${card.event === "saved" ? "Remembered" : "Already remembered"}: ${card.fact.text}`;
+		case "memory_list":
+			return `${card.heading}: ${card.total}`;
 		case "journal":
 			return `${JOURNAL_EVENT_LABEL[card.event]}: ${card.entries.map((entry) => entry.date).join(", ")}`;
 		case "file":
