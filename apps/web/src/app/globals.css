@@ -603,6 +603,27 @@ button {
 	border-left: 4px solid var(--accent);
 }
 
+.card--agenda {
+	border-left: 4px solid var(--accent);
+}
+
+.card--followup {
+	border-left: 4px solid var(--text-muted);
+}
+
+.card--birthday {
+	border-left: 4px solid #d9a441;
+}
+
+.points {
+	margin: 6px 0 0;
+	padding-left: 1.4em;
+}
+
+.points li {
+	padding: 1px 0;
+}
+
 .card--notice {
 	background: transparent;
 	border-style: dashed;

@@ -1,18 +1,40 @@
 "use client";
 
-import type { TaskCardItem } from "@assistant/shared";
+import type {
+	AgendaEntryData,
+	BirthdayEntryData,
+	FollowupCardItem,
+	FollowupEntryData,
+	PersonCardItem,
+	TaskCardItem,
+} from "@assistant/shared";
+import { useAui } from "@assistant-ui/react";
 import { useState } from "react";
 import { ApiRequestError, decideApproval } from "../lib/api.ts";
-import { TASK_EVENT_LABEL } from "../lib/card-text.ts";
+import { FOLLOWUP_EVENT_LABEL, PERSON_EVENT_LABEL, TASK_EVENT_LABEL } from "../lib/card-text.ts";
 import type { ApprovalCardState, UiCard } from "../lib/ui-messages.ts";
 
-/** One non-chat item of the thread: a reminder, a notice, a task, a task list, or a request for approval. */
+/** One non-chat item of the thread: a reminder, an agenda, a question, a birthday, a notice, a task, a follow-up, a person, a list, or a request for approval. */
 export function CardView({ card }: { card: UiCard }) {
 	switch (card.type) {
 		case "reminder":
 			return <ReminderCard data={card.data} />;
 		case "notice":
 			return <NoticeCard text={card.data.text} level={card.data.level} />;
+		case "agenda":
+			return <AgendaCard data={card.data} />;
+		case "followup_question":
+			return <FollowupQuestionCard data={card.data} answered={card.answered === true} />;
+		case "birthday":
+			return <BirthdayCard data={card.data} answered={card.answered === true} />;
+		case "followup":
+			return <FollowupToolCard event={card.event} followup={card.followup} next={card.next} />;
+		case "followup_list":
+			return <FollowupListCardView heading={card.heading} followups={card.followups} total={card.total} />;
+		case "person":
+			return <PersonToolCard event={card.event} person={card.person} wished={card.wished} year={card.year} />;
+		case "people_list":
+			return <PeopleListCardView heading={card.heading} people={card.people} total={card.total} />;
 		case "task":
 			return <TaskCardView event={card.event} task={card.task} />;
 		case "task_list":
@@ -170,6 +192,265 @@ function ApprovalCardView({
 					{OUTCOME_LABEL[state.status]}
 				</p>
 			)}
+		</section>
+	);
+}
+
+/** The agenda of a meeting, posted shortly before it starts. */
+function AgendaCard({ data }: { data: AgendaEntryData }) {
+	return (
+		<section className="card card--agenda" aria-label="Agenda">
+			<header className="card__head">
+				<span aria-hidden="true">📋</span> {data.today ? "Today's agenda" : "Agenda"}
+			</header>
+			<p className="card__title">{data.title}</p>
+			<p className="card__muted">
+				{data.counterpart !== undefined ? `${data.counterpart} · ` : ""}
+				{data.eventAtText}
+			</p>
+			<ol className="points">
+				{data.points.map((point, index) => (
+					// Points are plain text in the order they were added; the same wording twice is two points.
+					// biome-ignore lint/suspicious/noArrayIndexKey: the list is fixed once posted
+					<li key={index}>{point}</li>
+				))}
+			</ol>
+		</section>
+	);
+}
+
+/**
+ * What a follow-up says by itself: the nudge when a commitment is due, the question after a meeting or commitment, and
+ * that question once more the next morning. The answer goes through the chat: the button only starts the sentence.
+ */
+function FollowupQuestionCard({ data, answered }: { data: FollowupEntryData; answered: boolean }) {
+	const aui = useAui();
+	const startAnswer = (): void => aui.thread().composer().setText(`Outcome of “${data.title}”: `);
+	const about = (
+		<p className="card__muted">
+			{data.kind === "meeting" ? "Meeting" : "Commitment"}
+			{data.counterpart !== undefined ? ` with ${data.counterpart}` : ""} · {data.eventAtText}
+		</p>
+	);
+	if (data.stage === "nudge") {
+		return (
+			<section className="card card--followup" aria-label="Follow-up due">
+				<header className="card__head">
+					<span aria-hidden="true">⏰</span> Due now
+				</header>
+				<p className="card__title">{data.title}</p>
+				{about}
+				{data.context !== undefined ? <p className="card__muted">{data.context}</p> : null}
+			</section>
+		);
+	}
+	return (
+		<section className="card card--followup" aria-label="Follow-up question">
+			<header className="card__head">
+				<span aria-hidden="true">💬</span>{" "}
+				{data.stage === "reask" ? "Still open" : data.chained ? "Follow-up of a follow-up" : "Follow-up"}
+			</header>
+			<p className="card__title">How did it go? {data.title}</p>
+			{about}
+			{answered ? (
+				<p className="card__muted">Answered.</p>
+			) : (
+				<>
+					<p className="card__muted">
+						{data.stage === "reask" ? "I asked yesterday and have not heard back. " : ""}
+						Tell me what happened, and whether it needs a follow-up and when. I will remember it and ask again then.
+					</p>
+					<div className="card__actions">
+						<button type="button" className="card__button card__button--primary" onClick={startAnswer}>
+							Record outcome
+						</button>
+					</div>
+				</>
+			)}
+		</section>
+	);
+}
+
+/** The morning reminder to wish someone well, or the evening question whether the owner did. */
+function BirthdayCard({ data, answered }: { data: BirthdayEntryData; answered: boolean }) {
+	const aui = useAui();
+	const answer = (wished: boolean): void =>
+		aui
+			.thread()
+			.composer()
+			.setText(wished ? `Yes, I wished ${data.name}.` : `No, not yet: I have not wished ${data.name}.`);
+	return (
+		<section className="card card--birthday" aria-label="Birthday">
+			<header className="card__head">
+				<span aria-hidden="true">🎂</span> Birthday
+			</header>
+			<p className="card__title">
+				{data.stage === "remind" ? `Wish ${data.name} a happy birthday` : `Did you wish ${data.name} a happy birthday?`}
+			</p>
+			<p className="card__muted">
+				{data.relation !== undefined ? `${data.relation} · ` : ""}
+				{data.dateText}
+				{data.turns !== undefined ? ` · turns ${data.turns}` : ""}
+			</p>
+			{data.stage === "check" && answered ? <p className="card__muted">Answered.</p> : null}
+			{data.stage === "check" && !answered ? (
+				<div className="card__actions">
+					<button type="button" className="card__button card__button--primary" onClick={() => answer(true)}>
+						Yes, I did
+					</button>
+					<button type="button" className="card__button" onClick={() => answer(false)}>
+						Not yet
+					</button>
+				</div>
+			) : null}
+		</section>
+	);
+}
+
+function FollowupLine({ item }: { item: FollowupCardItem }) {
+	const mark = item.status === "resolved" ? "✓" : item.status === "asked" ? "?" : "○";
+	return (
+		<li className={`task${item.status === "resolved" ? " task--done" : ""}`}>
+			<span className="task__mark" aria-hidden="true">
+				{mark}
+			</span>
+			<span className="task__body">
+				<span className="task__title">{item.title}</span>
+				<span className="card__muted">
+					{item.counterpart !== undefined ? ` · ${item.counterpart}` : ""} · {item.eventText}
+					{item.status === "asked" ? " · waiting for the outcome" : ""}
+				</span>
+				{item.agenda.length > 0 ? (
+					<ol className="points">
+						{item.agenda.map((point, index) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: the list is fixed once posted
+							<li key={index}>{point}</li>
+						))}
+					</ol>
+				) : null}
+				{item.outcome !== undefined ? <span className="card__muted">Outcome: {item.outcome}</span> : null}
+			</span>
+		</li>
+	);
+}
+
+function FollowupToolCard({
+	event,
+	followup,
+	next,
+}: {
+	event: keyof typeof FOLLOWUP_EVENT_LABEL;
+	followup: FollowupCardItem;
+	next: FollowupCardItem | undefined;
+}) {
+	return (
+		<section className="card card--followup" aria-label={FOLLOWUP_EVENT_LABEL[event]}>
+			<header className="card__head">{FOLLOWUP_EVENT_LABEL[event]}</header>
+			<ul className="tasks">
+				<FollowupLine item={followup} />
+			</ul>
+			{next !== undefined ? (
+				<>
+					<p className="card__muted">Next follow-up</p>
+					<ul className="tasks">
+						<FollowupLine item={next} />
+					</ul>
+				</>
+			) : null}
+		</section>
+	);
+}
+
+function FollowupListCardView({
+	heading,
+	followups,
+	total,
+}: {
+	heading: string;
+	followups: FollowupCardItem[];
+	total: number;
+}) {
+	return (
+		<section className="card card--followup" aria-label={heading}>
+			<header className="card__head">
+				{heading} <span className="card__muted">({total})</span>
+			</header>
+			{followups.length === 0 ? (
+				<p className="card__muted">Nothing here.</p>
+			) : (
+				<ul className="tasks">
+					{followups.map((item) => (
+						<FollowupLine key={item.id} item={item} />
+					))}
+				</ul>
+			)}
+			{total > followups.length ? <p className="card__muted">…and {total - followups.length} more</p> : null}
+		</section>
+	);
+}
+
+function PersonLine({ person }: { person: PersonCardItem }) {
+	return (
+		<li className="task">
+			<span className="task__mark" aria-hidden="true">
+				🎂
+			</span>
+			<span className="task__body">
+				<span className="task__title">{person.name}</span>
+				<span className="card__muted">
+					{person.relation !== undefined ? ` · ${person.relation}` : ""} · {person.birthdayText} · next{" "}
+					{person.nextText}
+					{person.turns !== undefined ? ` (turns ${person.turns})` : ""}
+				</span>
+			</span>
+		</li>
+	);
+}
+
+function PersonToolCard({
+	event,
+	person,
+	wished,
+	year,
+}: {
+	event: keyof typeof PERSON_EVENT_LABEL;
+	person: PersonCardItem;
+	wished: boolean | undefined;
+	year: number | undefined;
+}) {
+	return (
+		<section className="card card--birthday" aria-label={PERSON_EVENT_LABEL[event]}>
+			<header className="card__head">{PERSON_EVENT_LABEL[event]}</header>
+			{event === "wish" ? (
+				<p className="card__title">
+					{wished === true ? "You wished" : "You have not yet wished"} {person.name}
+					{year !== undefined ? ` (${year})` : ""}
+				</p>
+			) : (
+				<ul className="tasks">
+					<PersonLine person={person} />
+				</ul>
+			)}
+		</section>
+	);
+}
+
+function PeopleListCardView({ heading, people, total }: { heading: string; people: PersonCardItem[]; total: number }) {
+	return (
+		<section className="card card--birthday" aria-label={heading}>
+			<header className="card__head">
+				{heading} <span className="card__muted">({total})</span>
+			</header>
+			{people.length === 0 ? (
+				<p className="card__muted">Nobody here.</p>
+			) : (
+				<ul className="tasks">
+					{people.map((person) => (
+						<PersonLine key={person.id} person={person} />
+					))}
+				</ul>
+			)}
+			{total > people.length ? <p className="card__muted">…and {total - people.length} more</p> : null}
 		</section>
 	);
 }

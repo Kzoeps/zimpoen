@@ -1,9 +1,19 @@
 import {
+	AGENDA_ENTRY_KIND,
+	type AgendaEntryData,
 	type ApprovalOutcome,
 	type AssistantChatMessage,
+	BIRTHDAY_ENTRY_KIND,
+	type BirthdayEntryData,
 	type EntryRecord,
+	FOLLOWUP_ENTRY_KIND,
+	type FollowupCard,
+	type FollowupEntryData,
+	type FollowupListCard,
 	NOTICE_ENTRY_KIND,
 	type NoticeEntryData,
+	type PeopleListCard,
+	type PersonCard,
 	REMINDER_ENTRY_KIND,
 	type ReminderEntryData,
 	type TaskCard,
@@ -40,8 +50,18 @@ export type ApprovalCardState =
 export type UiCard =
 	| { type: "reminder"; data: ReminderEntryData }
 	| { type: "notice"; data: NoticeEntryData }
+	/** The agenda of a meeting, posted shortly before it. */
+	| { type: "agenda"; data: AgendaEntryData }
+	/** What a follow-up says by itself: a commitment is due, how did it go? (and once more the next morning). */
+	| { type: "followup_question"; data: FollowupEntryData; answered?: true }
+	/** The morning reminder or the evening question of a birthday. */
+	| { type: "birthday"; data: BirthdayEntryData; answered?: true }
 	| TaskListCard
 	| TaskCard
+	| FollowupCard
+	| FollowupListCard
+	| PersonCard
+	| PeopleListCard
 	| { type: "approval"; actionId: string; summary: string; expiresAt: number; state: ApprovalCardState };
 
 export type UiMessage =
@@ -78,7 +98,36 @@ export function toUiMessages(
 	};
 	for (const entry of state.entries) push(withExplanation(entryToMessage(entry), explanations.get(entry.id)));
 	if (state.draft !== undefined) push(assistantToMessage(state.draft, { type: "running" }, "draft"));
-	return resolveApprovals(markInterrupted(messages), approvalOutcomes(state.entries), now);
+	return resolveAnswers(resolveApprovals(markInterrupted(messages), approvalOutcomes(state.entries), now));
+}
+
+/**
+ * Mark the questions the thread shows as answered: a follow-up question once a later card records its outcome or closes
+ * it, an evening birthday question once a later card records the wish for that birthday ("not yet" is an answer too).
+ * Entries are immutable, so a question card cannot say so itself; without this its buttons stay live and a later tap ends in
+ * the model's "already resolved".
+ */
+function resolveAnswers(messages: UiMessage[]): UiMessage[] {
+	const closed = new Set<string>();
+	const wished = new Set<string>();
+	// Newest first, so that every card has been seen by the time the question it answers is reached.
+	return messages
+		.toReversed()
+		.map((message): UiMessage => {
+			if (message.role !== "system") return message;
+			const { card } = message;
+			if (card.type === "followup" && (card.event === "outcome" || card.event === "resolved")) {
+				closed.add(card.followup.id);
+			} else if (card.type === "person" && card.event === "wish" && card.year !== undefined) {
+				wished.add(`${card.person.id}:${card.year}`);
+			} else if (card.type === "followup_question" && closed.has(card.data.followupId)) {
+				return { ...message, card: { ...card, answered: true } };
+			} else if (card.type === "birthday" && wished.has(`${card.data.personId}:${card.data.year}`)) {
+				return { ...message, card: { ...card, answered: true } };
+			}
+			return message;
+		})
+		.toReversed();
 }
 
 type Decided = Exclude<ApprovalCardState, { status: "pending" | "expired" }>;
@@ -166,8 +215,22 @@ function convertEntry(entry: EntryRecord): UiMessage | null {
 	return null;
 }
 
-/** The card an entry shows, if it is one: a reminder, a notice, or a tool result that carries a typed card. */
+/** The card an entry shows, if it is one: a reminder, an agenda, a question, a birthday, a notice, or a tool result that carries a typed card. */
 function cardOf(entry: EntryRecord): UiCard | undefined {
+	if (entry.kind === AGENDA_ENTRY_KIND) {
+		const data = entry.data as Partial<AgendaEntryData> | undefined;
+		return typeof data?.title === "string" && Array.isArray(data.points)
+			? { type: "agenda", data: data as AgendaEntryData }
+			: undefined;
+	}
+	if (entry.kind === FOLLOWUP_ENTRY_KIND) {
+		const data = entry.data as Partial<FollowupEntryData> | undefined;
+		return typeof data?.title === "string" ? { type: "followup_question", data: data as FollowupEntryData } : undefined;
+	}
+	if (entry.kind === BIRTHDAY_ENTRY_KIND) {
+		const data = entry.data as Partial<BirthdayEntryData> | undefined;
+		return typeof data?.name === "string" ? { type: "birthday", data: data as BirthdayEntryData } : undefined;
+	}
 	if (entry.kind === REMINDER_ENTRY_KIND) {
 		const data = entry.data as Partial<ReminderEntryData> | undefined;
 		return typeof data?.title === "string" ? { type: "reminder", data: data as ReminderEntryData } : undefined;
@@ -184,10 +247,11 @@ function cardOf(entry: EntryRecord): UiCard | undefined {
 	return card.type === "approval" ? { ...card, state: { status: "pending" } } : card;
 }
 
-/** When the card happened: a reminder's own firing time, otherwise the entry's message time. */
+/** When the card happened: the time a timer posted it, otherwise the entry's message time. */
 function cardTime(entry: EntryRecord): number {
 	const data = entry.data as { firedAt?: unknown } | undefined;
-	if (entry.kind === REMINDER_ENTRY_KIND && typeof data?.firedAt === "number") return data.firedAt;
+	const posted = [REMINDER_ENTRY_KIND, AGENDA_ENTRY_KIND, FOLLOWUP_ENTRY_KIND, BIRTHDAY_ENTRY_KIND];
+	if (posted.includes(entry.kind) && typeof data?.firedAt === "number") return data.firedAt;
 	const timestamp = entry.model?.[0]?.timestamp;
 	return typeof timestamp === "number" ? timestamp : 0;
 }
