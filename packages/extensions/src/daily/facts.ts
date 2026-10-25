@@ -14,6 +14,11 @@ export type DayWindow = {
 	/** The Harness clock when the job runs. */
 	now: number;
 	timezone: string;
+	/**
+	 * Which job is asking, when a job is: a provider whose facts are "what came in since the last run" (the inbox digests)
+	 * keeps its own window per job and day. Absent when something other than a job reads the facts.
+	 */
+	job?: string;
 };
 
 export function dayWindow(date: string, now: number, timezone: string): DayWindow {
@@ -40,6 +45,8 @@ export type DailyFactsProvider = {
 	briefing?: (day: DayWindow) => readonly DailySection[];
 	/** What the system knows happened today: the evening wrap-up. */
 	wrapup?: (day: DayWindow) => readonly DailySection[];
+	/** What came in since the last digest and wants the owner's attention: the inbox digests. */
+	digest?: (day: DayWindow) => readonly DailySection[];
 };
 
 /** Most lines of one section. A day with sixty open tasks is not a briefing; the rest is one line that says how many. */
@@ -65,7 +72,7 @@ export type CollectedFacts = {
 /** The sections of every provider for one job, in provider order. */
 export function collectFacts(
 	providers: readonly DailyFactsProvider[],
-	job: "briefing" | "wrapup",
+	job: "briefing" | "wrapup" | "digest",
 	day: DayWindow,
 ): CollectedFacts {
 	const collected: CollectedFacts = { sections: [], failures: [] };

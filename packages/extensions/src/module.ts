@@ -5,6 +5,7 @@ import type { ConversationId, Extension, Harness } from "@earendil-works/pi-dura
 import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import type { ApprovalAction, ApprovalService } from "./approvals/service.ts";
 import type { DailyFactsProvider } from "./daily/facts.ts";
+import type { InboxDeps } from "./inbox/types.ts";
 import type { ScheduleSettings } from "./schedule.ts";
 
 /** What a domain module may ask of the server it runs in. Built once by the server and shared by every module. */
@@ -46,7 +47,18 @@ export type DomainDeps = {
 	health?: HealthDeps;
 	/** What the Accountant's modules need: the owner's currency and name, and where invoices are made. Omitted: the Ngultrum, no name, no invoices. */
 	accountant?: AccountantDeps;
+	/** What the Inbox module reads Google through, and how it classifies mail. Omitted: its tools say that Google is not set up, and nothing syncs. */
+	inbox?: InboxDeps;
+	/** How the PA's `ask_agent` waits. Omitted: {@link DEFAULT_ASK_TIMEOUT_MS}. */
+	delegate?: DelegateDeps;
 };
+
+export type DelegateDeps = {
+	/** How long `ask_agent` waits for the other agent's answer before it tells the PA that the agent is still working. */
+	timeoutMs?: number;
+};
+
+export const DEFAULT_ASK_TIMEOUT_MS = 90_000;
 
 export type AccountantDeps = {
 	/** ISO 4217 code of the owner's currency (`ASSISTANT_CURRENCY`, BTN by default): what an account, an entry or an invoice is in unless said otherwise. */

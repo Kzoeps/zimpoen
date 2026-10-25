@@ -198,7 +198,19 @@ export const dailyModule: DailyModule = {
 
 export type { DailyFactsProvider, DayWindow } from "./facts.ts";
 export { collectFacts, dayWindow } from "./facts.ts";
-export { BRIEFING_JOB, BRIEFING_PUSH, DAILY_JOBS, DAILY_URL, type DailyJob, WRAPUP_JOB, WRAPUP_PUSH } from "./jobs.ts";
+export {
+	BRIEFING_JOB,
+	BRIEFING_PUSH,
+	DAILY_JOBS,
+	DAILY_URL,
+	type DailyJob,
+	DIGEST_EVENING_JOB,
+	DIGEST_MIDDAY_JOB,
+	DIGEST_PUSH,
+	DIGEST_URL,
+	WRAPUP_JOB,
+	WRAPUP_PUSH,
+} from "./jobs.ts";
 export { nextOccurrence, occurrenceOn, TIME_OF_DAY } from "./occurrence.ts";
 export { endsWithDailyRequest, renderRequest, renderSections } from "./run.ts";
 export { type DailyService, InvalidDailyTime, UnknownDailyJob } from "./service.ts";

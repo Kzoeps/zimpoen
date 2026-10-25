@@ -6,7 +6,7 @@ import type { TimerScheduler } from "../timers.ts";
 import type { DailyFactsProvider } from "./facts.ts";
 import { type DailyJob, jobOf } from "./jobs.ts";
 import { nextOccurrence, occurrenceOn } from "./occurrence.ts";
-import { buildPlan, type DailyPlan, deliver } from "./run.ts";
+import { buildPlan, type DailyPlan, deliver, pushesFor } from "./run.ts";
 import * as store from "./store.ts";
 
 /** Durable task kind of a daily job's timer. Stored in task records, so renaming it orphans timers that are waiting. */
@@ -149,7 +149,7 @@ export function createDailyTask(
 				);
 				const plan = await runtime.memo<DailyPlan>(`plan:${row.dueDate}`, candidate, context);
 				const { asked } = await deliver(deps, job, plan, { conversationId, date: row.dueDate, firedAt: row.dueAt });
-				await push(runtime, job.push);
+				if (pushesFor(job, plan)) await push(runtime, job.push);
 				await startNext(row, job, task.input.gen, runtime, now, { date: row.dueDate, at: now });
 				await finish(runtime, { done: true, date: row.dueDate, late: plan.late, asked }, context);
 			},

@@ -17,13 +17,28 @@ export type DailyJob = {
 	 */
 	lateMinutes: number;
 	/** Which facts the providers are asked for. */
-	facts: "briefing" | "wrapup";
+	facts: "briefing" | "wrapup" | "digest";
 	/** A day with nothing to say: post a card and spend no tokens (true), or ask the model anyway (false). */
 	cardWhenEmpty: boolean;
 	/** Generic on purpose: a push passes through Google's or Apple's servers. */
 	push: PushPayload;
-	/** The conversation it posts into. */
-	agent: "pa";
+	/**
+	 * Whether a run that has nothing to say (its card stands alone and the model is not asked) still pushes. Default true.
+	 * False for the inbox digests: twice a day a push that means "nothing" teaches the owner to ignore the one that matters.
+	 */
+	pushWhenEmpty?: boolean;
+	/** The conversation it posts into: the agent that writes the briefing, the wrap-up or the digest. */
+	agent: "pa" | "inbox";
+	/** The request the model reads when there is something to say. */
+	request: {
+		/**
+		 * The first words of every request of this job. The hook that closes the YES window recognises a daily request by
+		 * them, so they must not be words an owner would start a message with.
+		 */
+		head: string;
+		/** The first line of a day's request: what is wanted and which day. `text` is the day for people, `date` is `2026-10-26`. */
+		line: (text: string, date: string) => string;
+	};
 };
 
 /** Where a tap on these notifications goes: the PA's thread. */
@@ -43,6 +58,17 @@ export const WRAPUP_PUSH: PushPayload = {
 	tag: "wrapup",
 };
 
+/** Where a tap on an inbox digest goes: the Inbox agent's thread. */
+export const DIGEST_URL = "/chat/inbox";
+
+/** One tag for both digests: the evening one replaces the midday one in the tray. Generic on purpose, like every push. */
+export const DIGEST_PUSH: PushPayload = {
+	title: "Inbox",
+	body: "Your inbox digest",
+	url: DIGEST_URL,
+	tag: "digest",
+};
+
 /** The morning briefing: 07:30, still worth making until 11:00. */
 export const BRIEFING_JOB: DailyJob = {
 	id: "briefing",
@@ -53,6 +79,11 @@ export const BRIEFING_JOB: DailyJob = {
 	cardWhenEmpty: true,
 	push: BRIEFING_PUSH,
 	agent: "pa",
+	request: {
+		head: "Morning briefing request for ",
+		line: (text, date) =>
+			`Morning briefing request for ${text} (${date}). Write the owner's briefing from these facts, as your instructions for the morning briefing say.`,
+	},
 };
 
 /**
@@ -68,9 +99,39 @@ export const WRAPUP_JOB: DailyJob = {
 	cardWhenEmpty: false,
 	push: WRAPUP_PUSH,
 	agent: "pa",
+	request: {
+		head: "Evening wrap-up request for ",
+		line: (text, date) =>
+			`Evening wrap-up request for ${text} (${date}). Ask the owner what they got done today, as your instructions for the evening wrap-up say. When they answer, call save_journal with date ${date}.`,
+	},
 };
 
-export const DAILY_JOBS: readonly DailyJob[] = [BRIEFING_JOB, WRAPUP_JOB];
+/**
+ * The inbox digests (M5): what the Inbox agent found worth the owner's attention since the last one (important, needs a
+ * reply, needs a follow-up), written by the Inbox agent. A digest with nothing in it is a card: it costs no tokens and sends no push. Still
+ * worth making two hours late, never past the end of the day.
+ */
+const digestJob = (id: "digest_midday" | "digest_evening", label: string, defaultTime: string): DailyJob => ({
+	id,
+	label,
+	defaultTime,
+	lateMinutes: 120,
+	facts: "digest",
+	cardWhenEmpty: true,
+	push: DIGEST_PUSH,
+	pushWhenEmpty: false,
+	agent: "inbox",
+	request: {
+		head: "Inbox digest request for ",
+		line: (text, date) =>
+			`Inbox digest request for ${text} (${date}). Write the owner's inbox digest from these mails, as your instructions for the inbox digest say.`,
+	},
+});
+
+export const DIGEST_MIDDAY_JOB: DailyJob = digestJob("digest_midday", "Inbox digest (midday)", "12:30");
+export const DIGEST_EVENING_JOB: DailyJob = digestJob("digest_evening", "Inbox digest (evening)", "19:00");
+
+export const DAILY_JOBS: readonly DailyJob[] = [BRIEFING_JOB, WRAPUP_JOB, DIGEST_MIDDAY_JOB, DIGEST_EVENING_JOB];
 
 export function jobOf(id: string): DailyJob | undefined {
 	return DAILY_JOBS.find((job) => job.id === id);

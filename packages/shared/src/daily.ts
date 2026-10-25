@@ -1,3 +1,5 @@
+import type { MailItem } from "./inbox.ts";
+
 /**
  * The daily rituals of the PA: the morning briefing and the evening wrap-up, and the journal the wrap-up fills.
  *
@@ -9,7 +11,7 @@
 /** Entry kind of the briefing and wrap-up request (and of the "nothing today" card). Its `data` is a {@link DailyEntryData}. */
 export const DAILY_ENTRY_KIND = "app.daily";
 
-export const DAILY_JOB_IDS = ["briefing", "wrapup"] as const;
+export const DAILY_JOB_IDS = ["briefing", "wrapup", "digest_midday", "digest_evening"] as const;
 
 export type DailyJobId = (typeof DAILY_JOB_IDS)[number];
 
@@ -17,8 +19,12 @@ export function isDailyJobId(value: unknown): value is DailyJobId {
 	return (DAILY_JOB_IDS as readonly unknown[]).includes(value);
 }
 
-/** One group of facts: "Tasks due today" and its lines. Lines are plain text and carry the ids the PA's tools take. */
-export type DailySection = { title: string; lines: string[] };
+/**
+ * One group of facts: "Tasks due today" and its lines. Lines are plain text and carry the ids the PA's tools take.
+ * `mail` is for the thread only: an inbox digest lists its mails there so that the card can link to each one in Gmail
+ * (the model reads `lines`).
+ */
+export type DailySection = { title: string; lines: string[]; mail?: MailItem[] };
 
 export type DailyEntryData = {
 	job: DailyJobId;

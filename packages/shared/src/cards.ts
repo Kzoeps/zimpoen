@@ -10,6 +10,7 @@ import type { AccountantCard } from "./accountant.ts";
 import type { JournalCard } from "./daily.ts";
 import type { FileCard, FileListCard } from "./files.ts";
 import type { ExerciseChartCard, WeightCard, WeightChartCard, WorkoutCard, WorkoutListCard } from "./health.ts";
+import type { InboxCard } from "./inbox.ts";
 
 /** Entry kind of a reminder that fired. Its `data` is a {@link ReminderEntryData}. */
 export const REMINDER_ENTRY_KIND = "app.reminder";
@@ -98,6 +99,8 @@ export type NoticeEntryData = {
 	level: "info" | "error";
 	/** Present when the notice reports how an approval request ended: the approval card with this id shows it. */
 	approval?: { actionId: string; outcome: ApprovalOutcome; via: "button" | "yes" | "timeout" };
+	/** Present when the notice reports what the owner did with an Inbox suggestion: the suggestion card with this id shows it. */
+	suggestion?: { suggestionId: string; outcome: "added" | "dismissed" };
 };
 
 export type TaskCardItem = {
@@ -138,6 +141,8 @@ export type ApprovalCard = {
 	summary: string;
 	/** After this (epoch ms) the request can no longer be approved. */
 	expiresAt: number;
+	/** Only the buttons answer it: a typed YES does not (the Inbox's sender rules, which mail could try to talk the model into). */
+	buttonOnly?: true;
 };
 
 export type FollowupCardItem = {
@@ -218,7 +223,8 @@ export type ToolCard =
 	| WorkoutCard
 	| WorkoutListCard
 	| ExerciseChartCard
-	| AccountantCard;
+	| AccountantCard
+	| InboxCard;
 
 const CARD_TYPES: readonly string[] = [
 	"task_list",
@@ -247,6 +253,12 @@ const CARD_TYPES: readonly string[] = [
 	"invoice",
 	"invoice_list",
 	"accountant_note",
+	"mail_list",
+	"mail",
+	"event_list",
+	"inbox_note",
+	"suggestion_sent",
+	"agent_answer",
 ];
 
 /**

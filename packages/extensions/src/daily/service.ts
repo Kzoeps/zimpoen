@@ -69,7 +69,15 @@ export function createDailyService(deps: Deps, scheduler: () => TimerScheduler):
 		},
 
 		list() {
-			return store.listSchedules(db).map(view);
+			// The order of DAILY_JOBS (morning to evening), not the table's alphabetical one; a row this build does not know is last.
+			const rank = (job: string) => {
+				const at = DAILY_JOBS.findIndex((known) => known.id === job);
+				return at === -1 ? DAILY_JOBS.length : at;
+			};
+			return store
+				.listSchedules(db)
+				.sort((a, b) => rank(a.job) - rank(b.job))
+				.map(view);
 		},
 
 		async update(jobId, change) {

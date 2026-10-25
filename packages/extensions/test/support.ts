@@ -1,7 +1,7 @@
 import { cp, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AppDb, coreMigrations, insertAgentRow, migrate, openAppDb } from "@assistant/db";
+import { type AppDb, coreMigrations, getAgentRow, insertAgentRow, migrate, openAppDb } from "@assistant/db";
 import type { PushPayload } from "@assistant/shared";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
@@ -34,23 +34,32 @@ import {
 	collectMigrations,
 	createApprovalService,
 	createEntryPoster,
+	createFakeGoogle,
 	createInputSubmitter,
+	createRulesTriage,
 	type DailyFactsProvider,
+	type DelegateDeps,
 	type DomainDeps,
 	dailyModule,
+	delegateModule,
 	type EntryPoster,
+	type FakeGoogle,
 	type FilesDeps,
 	filesModule,
 	followupsModule,
 	type HealthDeps,
 	healthModule,
+	type InboxDeps,
 	type InputSubmitter,
+	inboxModule,
 	invoicesModule,
 	ledgerModule,
 	type PostedEntry,
 	peopleModule,
 	type ScheduleSettings,
+	type SyncSettings,
 	splitsModule,
+	type Triage,
 	tasksModule,
 } from "../src/index.ts";
 
@@ -128,6 +137,12 @@ export type FixtureOptions = {
 	accountant?: AccountantDeps;
 	/** More extensions for the registry and the conversation's agent, such as code mode, whose tools reach the modules'. */
 	extraExtensions?: readonly Extension[];
+	/**
+	 * The Inbox agent: a second conversation (the one the daily digests and the sync timers live in, recorded as agent
+	 * `inbox`), a scripted Google and, unless given, the local rules. Without it there is no Inbox conversation.
+	 */
+	inbox?: { google?: FakeGoogle; triage?: Triage; sync?: Partial<SyncSettings> };
+	delegate?: DelegateDeps;
 };
 
 export type Fixture = {
@@ -138,6 +153,10 @@ export type Fixture = {
 	clock: { now: number };
 	faux: FauxProviderHandle;
 	deps: DomainDeps;
+	/** The scripted Google of the Inbox agent; undefined without `options.inbox`. */
+	google: FakeGoogle | undefined;
+	/** The Inbox agent's conversation; undefined without `options.inbox`. */
+	inbox: Conversation | undefined;
 	extensions: Extension[];
 	pushes: PushPayload[];
 	posted: PostedEntry[];
@@ -153,6 +172,8 @@ export type Fixture = {
 	callTool(name: string, args: Record<string, unknown>, callId: string): Promise<ToolExecutionResult>;
 	/** Entries of the conversation, oldest first. */
 	entries(): Promise<EntryRecord[]>;
+	/** Entries of the Inbox agent's conversation, oldest first. */
+	inboxEntries(): Promise<EntryRecord[]>;
 	/** Entries of one custom kind, oldest first. */
 	entriesOfKind(kind: string): Promise<EntryRecord[]>;
 	/** Advance the fake clock and let Durable notice (a sleeping task wakes only when the scheduler runs). */
@@ -189,6 +210,8 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		ledgerModule,
 		splitsModule,
 		invoicesModule,
+		inboxModule,
+		delegateModule,
 	];
 	migrate(db, [...coreMigrations, ...collectMigrations(modules)]);
 
@@ -219,6 +242,15 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 	// As in the server: the approval service writes its notices with the plain poster, the modules' cards close the YES window.
 	const approvals = createApprovalService({ db, now, post: plainPost });
 	const post = closingYesWindow(plainPost, approvals);
+	const google = options.inbox === undefined ? undefined : (options.inbox.google ?? createFakeGoogle({ now }));
+	const inboxDeps: InboxDeps | undefined =
+		options.inbox === undefined || google === undefined
+			? undefined
+			: {
+					google,
+					triage: options.inbox.triage ?? createRulesTriage(),
+					...(options.inbox.sync === undefined ? {} : { sync: options.inbox.sync }),
+				};
 	let providers: readonly DailyFactsProvider[] = [];
 	const deps: DomainDeps = {
 		db,
@@ -237,6 +269,8 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		...(options.files === undefined ? {} : { files: options.files }),
 		...(options.health === undefined ? {} : { health: options.health }),
 		...(options.accountant === undefined ? {} : { accountant: options.accountant }),
+		...(inboxDeps === undefined ? {} : { inbox: inboxDeps }),
+		...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 	};
 	for (const module of modules) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = [...modules.flatMap((module) => module.facts?.(deps) ?? []), ...(options.providers ?? [])];
@@ -272,6 +306,21 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 	});
 	// The conversation is the PA's, as far as the daily jobs are concerned (they look it up in `agents`).
 	insertAgentRow(db, { id: "pa", conversationId: Number(conversation.id), createdAt: now() });
+	// The Inbox agent's conversation selects only its own extension, as the server does: capability is tool presence. Over files
+	// that already have one (a restart) it is that conversation: a second one would be an orphan the `agents` row never names.
+	const recordedInbox = getAgentRow(db, "inbox")?.conversationId;
+	const inbox =
+		options.inbox === undefined
+			? undefined
+			: ((recordedInbox === undefined ? undefined : await harness.conversation(recordedInbox as never, ctx)) ??
+				(await harness.createConversation(
+					{
+						ownership: { kind: "ownerless" },
+						agent: { model: FAUX_MODEL, extensions: extensions.filter((extension) => extension.name === "inbox") },
+					},
+					ctx,
+				)));
+	if (inbox !== undefined) insertAgentRow(db, { id: "inbox", conversationId: Number(inbox.id), createdAt: now() });
 	// What the server does once everything is in place: continue interrupted work and run sleepers that are due.
 	harness.resume();
 
@@ -283,6 +332,8 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		clock,
 		faux,
 		deps,
+		google,
+		inbox,
 		extensions,
 		pushes,
 		posted,
@@ -307,6 +358,11 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		},
 		entries: async () => {
 			const page = await conversation.entries({ order: "ascending" }, 500, undefined, ctx);
+			return [...page.items];
+		},
+		inboxEntries: async () => {
+			if (inbox === undefined) throw new Error("This fixture has no Inbox conversation (pass options.inbox).");
+			const page = await inbox.entries({ order: "ascending" }, 500, undefined, ctx);
 			return [...page.items];
 		},
 		entriesOfKind: async (kind) => (await fixture.entries()).filter((entry) => entry.kind === kind),

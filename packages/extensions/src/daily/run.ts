@@ -3,7 +3,7 @@ import type { JsonValue } from "@earendil-works/chord";
 import type { DomainDeps } from "../module.ts";
 import { atLocalTime, formatLocalDate } from "../time.ts";
 import { collectFacts, type DailyFactsProvider, dayWindow } from "./facts.ts";
-import type { DailyJob } from "./jobs.ts";
+import { DAILY_JOBS, type DailyJob } from "./jobs.ts";
 import * as store from "./store.ts";
 
 /**
@@ -18,6 +18,13 @@ export type DailyPlan = {
 	/** It ran well after its time, because the server was down then. */
 	late: boolean;
 };
+
+/** The run has nothing to say and its job may stay silent: a card stands alone, and the model is not asked. */
+export const standsAlone = (job: DailyJob, plan: DailyPlan): boolean => plan.empty && job.cardWhenEmpty;
+
+/** Whether the run pushes to the phone: always, except a run that stands alone for a job that keeps quiet then. */
+export const pushesFor = (job: DailyJob, plan: DailyPlan): boolean =>
+	!(standsAlone(job, plan) && job.pushWhenEmpty === false);
 
 /** A run later than this after its time says so on its card. */
 export const LATE_AFTER_MS = 5 * 60_000;
@@ -34,7 +41,7 @@ export function buildPlan(
 	providers: readonly DailyFactsProvider[],
 	onFailure: (provider: string, error: unknown) => void,
 ): DailyPlan {
-	const day = dayWindow(date, clock.now, clock.timezone);
+	const day = { ...dayWindow(date, clock.now, clock.timezone), job: job.id };
 	const { sections, failures } = collectFacts(providers, job.facts, day);
 	for (const failure of failures) onFailure(failure.provider, failure.error);
 	return { sections, empty: sections.length === 0, late: clock.now - clock.dueAt > LATE_AFTER_MS };
@@ -48,10 +55,7 @@ export function renderSections(sections: readonly DailySection[]): string {
 }
 
 /** The first words of each job's request. The hook that closes the YES window (see `daily/index.ts`) recognises a daily request by them. */
-export const REQUEST_HEADS = {
-	briefing: "Morning briefing request for ",
-	wrapup: "Evening wrap-up request for ",
-} as const;
+export const REQUEST_HEADS: readonly string[] = [...new Set(DAILY_JOBS.map((job) => job.request.head))];
 
 /** Whether the last message of a request to the model is a daily request: the first round of the run that a briefing or wrap-up starts. */
 export function endsWithDailyRequest(messages: readonly { role: string; content: unknown }[]): boolean {
@@ -63,7 +67,7 @@ export function endsWithDailyRequest(messages: readonly { role: string; content:
 			: Array.isArray(last.content)
 				? last.content.map((part: { type?: string; text?: string }) => (part.type === "text" ? part.text : "")).join("")
 				: "";
-	return Object.values(REQUEST_HEADS).some((head) => text.startsWith(head));
+	return REQUEST_HEADS.some((head) => text.startsWith(head));
 }
 
 /**
@@ -71,10 +75,7 @@ export function endsWithDailyRequest(messages: readonly { role: string; content:
  * to run a wrap-up is in the PA's instructions, which are cached, so a day's request stays the size of its facts.
  */
 export function renderRequest(job: DailyJob, date: string, text: string, sections: readonly DailySection[]): string {
-	const head =
-		job.id === "briefing"
-			? `${REQUEST_HEADS.briefing}${text} (${date}). Write the owner's briefing from these facts, as your instructions for the morning briefing say.`
-			: `${REQUEST_HEADS.wrapup}${text} (${date}). Ask the owner what they got done today, as your instructions for the evening wrap-up say. When they answer, call save_journal with date ${date}.`;
+	const head = job.request.line(text, date);
 	const facts =
 		sections.length > 0
 			? renderSections(sections)
@@ -96,7 +97,7 @@ export function entryData(
 		dateText: dateText(date, deps.timezone),
 		sections: plan.sections,
 		// `empty` says the card stands alone (the model was not asked), which a wrap-up never does.
-		...(plan.empty && job.cardWhenEmpty ? { empty: true as const } : {}),
+		...(standsAlone(job, plan) ? { empty: true as const } : {}),
 		...(plan.late ? { late: true as const } : {}),
 		firedAt,
 	};
@@ -120,7 +121,7 @@ export async function deliver(
 ): Promise<{ asked: boolean }> {
 	const { db, timezone } = deps;
 	const data = entryData(job, target.date, plan, deps, target.firedAt);
-	if (plan.empty && job.cardWhenEmpty) {
+	if (standsAlone(job, plan)) {
 		await deps.post(target.conversationId, {
 			kind: DAILY_ENTRY_KIND,
 			data: data as unknown as JsonValue,

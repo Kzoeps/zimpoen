@@ -509,12 +509,15 @@ describe("save_journal and get_journal", () => {
 
 describe("the first start", () => {
 	it("names the jobs that got their first row, once: a new data directory is a set-up, not a repair", async () => {
-		const f = await open();
+		// The digests post into the Inbox agent's conversation, so their timers need it to exist.
+		const f = await open({ inbox: {} });
 
 		const first = await startDaily(f);
-		expect(first.recovery.created).toStrictEqual(["briefing", "wrapup"]);
+		expect(first.recovery.created).toStrictEqual(["briefing", "wrapup", "digest_midday", "digest_evening"]);
 		// Their timers are made by the same repair pass; the server's log tells the two apart with `created`.
-		expect(first.timers.rescheduled).toStrictEqual(["briefing", "wrapup"]);
+		expect([...first.timers.rescheduled].sort()).toStrictEqual(
+			["briefing", "wrapup", "digest_midday", "digest_evening"].sort(),
+		);
 
 		const second = await dailyModule.start(f.deps);
 		expect(second.created).toStrictEqual([]);
@@ -618,9 +621,12 @@ describe("the settings of the jobs", () => {
 		await expect(service.update("briefing", { localTime: "7:30" })).rejects.toBeInstanceOf(InvalidDailyTime);
 		await expect(service.update("briefing", { localTime: "24:00" })).rejects.toThrow(/24-hour HH:MM/);
 		await expect(service.update("lunch", { enabled: false })).rejects.toBeInstanceOf(UnknownDailyJob);
+		// The order of DAILY_JOBS, not the table's alphabetical one (briefing, digest_evening, digest_midday, wrapup).
 		expect(service.list().map((job) => [job.job, job.localTime, job.enabled])).toStrictEqual([
 			["briefing", "07:30", true],
 			["wrapup", "21:00", true],
+			["digest_midday", "12:30", true],
+			["digest_evening", "19:00", true],
 		]);
 	});
 
