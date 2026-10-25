@@ -1,4 +1,6 @@
 import {
+	type AgentId,
+	type DailyJobId,
 	type FileCard,
 	type FollowupCard,
 	formatKg,
@@ -6,6 +8,7 @@ import {
 	type JournalCard,
 	type PersonCard,
 	type TaskCard,
+	type TriageCategory,
 	type WeightCard,
 } from "@assistant/shared";
 import type { UiCard } from "./ui-messages.ts";
@@ -40,6 +43,37 @@ export const JOURNAL_EVENT_LABEL: Record<JournalCard["event"], string> = {
 export const WEIGHT_EVENT_LABEL: Record<WeightCard["event"], string> = {
 	logged: "Weight logged",
 	updated: "Weight updated",
+};
+
+/** What each daily job is called, with its icon: the card's heading and the chip over the answer. */
+export const DAILY_LABEL: Record<DailyJobId, { icon: string; name: string }> = {
+	briefing: { icon: "☀️", name: "Morning briefing" },
+	wrapup: { icon: "🌙", name: "Evening wrap-up" },
+	digest_midday: { icon: "📥", name: "Inbox digest" },
+	digest_evening: { icon: "📥", name: "Inbox digest" },
+};
+
+/** The inbox digests are the jobs the Inbox agent writes: their card lists mail, not tasks. */
+export const isDigest = (job: DailyJobId): boolean => job === "digest_midday" || job === "digest_evening";
+
+/** What a mail's category is called on its chip. */
+export const TRIAGE_LABEL: Record<TriageCategory, string> = {
+	important: "important",
+	needs_reply: "needs a reply",
+	follow_up: "follow-up",
+	newsletter: "newsletter",
+	notification: "notification",
+	promo: "promo",
+	personal: "personal",
+	finance: "money",
+	other: "other",
+};
+
+/** The agents a question can be put to, as a sentence names them ("asked the Inbox"). */
+export const ASKED_AGENT_LABEL: Record<Exclude<AgentId, "pa">, string> = {
+	inbox: "the Inbox",
+	health: "the Health agent",
+	accountant: "the Accountant",
 };
 
 export const FILE_EVENT_LABEL: Record<FileCard["event"], string> = {
@@ -81,10 +115,11 @@ export function cardSummary(card: UiCard): string {
 			return `${card.heading}: ${card.total}`;
 		case "approval":
 			return `Approval needed: ${card.summary}`;
-		case "daily":
-			return card.data.empty === true
-				? `Morning briefing, ${card.data.dateText}: nothing today`
-				: `${card.data.job === "briefing" ? "Morning briefing" : "Evening wrap-up"}, ${card.data.dateText}`;
+		case "daily": {
+			const name = DAILY_LABEL[card.data.job].name;
+			if (card.data.empty !== true) return `${name}, ${card.data.dateText}`;
+			return `${name}, ${card.data.dateText}: nothing ${isDigest(card.data.job) ? "new" : "today"}`;
+		}
 		case "journal":
 			return `${JOURNAL_EVENT_LABEL[card.event]}: ${card.entries.map((entry) => entry.date).join(", ")}`;
 		case "file":
@@ -127,5 +162,23 @@ export function cardSummary(card: UiCard): string {
 			return `${card.heading}: ${card.total}`;
 		case "accountant_note":
 			return `${card.heading}${card.lines[0] === undefined ? "" : `: ${card.lines[0]}`}`;
+		case "mail_list":
+			return `${card.heading}: ${card.total}`;
+		case "mail":
+			return `Mail from ${card.mail.from}: ${card.mail.subject}`;
+		case "event_list":
+			return `${card.heading}: ${card.total}`;
+		case "inbox_note":
+			return card.text;
+		case "suggestion_sent":
+			return `Suggested to the assistant: ${card.suggestion.title}`;
+		case "agent_answer":
+			return `${card.status === "answered" ? "Answer from" : "Asked"} ${ASKED_AGENT_LABEL[card.agent]}: ${card.question}`;
+		case "suggestion":
+			return `The Inbox suggests: ${card.data.title}`;
+		case "delegated":
+			return `Asked by the assistant: ${card.data.question}`;
+		case "late_answer":
+			return `Answer from ${ASKED_AGENT_LABEL[card.data.agent]}: ${card.data.question}`;
 	}
 }

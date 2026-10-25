@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	ApiRequestError,
 	decideApproval,
+	decideSuggestion,
+	disconnectGoogleAccount,
 	fetchAgents,
+	fetchGoogleSettings,
 	fetchSchedule,
 	fileUrl,
 	retryTask,
@@ -163,6 +166,56 @@ describe("the daily schedule and file calls", () => {
 	it("names a stored file's address by its id, so that an image opens in the page and anything else downloads", () => {
 		expect(fileUrl("fi_0a1b2c3d")).toBe("/api/files/fi_0a1b2c3d");
 		expect(fileUrl("a/b")).toBe("/api/files/a%2Fb");
+	});
+});
+
+describe("the Inbox calls", () => {
+	const lastCall = (): [string, RequestInit] => {
+		const calls = vi.mocked(fetch).mock.calls;
+		return calls[calls.length - 1] as unknown as [string, RequestInit];
+	};
+
+	it("answers a suggestion with a JSON POST that names the suggestion and the decision", async () => {
+		stubFetch(() => Response.json({ id: "sg_ab12cd34", status: "added" }));
+
+		const state = await decideSuggestion("sg_ab12cd34", "add");
+
+		const [url, init] = lastCall();
+		expect(url).toBe("/api/suggestions/sg_ab12cd34");
+		expect(init).toMatchObject({ method: "POST", headers: { "content-type": "application/json" } });
+		expect(JSON.parse(init.body as string)).toStrictEqual({ decision: "add" });
+		expect(state).toStrictEqual({ id: "sg_ab12cd34", status: "added" });
+		await decideSuggestion("sg_ab12cd34", "dismiss");
+		expect(JSON.parse(lastCall()[1].body as string)).toStrictEqual({ decision: "dismiss" });
+	});
+
+	it("shows the server's reason when the other answer was recorded first, with the 409 the card goes by", async () => {
+		stubFetch(() =>
+			Response.json(
+				{ error: { code: "conflict", message: "Suggestion sg_ab12cd34 was already dismissed." } },
+				{ status: 409 },
+			),
+		);
+
+		await expect(decideSuggestion("sg_ab12cd34", "add")).rejects.toMatchObject({
+			status: 409,
+			message: "Suggestion sg_ab12cd34 was already dismissed.",
+		});
+	});
+
+	it("reads the Google accounts, and disconnects one with a JSON DELETE that carries the address in the body, never in the path", async () => {
+		stubFetch(() =>
+			Response.json({ mode: "real", clientConfigured: true, triage: { mode: "rules" }, syncMinutes: 10, accounts: [] }),
+		);
+
+		await fetchGoogleSettings();
+		expect(lastCall()[0]).toBe("/api/settings/google");
+
+		await disconnectGoogleAccount("work@x.example");
+		const [url, init] = lastCall();
+		expect(url).toBe("/api/settings/google/accounts");
+		expect(init).toMatchObject({ method: "DELETE", headers: { "content-type": "application/json" } });
+		expect(JSON.parse(init.body as string)).toStrictEqual({ email: "work@x.example" });
 	});
 });
 

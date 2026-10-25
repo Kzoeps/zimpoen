@@ -5,6 +5,9 @@ import type {
 	ApiErrorBody,
 	ApprovalDecision,
 	ApprovalState,
+	DecideSuggestionRequest,
+	DisconnectGoogleRequest,
+	GoogleSettingsResponse,
 	MessagesPage,
 	PushConfigResponse,
 	PushSubscribeRequest,
@@ -12,6 +15,8 @@ import type {
 	ScheduleSettingsResponse,
 	SendMessageRequest,
 	SendMessageResponse,
+	SuggestionDecision,
+	SuggestionState,
 	UpdateAgentSettingsRequest,
 	UpdateScheduleRequest,
 	UploadResponse,
@@ -87,6 +92,10 @@ export const fetchEarlier = (conversationId: number, before: number, limit = 50)
 export const decideApproval = (actionId: string, decision: ApprovalDecision): Promise<ApprovalState> =>
 	request(`/api/approvals/${encodeURIComponent(actionId)}`, json({ decision }));
 
+/** The owner's answer to what the Inbox suggested: Add asks the PA to add the follow-up, Dismiss drops it. */
+export const decideSuggestion = (id: string, decision: SuggestionDecision): Promise<SuggestionState> =>
+	request(`/api/suggestions/${encodeURIComponent(id)}`, json({ decision } satisfies DecideSuggestionRequest));
+
 export const retryTask = (taskId: number): Promise<RetryTaskResponse> =>
 	request(`/api/admin/tasks/${taskId}/retry`, json({}));
 
@@ -104,6 +113,16 @@ export const fetchSchedule = (): Promise<ScheduleSettingsResponse> => request("/
 
 export const updateSchedule = (job: string, change: UpdateScheduleRequest): Promise<ScheduleSettingsResponse> =>
 	request(`/api/settings/schedule/${encodeURIComponent(job)}`, json(change, "PUT"));
+
+/** The Google accounts the Inbox reads, how mail is classified (Jev or the local rules), and how the sync is doing. */
+export const fetchGoogleSettings = (): Promise<GoogleSettingsResponse> => request("/api/settings/google");
+
+/**
+ * Forget an account's saved sign-in on the server and stop syncing it. The mail already read stays. Answers with the
+ * settings as they are now. The address travels in the body, not in the path.
+ */
+export const disconnectGoogleAccount = (email: string): Promise<GoogleSettingsResponse> =>
+	request("/api/settings/google/accounts", json({ email } satisfies DisconnectGoogleRequest, "DELETE"));
 
 /** Where an uploaded file can be opened: images are shown, everything else downloads. */
 export const fileUrl = (id: string): string => `/api/files/${encodeURIComponent(id)}`;

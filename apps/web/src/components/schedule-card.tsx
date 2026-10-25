@@ -8,7 +8,7 @@ import { scheduleChange } from "../lib/schedule-form.ts";
 const messageOf = (error: unknown, fallback: string): string =>
 	error instanceof ApiRequestError ? error.message : fallback;
 
-/** When the morning briefing and the evening wrap-up happen, and whether they happen at all. */
+/** When the morning briefing, the two inbox digests and the evening wrap-up happen, and whether they happen at all. */
 export function ScheduleCard() {
 	const [data, setData] = useState<ScheduleSettingsResponse>();
 	const [error, setError] = useState<string>();
@@ -25,10 +25,11 @@ export function ScheduleCard() {
 				<span aria-hidden="true">🗓️</span> Daily schedule
 			</h2>
 			<p className="settings-card__hint">
-				The assistant writes you a briefing in the morning and asks what you got done in the evening
+				The assistant writes you a briefing in the morning and asks what you got done in the evening; the Inbox agent
+				sends a digest of the mail that needs you at midday and in the evening
 				{data === undefined ? "" : `. Times are in ${data.timezone}`}. If the server was off at the time, a briefing
-				still comes when it starts up again before 11:00, and a wrap-up before midnight; later than that the day is
-				skipped.
+				still comes when it starts up again before 11:00, a digest within two hours, and a wrap-up before midnight;
+				later than that the day is skipped.
 			</p>
 			{error !== undefined ? (
 				<p className="notice notice--error" role="alert">

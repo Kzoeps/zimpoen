@@ -9,6 +9,8 @@ import {
 	type BirthdayEntryData,
 	DAILY_ENTRY_KIND,
 	type DailyEntryData,
+	DELEGATED_ENTRY_KIND,
+	type DelegatedEntryData,
 	type EntryRecord,
 	type ExerciseChartCard,
 	type FileCard,
@@ -18,14 +20,19 @@ import {
 	type FollowupEntryData,
 	type FollowupListCard,
 	type ImportPreviewCard,
+	type InboxCard,
 	isDailyJobId,
 	type JournalCard,
+	LATE_ANSWER_ENTRY_KIND,
+	type LateAnswerEntryData,
 	NOTICE_ENTRY_KIND,
 	type NoticeEntryData,
 	type PeopleListCard,
 	type PersonCard,
 	REMINDER_ENTRY_KIND,
 	type ReminderEntryData,
+	SUGGESTION_ENTRY_KIND,
+	type SuggestionEntryData,
 	splitAttachments,
 	type TaskCard,
 	type TaskListCard,
@@ -61,6 +68,14 @@ export type ApprovalCardState =
 	| { status: "expired" }
 	| { status: Exclude<ApprovalOutcome, "expired">; text: string; via: "button" | "yes" | "timeout" };
 
+/** How a suggestion card of the Inbox stands, worked out from the notices that came after it. */
+export type SuggestionCardState =
+	| { status: "pending" }
+	/** A week passed without an answer. The server refuses a late one. */
+	| { status: "expired" }
+	/** The owner pressed Add (the PA was asked) or Dismiss. `text` is the notice the server wrote for it. */
+	| { status: "added" | "dismissed"; text: string };
+
 /** A non-chat item of the thread. */
 export type UiCard =
 	| { type: "reminder"; data: ReminderEntryData }
@@ -90,7 +105,22 @@ export type UiCard =
 	/** The Accountant's cards (ledger, splits, invoices). An import preview is `answered` once the import was confirmed. */
 	| Exclude<AccountantCard, { type: "import_preview" }>
 	| (ImportPreviewCard & { answered?: boolean })
-	| { type: "approval"; actionId: string; summary: string; expiresAt: number; state: ApprovalCardState };
+	/** The Inbox agent's cards: mail, events, a note, a suggestion it made, and what the PA's `ask_agent` got back. */
+	| InboxCard
+	/** In the PA's thread: the Inbox suggests a follow-up. The owner's Add or Dismiss settles it (`state`). */
+	| { type: "suggestion"; data: SuggestionEntryData; state: SuggestionCardState }
+	/** In a specialist's thread: the question the PA put to this agent. */
+	| { type: "delegated"; data: DelegatedEntryData }
+	/** In the PA's thread: the answer of an agent the PA had stopped waiting for. */
+	| { type: "late_answer"; data: LateAnswerEntryData }
+	| {
+			type: "approval";
+			actionId: string;
+			summary: string;
+			expiresAt: number;
+			buttonOnly?: true;
+			state: ApprovalCardState;
+	  };
 
 /** A file a message of the owner's carries, read back from the line that references it. */
 export type UiAttachment = AttachmentRef & { sizeText: string };
@@ -139,19 +169,22 @@ export function toUiMessages(
 	};
 	for (const entry of state.entries) push(withExplanation(entryToMessage(entry), explanations.get(entry.id)));
 	if (state.draft !== undefined) push(assistantToMessage(state.draft, { type: "running" }, "draft"));
-	return chipAnswers(resolveAnswers(resolveApprovals(markInterrupted(messages), approvalOutcomes(state.entries), now)));
+	const approved = resolveApprovals(markInterrupted(messages), approvalOutcomes(state.entries), now);
+	return chipAnswers(resolveAnswers(resolveSuggestions(approved, suggestionOutcomes(state.entries), now)));
 }
 
 /** What the chip above an answer says, by the job whose request it answers. */
 export const DAILY_CHIP: Record<DailyEntryData["job"], string> = {
 	briefing: "☀️ Morning briefing",
 	wrapup: "🌙 Evening wrap-up",
+	digest_midday: "📥 Inbox digest",
+	digest_evening: "📥 Inbox digest",
 };
 
 /**
- * The briefing and the wrap-up are requests the assistant makes by itself, and the PA's answer is an ordinary message.
- * To tell it from a reply to something the owner said, the first answer after the request carries a chip with the job's
- * name. Another message of the owner's ends it: what follows is a conversation. Cards in between (a task list the PA
+ * The briefing, the wrap-up and the inbox digests are requests the assistant makes by itself, and the agent's answer is an
+ * ordinary message. To tell it from a reply to something the owner said, the first answer after the request carries a chip
+ * with the job's name (the digest's request is in the Inbox thread, the others' in the PA's). Another message of the owner's ends it: what follows is a conversation. Cards in between (a task list the PA
  * looked up for the briefing, a reminder that fired meanwhile) do not: the answer is still the briefing's.
  */
 function chipAnswers(messages: UiMessage[]): UiMessage[] {
@@ -230,6 +263,38 @@ function resolveApprovals(messages: UiMessage[], outcomes: Map<string, Decided>,
 		const decided = outcomes.get(message.card.actionId);
 		const state: ApprovalCardState =
 			decided ?? (message.card.expiresAt <= now ? { status: "expired" } : { status: "pending" });
+		return { ...message, card: { ...message.card, state } };
+	});
+}
+
+type SuggestionOutcome = Extract<SuggestionCardState, { status: "added" | "dismissed" }>;
+
+/** What the owner did with each suggestion, from the notices the server wrote for it. The first answer stands, as it does on the server. */
+function suggestionOutcomes(entries: readonly EntryRecord[]): Map<string, SuggestionOutcome> {
+	const outcomes = new Map<string, SuggestionOutcome>();
+	for (const entry of entries) {
+		if (entry.kind !== NOTICE_ENTRY_KIND) continue;
+		const data = entry.data as Partial<NoticeEntryData> | undefined;
+		const suggestion = data?.suggestion;
+		if (suggestion === undefined || typeof data?.text !== "string" || outcomes.has(suggestion.suggestionId)) continue;
+		if (suggestion.outcome === "added" || suggestion.outcome === "dismissed") {
+			outcomes.set(suggestion.suggestionId, { status: suggestion.outcome, text: data.text });
+		}
+	}
+	return outcomes;
+}
+
+/**
+ * Give each suggestion card the state the thread says it is in: answered, expired (its week passed: the entry is immutable,
+ * so `now` decides, as for approvals), or still waiting for the owner.
+ */
+function resolveSuggestions(messages: UiMessage[], outcomes: Map<string, SuggestionOutcome>, now: number): UiMessage[] {
+	return messages.map((message) => {
+		if (message.role !== "system" || message.card.type !== "suggestion") return message;
+		const { data } = message.card;
+		const state: SuggestionCardState =
+			outcomes.get(data.id) ??
+			(typeof data.expiresAt === "number" && data.expiresAt <= now ? { status: "expired" } : { status: "pending" });
 		return { ...message, card: { ...message.card, state } };
 	});
 }
@@ -322,6 +387,22 @@ function cardOf(entry: EntryRecord): UiCard | undefined {
 			? { type: "daily", data: data as DailyEntryData }
 			: undefined;
 	}
+	if (entry.kind === SUGGESTION_ENTRY_KIND) {
+		const data = entry.data as Partial<SuggestionEntryData> | undefined;
+		return typeof data?.id === "string" && typeof data.title === "string" && typeof data.atText === "string"
+			? { type: "suggestion", data: data as SuggestionEntryData, state: { status: "pending" } }
+			: undefined;
+	}
+	if (entry.kind === DELEGATED_ENTRY_KIND) {
+		const data = entry.data as Partial<DelegatedEntryData> | undefined;
+		return typeof data?.question === "string" ? { type: "delegated", data: data as DelegatedEntryData } : undefined;
+	}
+	if (entry.kind === LATE_ANSWER_ENTRY_KIND) {
+		const data = entry.data as Partial<LateAnswerEntryData> | undefined;
+		return typeof data?.answer === "string" && typeof data.question === "string"
+			? { type: "late_answer", data: data as LateAnswerEntryData }
+			: undefined;
+	}
 	if (entry.kind === REMINDER_ENTRY_KIND) {
 		const data = entry.data as Partial<ReminderEntryData> | undefined;
 		return typeof data?.title === "string" ? { type: "reminder", data: data as ReminderEntryData } : undefined;
@@ -341,7 +422,16 @@ function cardOf(entry: EntryRecord): UiCard | undefined {
 /** When the card happened: the time a timer posted it, otherwise the entry's message time. */
 function cardTime(entry: EntryRecord): number {
 	const data = entry.data as { firedAt?: unknown } | undefined;
-	const posted = [REMINDER_ENTRY_KIND, AGENDA_ENTRY_KIND, FOLLOWUP_ENTRY_KIND, BIRTHDAY_ENTRY_KIND, DAILY_ENTRY_KIND];
+	const posted = [
+		REMINDER_ENTRY_KIND,
+		AGENDA_ENTRY_KIND,
+		FOLLOWUP_ENTRY_KIND,
+		BIRTHDAY_ENTRY_KIND,
+		DAILY_ENTRY_KIND,
+		SUGGESTION_ENTRY_KIND,
+		DELEGATED_ENTRY_KIND,
+		LATE_ANSWER_ENTRY_KIND,
+	];
 	if (posted.includes(entry.kind) && typeof data?.firedAt === "number") return data.firedAt;
 	const timestamp = entry.model?.[0]?.timestamp;
 	return typeof timestamp === "number" ? timestamp : 0;

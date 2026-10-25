@@ -10,18 +10,22 @@ import {
 	formatSize,
 	type JournalCardItem,
 	type PersonCardItem,
+	type SuggestionDecision,
 	type TaskCardItem,
 } from "@assistant/shared";
 import { useAui } from "@assistant-ui/react";
 import { useState } from "react";
-import { ApiRequestError, decideApproval } from "../lib/api.ts";
+import { ApiRequestError, decideApproval, decideSuggestion } from "../lib/api.ts";
 import {
+	DAILY_LABEL,
 	FILE_EVENT_LABEL,
 	FOLLOWUP_EVENT_LABEL,
+	isDigest,
 	JOURNAL_EVENT_LABEL,
 	PERSON_EVENT_LABEL,
 	TASK_EVENT_LABEL,
 } from "../lib/card-text.ts";
+import { answeredTheOtherWay } from "../lib/suggestion-form.ts";
 import type { ApprovalCardState, UiCard } from "../lib/ui-messages.ts";
 import {
 	AccountantNoteView,
@@ -45,6 +49,18 @@ import {
 	WorkoutListView,
 	WorkoutLoggedView,
 } from "./health-charts.tsx";
+import {
+	AgentAnswerView,
+	DelegatedView,
+	EventListView,
+	InboxNoteView,
+	LateAnswerView,
+	MailListView,
+	MailRows,
+	MailView,
+	SuggestionSentView,
+	SuggestionView,
+} from "./inbox-cards.tsx";
 
 export { FileChip };
 
@@ -74,7 +90,14 @@ export function CardView({ card }: { card: UiCard }) {
 		case "task_list":
 			return <TaskListCardView heading={card.heading} tasks={card.tasks} total={card.total} />;
 		case "approval":
-			return <ApprovalCardView actionId={card.actionId} summary={card.summary} state={card.state} />;
+			return (
+				<ApprovalCardView
+					actionId={card.actionId}
+					summary={card.summary}
+					state={card.state}
+					buttonOnly={card.buttonOnly === true}
+				/>
+			);
 		case "daily":
 			return <DailyCard data={card.data} />;
 		case "journal":
@@ -121,7 +144,80 @@ export function CardView({ card }: { card: UiCard }) {
 			return <InvoiceListView card={card} />;
 		case "accountant_note":
 			return <AccountantNoteView card={card} />;
+		case "mail_list":
+			return <MailListView card={card} />;
+		case "mail":
+			return <MailView card={card} />;
+		case "event_list":
+			return <EventListView card={card} />;
+		case "inbox_note":
+			return <InboxNoteView card={card} />;
+		case "suggestion_sent":
+			return <SuggestionSentView card={card} />;
+		case "suggestion":
+			return (
+				<SuggestionView
+					suggestion={card.data}
+					state={card.state}
+					action={<SuggestionButtons suggestionId={card.data.id} />}
+				/>
+			);
+		case "agent_answer":
+			return <AgentAnswerView card={card} />;
+		case "delegated":
+			return <DelegatedView data={card.data} />;
+		case "late_answer":
+			return <LateAnswerView data={card.data} />;
 	}
+}
+
+/**
+ * Add and Dismiss under a suggestion of the Inbox. Add asks the PA to save the follow-up (the PA answers in this chat);
+ * Dismiss drops it. The server writes the notice that settles the card, and it arrives on the stream, so the buttons stay off
+ * from the moment one is pressed (a second tap must not be a second answer) until the card is replaced by its outcome.
+ */
+function SuggestionButtons({ suggestionId }: { suggestionId: string }) {
+	const [pressed, setPressed] = useState<SuggestionDecision>();
+	const [error, setError] = useState<string>();
+
+	const decide = async (decision: SuggestionDecision): Promise<void> => {
+		setPressed(decision);
+		setError(undefined);
+		try {
+			await decideSuggestion(suggestionId, decision);
+		} catch (failure) {
+			setError(failure instanceof ApiRequestError ? failure.message : "Could not send your answer.");
+			if (!answeredTheOtherWay(failure)) setPressed(undefined);
+		}
+	};
+
+	return (
+		<>
+			<div className="card__actions">
+				<button
+					type="button"
+					className="card__button card__button--primary"
+					disabled={pressed !== undefined}
+					onClick={() => void decide("add")}
+				>
+					{pressed === "add" ? "Adding…" : "Add"}
+				</button>
+				<button
+					type="button"
+					className="card__button"
+					disabled={pressed !== undefined}
+					onClick={() => void decide("dismiss")}
+				>
+					{pressed === "dismiss" ? "Dismissing…" : "Dismiss"}
+				</button>
+			</div>
+			{error !== undefined ? (
+				<p className="card__error" role="alert">
+					{error}
+				</p>
+			) : null}
+		</>
+	);
 }
 
 /**
@@ -162,18 +258,16 @@ function ImportConfirmButton({ importId }: { importId: string }) {
 	);
 }
 
-const DAILY_LABEL: Record<DailyEntryData["job"], { icon: string; name: string }> = {
-	briefing: { icon: "☀️", name: "Morning briefing" },
-	wrapup: { icon: "🌙", name: "Evening wrap-up" },
-};
-
 /**
- * The request of the morning briefing or the evening wrap-up, as the thread shows it: what the assistant looked at, kept
- * folded because the PA's answer under it says the same in words. A briefing with nothing to say is only this card.
+ * The request of the morning briefing, the evening wrap-up or an inbox digest, as the thread shows it: what the assistant
+ * looked at. The briefing's and the wrap-up's facts stay folded, because the answer under them says the same in words. A
+ * digest's mail is open: its rows are links to the conversations in Gmail, which the answer in words cannot be. A day with
+ * nothing to say is only this card.
  */
 function DailyCard({ data }: { data: DailyEntryData }) {
 	const { icon, name } = DAILY_LABEL[data.job];
-	const items = data.sections.reduce((total, section) => total + section.lines.length, 0);
+	const digest = isDigest(data.job);
+	const items = data.sections.reduce((total, section) => total + (section.mail?.length ?? section.lines.length), 0);
 	return (
 		<section className="card card--daily" aria-label={name}>
 			<header className="card__head">
@@ -181,11 +275,15 @@ function DailyCard({ data }: { data: DailyEntryData }) {
 				{data.late === true ? <span className="chip chip--late">sent late</span> : null}
 			</header>
 			{data.empty === true ? (
-				<p className="card__title">Nothing on your list today: no tasks, meetings or birthdays. Enjoy the day.</p>
+				<p className="card__title">
+					{digest
+						? "No mail needs your attention since the last digest."
+						: "Nothing on your list today: no tasks, meetings or birthdays. Enjoy the day."}
+				</p>
 			) : (
-				<details className="card__facts">
+				<details className="card__facts" open={digest}>
 					<summary>
-						What the assistant looked at{" "}
+						{digest ? "Mail the assistant picked out" : "What the assistant looked at"}{" "}
 						<span className="card__muted">
 							({items === 0 ? "nothing recorded" : `${items} item${items === 1 ? "" : "s"}`})
 						</span>
@@ -193,12 +291,22 @@ function DailyCard({ data }: { data: DailyEntryData }) {
 					{data.sections.map((section) => (
 						<div key={section.title}>
 							<p className="card__muted card__section">{section.title}</p>
-							<ul className="facts">
-								{section.lines.map((line, index) => (
-									// biome-ignore lint/suspicious/noArrayIndexKey: the list is fixed once posted
-									<li key={index}>{line}</li>
-								))}
-							</ul>
+							{section.mail === undefined ? (
+								<ul className="facts">
+									{section.lines.map((line, index) => (
+										// biome-ignore lint/suspicious/noArrayIndexKey: the list is fixed once posted
+										<li key={index}>{line}</li>
+									))}
+								</ul>
+							) : (
+								<>
+									<MailRows mail={section.mail} />
+									{/* The last line of a long digest says how many more there are; the rows above are the ones listed. */}
+									{section.lines.length > section.mail.length ? (
+										<p className="card__muted">{section.lines.at(-1)}</p>
+									) : null}
+								</>
+							)}
 						</div>
 					))}
 				</details>
@@ -372,10 +480,13 @@ function ApprovalCardView({
 	actionId,
 	summary,
 	state,
+	buttonOnly,
 }: {
 	actionId: string;
 	summary: string;
 	state: ApprovalCardState;
+	/** A typed YES does not answer this one: only the buttons do. */
+	buttonOnly: boolean;
 }) {
 	const [busy, setBusy] = useState<"approve" | "deny">();
 	const [error, setError] = useState<string>();
@@ -401,8 +512,9 @@ function ApprovalCardView({
 			{state.status === "pending" ? (
 				<>
 					<p className="card__muted">
-						Nothing happens until you answer. A reply of YES also works, if this is the only request waiting and you
-						have not written anything since.
+						{buttonOnly
+							? "Nothing happens until you tap Approve. A reply of YES does not count for this one."
+							: "Nothing happens until you answer. A reply of YES also works, if this is the only request waiting and you have not written anything since."}
 					</p>
 					<div className="card__actions">
 						<button

@@ -13,6 +13,7 @@ import {
 	type SettingsDraft,
 	withModel,
 } from "../lib/settings-form.ts";
+import { GoogleCard } from "./google-card.tsx";
 import { NotificationsCard } from "./notifications-card.tsx";
 import { ScheduleCard } from "./schedule-card.tsx";
 
@@ -48,6 +49,7 @@ export function SettingsView() {
 				) : null}
 				<NotificationsCard />
 				<ScheduleCard />
+				<GoogleCard />
 				{data === undefined && error === undefined ? <p className="placeholder">Loading…</p> : null}
 				{data !== undefined && offeredModels(data.models, "", false).length < data.models.length ? (
 					<label className="settings-card__check">
