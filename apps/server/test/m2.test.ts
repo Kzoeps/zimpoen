@@ -395,6 +395,8 @@ describe("approvals through the whole server", () => {
 		await say(server, `/tool add_task {"title":${JSON.stringify(title)},"remind_in_minutes":60}`);
 		const row = server.db.get<{ id: string }>("SELECT id FROM tasks_item WHERE title = ?", title);
 		const taskId = row?.id ?? "";
+		// The PA is not offered the rarely used tools until it searches for them: the dev model does the same.
+		await say(server, '/tool tool_search {"query":"propose delete task"}');
 		await say(server, `/tool propose_delete_task {"task_id":"${taskId}"}`);
 		const card = (await cards(server)).find((candidate) => candidate.type === "approval");
 		if (card?.type !== "approval") throw new Error("no approval card");

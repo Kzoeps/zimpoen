@@ -1,6 +1,7 @@
 import { access, chmod, constants, mkdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings } from "@assistant/extensions/schedule";
 import { isInside } from "./paths.ts";
 
 export type ModelMode = "faux" | "openai";
@@ -50,6 +51,8 @@ export type Config = {
 	writePath: string;
 	auth: AuthConfig;
 	profile: ProfileConfig;
+	/** When follow-ups and birthdays fire. */
+	schedule: ScheduleSettings;
 	modelMode: ModelMode;
 	push: {
 		mode: PushMode;
@@ -129,6 +132,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 			timezone: parseTimezone(env.ASSISTANT_TIMEZONE, problem),
 			currency: parseCurrency(env.ASSISTANT_CURRENCY, problem),
 		},
+		schedule: parseSchedule(env, problem),
 		modelMode: parseModelMode(env, problem),
 		push: parsePush(env, problem),
 		http: {
@@ -403,6 +407,84 @@ function parsePublicHosts(raw: string | undefined, problem: ReportProblem): stri
 		}
 	}
 	return dedupe(hosts);
+}
+
+/** `ASSISTANT_AGENDA_LEAD_MINUTES` and friends: when follow-ups and birthdays fire. */
+function parseSchedule(env: Env, problem: ReportProblem): ScheduleSettings {
+	const remind = parseTimeOfDay(
+		env.ASSISTANT_BIRTHDAY_REMIND_TIME,
+		"ASSISTANT_BIRTHDAY_REMIND_TIME",
+		DEFAULT_SCHEDULE.birthdayRemindTime,
+		problem,
+	);
+	const check = parseTimeOfDay(
+		env.ASSISTANT_BIRTHDAY_CHECK_TIME,
+		"ASSISTANT_BIRTHDAY_CHECK_TIME",
+		DEFAULT_SCHEDULE.birthdayCheckTime,
+		problem,
+	);
+	if (check <= remind) {
+		problem(
+			"ASSISTANT_BIRTHDAY_CHECK_TIME",
+			`${check} is not later than ASSISTANT_BIRTHDAY_REMIND_TIME (${remind}). The evening question comes after the morning reminder, on the same day.`,
+		);
+	}
+	return {
+		agendaLeadMinutes: parseMinutes(
+			env.ASSISTANT_AGENDA_LEAD_MINUTES,
+			"ASSISTANT_AGENDA_LEAD_MINUTES",
+			DEFAULT_SCHEDULE.agendaLeadMinutes,
+			problem,
+		),
+		followupAskDelayMinutes: parseMinutes(
+			env.ASSISTANT_FOLLOWUP_ASK_DELAY_MINUTES,
+			"ASSISTANT_FOLLOWUP_ASK_DELAY_MINUTES",
+			DEFAULT_SCHEDULE.followupAskDelayMinutes,
+			problem,
+		),
+		birthdayRemindTime: remind,
+		birthdayCheckTime: check,
+		followupReaskTime: parseTimeOfDay(
+			env.ASSISTANT_FOLLOWUP_REASK_TIME,
+			"ASSISTANT_FOLLOWUP_REASK_TIME",
+			DEFAULT_SCHEDULE.followupReaskTime,
+			problem,
+		),
+		followupDefaultTime: parseTimeOfDay(
+			env.ASSISTANT_FOLLOWUP_DEFAULT_TIME,
+			"ASSISTANT_FOLLOWUP_DEFAULT_TIME",
+			DEFAULT_SCHEDULE.followupDefaultTime,
+			problem,
+		),
+	};
+}
+
+function parseMinutes(raw: string | undefined, setting: string, fallback: number, problem: ReportProblem): number {
+	const value = nonEmpty(raw);
+	if (value === undefined) return fallback;
+	// Digits only: Number() would also accept '0x10' (16) and '1e3' (1000).
+	const minutes = /^\d+$/.test(value) ? Number(value) : Number.NaN;
+	if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_SCHEDULE_MINUTES) {
+		problem(
+			setting,
+			`'${value}' is not a number of minutes. Use a whole number from 1 to ${MAX_SCHEDULE_MINUTES} (default ${fallback}).`,
+		);
+		return fallback;
+	}
+	return minutes;
+}
+
+function parseTimeOfDay(raw: string | undefined, setting: string, fallback: string, problem: ReportProblem): string {
+	const value = nonEmpty(raw);
+	if (value === undefined) return fallback;
+	if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+		problem(
+			setting,
+			`'${value}' is not a time of day. Use 24-hour HH:MM in ASSISTANT_TIMEZONE, for example ${fallback}.`,
+		);
+		return fallback;
+	}
+	return value;
 }
 
 function parseTimezone(raw: string | undefined, problem: ReportProblem): string {

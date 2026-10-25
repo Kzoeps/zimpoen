@@ -187,6 +187,78 @@ describe("parseConfig", () => {
 	});
 });
 
+describe("when follow-ups and birthdays fire", () => {
+	it("defaults to a 15 minute agenda lead, a 30 minute wait before asking, and 09:00 and 18:00 for birthdays", () => {
+		expect(parseConfig({ ...auth }, context).schedule).toStrictEqual({
+			agendaLeadMinutes: 15,
+			followupAskDelayMinutes: 30,
+			birthdayRemindTime: "09:00",
+			birthdayCheckTime: "18:00",
+			followupReaskTime: "09:00",
+			followupDefaultTime: "10:00",
+		});
+	});
+
+	it("reads each setting from the environment", () => {
+		const config = parseConfig(
+			{
+				...auth,
+				ASSISTANT_AGENDA_LEAD_MINUTES: "45",
+				ASSISTANT_FOLLOWUP_ASK_DELAY_MINUTES: "10",
+				ASSISTANT_BIRTHDAY_REMIND_TIME: "07:30",
+				ASSISTANT_BIRTHDAY_CHECK_TIME: "20:15",
+				ASSISTANT_FOLLOWUP_REASK_TIME: "08:15",
+				ASSISTANT_FOLLOWUP_DEFAULT_TIME: "14:00",
+			},
+			context,
+		);
+
+		expect(config.schedule).toStrictEqual({
+			agendaLeadMinutes: 45,
+			followupAskDelayMinutes: 10,
+			birthdayRemindTime: "07:30",
+			birthdayCheckTime: "20:15",
+			followupReaskTime: "08:15",
+			followupDefaultTime: "14:00",
+		});
+	});
+
+	it("refuses what is not a number of minutes or a time of day, naming the setting and what to use", () => {
+		for (const env of [
+			{ ASSISTANT_AGENDA_LEAD_MINUTES: "0" },
+			{ ASSISTANT_AGENDA_LEAD_MINUTES: "1441" },
+			{ ASSISTANT_AGENDA_LEAD_MINUTES: "a quarter hour" },
+			{ ASSISTANT_AGENDA_LEAD_MINUTES: "1e2" },
+			{ ASSISTANT_FOLLOWUP_ASK_DELAY_MINUTES: "-5" },
+			{ ASSISTANT_BIRTHDAY_REMIND_TIME: "9am" },
+			{ ASSISTANT_BIRTHDAY_REMIND_TIME: "24:00" },
+			{ ASSISTANT_BIRTHDAY_CHECK_TIME: "18:60" },
+			{ ASSISTANT_FOLLOWUP_REASK_TIME: "9" },
+			{ ASSISTANT_FOLLOWUP_DEFAULT_TIME: "noon" },
+		]) {
+			expect(problemsOf({ ...auth, ...env })).toStrictEqual([Object.keys(env)[0]]);
+		}
+		expect(() => parseConfig({ ...auth, ASSISTANT_AGENDA_LEAD_MINUTES: "0" }, context)).toThrow(
+			/ASSISTANT_AGENDA_LEAD_MINUTES: '0' is not a number of minutes\. Use a whole number from 1 to 1440 \(default 15\)/,
+		);
+		expect(() => parseConfig({ ...auth, ASSISTANT_BIRTHDAY_REMIND_TIME: "9am" }, context)).toThrow(
+			/ASSISTANT_BIRTHDAY_REMIND_TIME: '9am' is not a time of day\. Use 24-hour HH:MM/,
+		);
+	});
+
+	it("wants the evening question after the morning reminder, since it asks about what the reminder was for", () => {
+		expect(problemsOf({ ...auth, ASSISTANT_BIRTHDAY_REMIND_TIME: "19:00" })).toStrictEqual([
+			"ASSISTANT_BIRTHDAY_CHECK_TIME",
+		]);
+		expect(
+			problemsOf({ ...auth, ASSISTANT_BIRTHDAY_REMIND_TIME: "10:00", ASSISTANT_BIRTHDAY_CHECK_TIME: "10:00" }),
+		).toStrictEqual(["ASSISTANT_BIRTHDAY_CHECK_TIME"]);
+		expect(
+			problemsOf({ ...auth, ASSISTANT_BIRTHDAY_REMIND_TIME: "08:00", ASSISTANT_BIRTHDAY_CHECK_TIME: "08:01" }),
+		).toStrictEqual([]);
+	});
+});
+
 describe("loadConfig (file system)", () => {
 	const temps: string[] = [];
 	afterEach(async () => {

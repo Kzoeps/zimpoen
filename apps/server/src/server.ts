@@ -5,7 +5,7 @@ import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Harness, HarnessOptions, ReportInfo } from "@earendil-works/pi-durable";
 import { serve } from "@hono/node-server";
-import { buildAgents, countParkedTasks, type EnsureAgentsResult, ensureAgents } from "./agents.ts";
+import { buildAgents, countParkedTasks, type EnsureAgentsResult, ensureAgents, listUnrunnableTasks } from "./agents.ts";
 import type { Config } from "./config.ts";
 import type { DevProviderOptions } from "./dev-model.ts";
 import { createDomain, type Domain, type RepairReport, type SweepReport } from "./domain.ts";
@@ -91,7 +91,13 @@ export async function startServer(config: Config, options: StartServerOptions = 
 				? createFakePushSender(config.paths.pushOutbox, logger)
 				: createWebPushSender(vapid, config.push.subject));
 		const notifier = createNotifier(db, sender, logger);
-		const domain = createDomain({ db, timezone: config.profile.timezone, now, notify: notifier.notify });
+		const domain = createDomain({
+			db,
+			timezone: config.profile.timezone,
+			now,
+			notify: notifier.notify,
+			schedule: config.schedule,
+		});
 		const migrations = migrate(db, [...coreMigrations, ...domain.migrations]);
 		if (migrations.applied.length > 0) logger.info(`[db] applied migrations: ${migrations.applied.join(", ")}`);
 
@@ -122,6 +128,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 		logAgents(logger, agents);
 		await warnIfNoOpenAiLogin(logger, config, runtime);
 		await warnAboutParkedTasks(logger, harness);
+		await warnAboutUnrunnableTasks(logger, harness);
 		const repairLog = createRepairLogger(logger, config.paths.appDb);
 		repairLog.startup(await domain.repair());
 
@@ -307,6 +314,24 @@ async function warnAboutParkedTasks(logger: ServerLogger, harness: Harness): Pro
 	);
 }
 
+/**
+ * A task that no installed definition fits never wakes, and a timer among them would stop a reminder, a meeting or a
+ * birthday without a word, so say so at every start.
+ */
+async function warnAboutUnrunnableTasks(logger: ServerLogger, harness: Harness): Promise<void> {
+	const stuck = await listUnrunnableTasks(harness, BACKGROUND_CONTEXT);
+	if (stuck.length === 0) return;
+	const shown = stuck
+		.slice(0, 10)
+		.map((task) => `${task.kind} #${task.id} (${task.reason})`)
+		.join(", ");
+	logger.error(
+		`[durable] ${stuck.length} task(s) cannot run, because no installed definition fits them: ${shown}${stuck.length > 10 ? ", ..." : ""}. ` +
+			"Whatever they were waiting for (a reminder, a meeting, a birthday) stays silent. A task's phases may change only with a new " +
+			"`version` and a `migrate` function (docs/design-notes.md); restoring the code that defined them also helps.",
+	);
+}
+
 /** An error message as a sentence, so that more text can follow it. */
 const sentence = (message: string): string => (/[.!?]$/.test(message) ? message : `${message}.`);
 
@@ -316,32 +341,64 @@ type RepairLogger = {
 };
 
 /**
- * Says what repair did, and for what it could not repair, what to run. A request or task that cannot be repaired
+ * Says what repair did, and for what it could not repair, what to run. A request or row that cannot be repaired
  * (typically a conversation that `DELETE FROM agents` made Durable's side forget) is described once per process, not
  * every ten minutes: it will still be there, and the server works without it.
  */
 function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
 	const described = new Set<string>();
 
-	function rescheduled(ids: string[]): void {
+	/** The SQL that points a row at the PA's current conversation, for rows whose conversation is gone for good. */
+	const repoint = (table: string, id: string): string =>
+		`sqlite3 "${appDb}" "UPDATE ${table} SET conversation_id = (SELECT conversation_id FROM agents WHERE id = 'pa') WHERE id = '${id}'"`;
+
+	function rescheduled(tag: string, what: string, ids: string[]): void {
 		if (ids.length === 0) return;
 		logger.warn(
-			`[tasks] ${ids.length} reminder(s) had no live timer (Durable's database lost it, for example after a power cut, ` +
+			`[${tag}] ${ids.length} ${what} had no live timer (Durable's database lost it, for example after a power cut, ` +
 				`or Durable ended it after an error) and were scheduled again: ${ids.join(", ")}`,
 		);
 	}
 
-	function unrepaired(failures: RepairReport["reminders"]["failures"]): void {
+	function unrepaired(
+		tag: string,
+		failures: RepairReport["reminders"]["failures"],
+		subject: (id: string) => string,
+		remedy: (id: string) => string,
+	): void {
 		for (const failure of failures) {
-			if (described.has(`task:${failure.itemId}`)) continue;
-			described.add(`task:${failure.itemId}`);
+			const key = `${tag}:${failure.itemId}`;
+			if (described.has(key)) continue;
+			described.add(key);
 			logger.error(
-				`[tasks] could not give task ${failure.itemId} its reminder timer: ${sentence(failure.message)} The server keeps running without ` +
-					"that reminder and tries again every few minutes. If the conversation is gone for good (after DELETE FROM agents, " +
-					`for example), drop the reminder: sqlite3 "${appDb}" "UPDATE tasks_item SET remind_at = NULL WHERE id = '${failure.itemId}'"`,
+				`[${tag}] could not give ${subject(failure.itemId)}: ${sentence(failure.message)} The server keeps running without ` +
+					"it and tries again every few minutes. If the conversation is gone for good (after DELETE FROM agents, " +
+					`for example), ${remedy(failure.itemId)}`,
 			);
 		}
 	}
+
+	const tasksUnrepaired = (failures: RepairReport["reminders"]["failures"]): void =>
+		unrepaired(
+			"tasks",
+			failures,
+			(id) => `task ${id} its reminder timer`,
+			(id) => `drop the reminder: sqlite3 "${appDb}" "UPDATE tasks_item SET remind_at = NULL WHERE id = '${id}'"`,
+		);
+	const followupsUnrepaired = (failures: RepairReport["followups"]["failures"]): void =>
+		unrepaired(
+			"followups",
+			failures,
+			(id) => `follow-up ${id} its timer`,
+			(id) => `move it to the assistant's new conversation: ${repoint("followups_item", id)}`,
+		);
+	const birthdaysUnrepaired = (failures: RepairReport["birthdays"]["failures"]): void =>
+		unrepaired(
+			"people",
+			failures,
+			(id) => `${id} its birthday timer`,
+			(id) => `move it to the assistant's new conversation: ${repoint("people_person", id)}`,
+		);
 
 	function unannounced(failures: RepairReport["approvals"]["failures"]): void {
 		for (const failure of failures) {
@@ -355,10 +412,18 @@ function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
 		}
 	}
 
+	function timers(report: Pick<RepairReport, "reminders" | "followups" | "birthdays">): void {
+		rescheduled("tasks", "reminder(s)", report.reminders.rescheduled);
+		tasksUnrepaired(report.reminders.failures);
+		rescheduled("followups", "follow-up(s)", report.followups.rescheduled);
+		followupsUnrepaired(report.followups.failures);
+		rescheduled("people", "birthday timer(s)", report.birthdays.rescheduled);
+		birthdaysUnrepaired(report.birthdays.failures);
+	}
+
 	return {
 		startup(report) {
-			rescheduled(report.reminders.rescheduled);
-			unrepaired(report.reminders.failures);
+			timers(report);
 			const { expired, executed, notified, failures } = report.approvals;
 			if (expired + executed + notified > 0) {
 				logger.info(
@@ -369,8 +434,7 @@ function createRepairLogger(logger: ServerLogger, appDb: string): RepairLogger {
 			unannounced(failures);
 		},
 		sweep(report) {
-			rescheduled(report.reminders.rescheduled);
-			unrepaired(report.reminders.failures);
+			timers(report);
 		},
 	};
 }
@@ -417,7 +481,11 @@ function startMaintenance(options: MaintenanceOptions): () => void {
 			.then((report) => repairLog.sweep(report))
 			.catch((error) => {
 				// A sweep that was running when the server shut down finds the Harness closed: not worth a line in the log.
-				if (!stopped) logger.error("[maintenance] the periodic repair of reminders and approvals failed:", error);
+				if (!stopped)
+					logger.error(
+						"[maintenance] the periodic repair of reminders, meetings, birthdays and approvals failed:",
+						error,
+					);
 			})
 			.finally(() => {
 				sweeping = false;

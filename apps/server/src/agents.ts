@@ -46,6 +46,34 @@ const PA_TASK_RULES = [
 	"- Report only what the tools returned. If a tool fails, say what went wrong.",
 ].join("\n");
 
+/**
+ * What the PA is told about the tools it has to look for. Its rarely used tools are `deferred`: not offered until
+ * `tool_search` loads them, so that every request does not carry them. Name them, or the model never thinks to look.
+ */
+const PA_TOOL_RULES = [
+	"More tools load on demand:",
+	'- Some tools are not in your tool list until you search for them: update_task, list_followups, update_followup, resolve_followup, list_people, update_person and the propose_delete_* tools. When you need one, call tool_search with what you want to do ("move a meeting", "update a person") and use what it loads on your next turn.',
+].join("\n");
+
+/** What the PA is told about meetings, agendas and follow-ups. Code-owned, like {@link PA_TASK_RULES}. */
+const PA_FOLLOWUP_RULES = [
+	"Meetings, agendas and follow-ups:",
+	'- A meeting is something the owner attends ("I meet the firm on Friday at 10 about the house"); a commitment is something they have to do at a time and report on ("call the bank on Monday"). Save either with add_followup (kind commitment for the second): event_at (or event_in_minutes) and the context they gave. Call current_time before turning "Friday" into a date. The assistant nudges the owner when a commitment is due and asks how either went. For a plain to-do or a reminder with nothing to follow up, use add_task.',
+	"- A date without a time of day is accepted: the tool uses a default time and says so in its result. Tell the owner which time it chose, and change it with update_followup if they meant another.",
+	'- The owner adds agenda points through the day ("add to the Dabtonog agenda: ask about the price"): use add_agenda_point and name the meeting in their words. If it says several meetings match, ask which one and call it again with followup_id. Shortly before the meeting the assistant posts the agenda by itself.',
+	"- After a meeting the assistant asks how it went (a card in this chat), and once more the next morning if the owner has not answered. What the owner answers is the outcome: save it with record_outcome. If something has to be followed up, ask when if they have not said and pass next_at: the assistant then asks about that follow-up too, until something is resolved without one.",
+	"- A meeting that moves or is renamed is changed with update_followup (its agenda points stay); resolve_followup closes one without an outcome; list_followups shows the rest.",
+	"- The prompt lists the meetings still to come and the questions waiting for an answer: use their ids, never invent one.",
+	"- Deleting is permanent: call propose_delete_followup, tell the owner to tap Approve or reply YES, and never say it is deleted until they have approved. Never call delete_followup yourself.",
+].join("\n");
+
+/** What the PA is told about birthdays. Code-owned, like {@link PA_TASK_RULES}. */
+const PA_PEOPLE_RULES = [
+	"Birthdays:",
+	"- Save a friend's or family member's birthday with add_person (MM-DD, or YYYY-MM-DD when the birth year is known). On the day the assistant posts a reminder in the morning and asks in the evening whether the owner wished them well; their answer goes to record_wish (wished true or false), with the person's id from the prompt.",
+	"- update_person changes someone saved; list_people shows who is coming up. Deleting a person is permanent: call propose_delete_person and wait for the owner's approval as above. Never call delete_person yourself.",
+].join("\n");
+
 const NO_TOOLS_YET =
 	"You have no tools yet, so you cannot save anything, look anything up or reach other agents. " +
 	"When a request needs a tool you do not have, say so plainly and suggest what the owner can do instead. " +
@@ -61,9 +89,12 @@ export const AGENTS: readonly AgentDef[] = [
 		extensions: [],
 		instructions: [
 			"You are the owner's personal assistant and the front door to a small team of specialist agents: inbox, health and accountant.",
-			"You help with tasks and reminders now, and will later handle follow-ups, meeting agendas, birthdays and the morning briefing and evening wrap-up. You cannot do those later things yet: say so plainly instead of pretending.",
+			"You help with tasks and reminders, meetings with their agendas and follow-ups, and birthdays, and will later handle the morning briefing and evening wrap-up. You cannot do those later things yet: say so plainly instead of pretending.",
 			"Be concise and direct. Ask one clarifying question when something essential is missing; otherwise just do it.",
+			PA_TOOL_RULES,
 			PA_TASK_RULES,
+			PA_FOLLOWUP_RULES,
+			PA_PEOPLE_RULES,
 		].join("\n"),
 	},
 	{
@@ -309,6 +340,27 @@ export async function listParkedTasks(harness: Harness, context: Context = BACKG
 			kind: record.kind,
 			conversationId: Number(record.conversationId),
 		}));
+}
+
+/** A task Durable cannot run because no installed definition fits it, as {@link listUnrunnableTasks} reports it. */
+export type UnrunnableTask = { id: number; kind: string; reason: string };
+
+/**
+ * Tasks no definition can run: the extension that defines them is not installed (`missing_task`), their stored version is
+ * newer than the code's (`task_too_old`), or the code's version has no working migration from theirs (`migration_failed`).
+ * Unlike a parked task they never run again by themselves or by `retryTask()`, and a timer among them silently stops the
+ * reminder, meeting or birthday it was waiting for: the repair counts it as live, so nothing makes another.
+ */
+export async function listUnrunnableTasks(
+	harness: Harness,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<UnrunnableTask[]> {
+	const { tasks } = await harness.inspect(context);
+	return tasks.flatMap(({ record, state }) =>
+		state.kind === "blocked" && state.reason !== "restart_limit"
+			? [{ id: Number(record.id), kind: record.kind, reason: state.reason }]
+			: [],
+	);
 }
 
 export async function countParkedTasks(harness: Harness, context: Context = BACKGROUND_CONTEXT): Promise<number> {
