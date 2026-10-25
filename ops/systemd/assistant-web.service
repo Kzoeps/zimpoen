@@ -1,0 +1,51 @@
+# The assistant's web app (Next.js): pages and the /api proxy on 127.0.0.1:3000. Tailscale Serve is the only way in.
+#
+# Install (docs/SETUP.md, step 7): ops/install-units.sh fills in the lines marked CHANGE (the user, the paths, Node) and installs
+# both units, so this file stays as it is in the checkout. To change an installed unit later: sudo systemctl edit --full assistant-web
+# Logs: journalctl -u assistant-web -f
+[Unit]
+Description=Personal assistant: web app
+After=network-online.target assistant-server.service
+Wants=network-online.target assistant-server.service
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# CHANGE: the same user as assistant-server.service (it only needs to read the checkout).
+User=CHANGE_ME
+# CHANGE: <the repository checkout>/apps/web, built with `pnpm build`.
+WorkingDirectory=/opt/assistant/apps/web
+EnvironmentFile=/etc/assistant/assistant.env
+Environment=NODE_ENV=production
+# CHANGE: the absolute path of Node 24, as in assistant-server.service. `next start` is run through Node directly, so the
+# unit does not depend on pnpm being on a service's PATH. It binds to 127.0.0.1 only.
+ExecStart=/usr/bin/node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3000
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Next writes its response cache under .next/cache. CHANGE: <the repository checkout>/apps/web/.next
+ReadWritePaths=/opt/assistant/apps/web/.next
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

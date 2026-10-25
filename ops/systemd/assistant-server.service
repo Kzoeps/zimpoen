@@ -1,0 +1,62 @@
+# The assistant's server: Durable harness, schedulers, HTTP API and SSE on 127.0.0.1:3001.
+#
+# Install (docs/SETUP.md, step 7): ops/install-units.sh fills in the lines marked CHANGE (the user, the paths, Node) and installs
+# both units, so this file stays as it is in the checkout. To change an installed unit later: sudo systemctl edit --full assistant-server
+# Logs: journalctl -u assistant-server -f
+[Unit]
+Description=Personal assistant: server
+After=network-online.target
+Wants=network-online.target
+# One server per data directory (it holds <data>/server.lock); a crash loop must not hammer the model or the push services.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# CHANGE: the Linux user that runs it. It owns the data directory, and it is the user whose Documents and Downloads the
+# assistant may read. A dedicated unprivileged user works if you point ASSISTANT_READ_PATHS at folders it can read.
+User=CHANGE_ME
+# CHANGE: the repository checkout (built with `pnpm build`). The server's paths are relative to it.
+WorkingDirectory=/opt/assistant
+EnvironmentFile=/etc/assistant/assistant.env
+Environment=NODE_ENV=production
+# CHANGE: the absolute path of Node 24 (`command -v node`; with nvm: /home/<user>/.nvm/versions/node/v24.x.y/bin/node).
+ExecStart=/usr/bin/node apps/server/dist/main.js
+Restart=on-failure
+RestartSec=5
+# SIGTERM closes the Durable harness cleanly (the next start resumes exactly where this one stopped); the server exits by
+# itself after 15 s, so 30 s is generous.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Hardening. Chosen so that nothing the assistant legitimately does breaks:
+# - ProtectHome=read-only keeps ~/Documents and ~/Downloads READABLE (the assistant's read allowlist) and everything else in
+#   /home read-only; the data directory is made writable again by ReadWritePaths below.
+# - ProtectSystem=strict makes the whole file system read-only except ReadWritePaths (and /tmp, /var/tmp via PrivateTmp).
+# - No MemoryDenyWriteExecute: V8 needs writable and executable memory.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+# CHANGE: must be exactly ASSISTANT_DATA_DIR (default: <WorkingDirectory>/data). The folder must exist before the unit starts, or systemd
+# stops the start at its sandbox setup: ops/install-units.sh creates it (mode 0700, owned by the user).
+ReadWritePaths=/opt/assistant/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+# Outbound: OpenAI, Google, push services over IP; AF_UNIX for the name resolver.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+# Files the server creates are private: databases, uploads, secrets.
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
