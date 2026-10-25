@@ -105,6 +105,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			schedule: config.schedule,
 			// The uploads folder is how files reach the PA, so it is named by `read_file`'s ids rather than as a place to look.
 			files: { readPaths: config.readPaths.filter((path) => path !== config.paths.files), images },
+			health: config.health,
 		});
 		const migrations = migrate(db, [...coreMigrations, ...domain.migrations]);
 		if (migrations.applied.length > 0) logger.info(`[db] applied migrations: ${migrations.applied.join(", ")}`);
@@ -126,7 +127,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 
 		await tidyCredentials(logger, config, runtime);
 
-		const agentDefs = buildAgents({ pa: domain.paExtensions });
+		const agentDefs = buildAgents({ pa: domain.paExtensions, health: domain.healthExtensions });
 		const agents = await ensureAgents(harness, db, {
 			agents: agentDefs,
 			shared: runtime.shared,

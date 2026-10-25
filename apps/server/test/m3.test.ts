@@ -72,7 +72,8 @@ describe("migrations and agents", () => {
 		]);
 		const other = server.db.get<{ conversation_id: number }>("SELECT conversation_id FROM agents WHERE id = 'health'");
 		const healthDoc = await server.harness.snapshot(AgentDoc, other?.conversation_id as ConversationId, ctx);
-		expect(healthDoc?.extensions).toStrictEqual(["profile"]); // capability by tool presence: only the PA has them
+		// Capability by tool presence: the PA's tools are the PA's alone, and the Health agent has its own (and the hook that guards its deletions).
+		expect(healthDoc?.extensions).toStrictEqual(["profile", "health", "approvals", "tool-search"]);
 	});
 });
 

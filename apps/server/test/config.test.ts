@@ -72,6 +72,7 @@ describe("parseConfig", () => {
 		]);
 		expect(config.http).toStrictEqual({ host: "127.0.0.1", port: 3001, publicHosts: [] });
 		expect(config.profile).toStrictEqual({ ownerName: "the owner", timezone: "Asia/Thimphu", currency: "BTN" });
+		expect(config.health).toStrictEqual({});
 	});
 
 	it("reads every setting from the environment", () => {
@@ -84,6 +85,7 @@ describe("parseConfig", () => {
 				ASSISTANT_OWNER_NAME: "Dorje",
 				ASSISTANT_TIMEZONE: "Europe/London",
 				ASSISTANT_CURRENCY: "USD",
+				ASSISTANT_OWNER_HEIGHT_CM: "176.5",
 				ASSISTANT_MODEL_MODE: "openai",
 				ASSISTANT_PORT: "4100",
 				ASSISTANT_PUBLIC_HOST: "My-Laptop.tail1234.ts.net, other.example",
@@ -94,7 +96,9 @@ describe("parseConfig", () => {
 		expect(config.dataDir).toBe("/srv/assistant");
 		expect(config.readPaths).toStrictEqual(["/srv/in", "/srv/other", "/srv/assistant/files"]);
 		expect(config.auth).toStrictEqual({ mode: "on", ownerLogin: "dorje@example.com" });
+		// The height is for the Health module only: it must not ride in the profile every agent is given.
 		expect(config.profile).toStrictEqual({ ownerName: "Dorje", timezone: "Europe/London", currency: "USD" });
+		expect(config.health).toStrictEqual({ heightCm: 176.5 });
 		expect(config.modelMode).toBe("openai");
 		expect(config.http.port).toBe(4100);
 		expect(config.http.publicHosts).toStrictEqual(["my-laptop.tail1234.ts.net", "other.example"]);
@@ -160,6 +164,9 @@ describe("parseConfig", () => {
 		["ASSISTANT_PUBLIC_HOST", { ...auth, ASSISTANT_PUBLIC_HOST: "laptop.ts.net/api" }],
 		["ASSISTANT_TIMEZONE", { ...auth, ASSISTANT_TIMEZONE: "Mars/Olympus" }],
 		["ASSISTANT_CURRENCY", { ...auth, ASSISTANT_CURRENCY: "btn" }],
+		["ASSISTANT_OWNER_HEIGHT_CM", { ...auth, ASSISTANT_OWNER_HEIGHT_CM: "5'10" }],
+		["ASSISTANT_OWNER_HEIGHT_CM", { ...auth, ASSISTANT_OWNER_HEIGHT_CM: "1.76" }], // metres, not centimetres
+		["ASSISTANT_OWNER_HEIGHT_CM", { ...auth, ASSISTANT_OWNER_HEIGHT_CM: "300" }],
 		["ASSISTANT_READ_PATHS", { ...auth, ASSISTANT_READ_PATHS: "Documents" }],
 		["ASSISTANT_READ_PATHS", { ...auth, ASSISTANT_READ_PATHS: "/a::/b" }],
 		["ASSISTANT_READ_PATHS", { ...auth, ASSISTANT_READ_PATHS: "/" }],

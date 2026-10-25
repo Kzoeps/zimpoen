@@ -17,6 +17,8 @@ import {
 	type FilesDeps,
 	filesModule,
 	followupsModule,
+	type HealthDeps,
+	healthModule,
 	peopleModule,
 	type ReconcileReport,
 	type RecoveryReport,
@@ -42,6 +44,11 @@ export type Domain = {
 	 * `deferred` (the rarely used ones, which would otherwise ride along in every request). Other agents get none of them.
 	 */
 	paExtensions: Extension[];
+	/**
+	 * What the Health agent selects: its tools, prompt section and the approval hook that guards its deletions, and
+	 * `tool_search` for the deletion tools it keeps out of its everyday list. The PA does not get the health tools.
+	 */
+	healthExtensions: Extension[];
 	approvals: ApprovalService;
 	/** The morning briefing and the evening wrap-up: their times and whether they run. */
 	daily: DailyService;
@@ -85,6 +92,8 @@ export type DomainOptions = {
 	schedule?: Partial<ScheduleSettings>;
 	/** The folders the PA may read and the image processor, for the file tools. */
 	files?: FilesDeps;
+	/** What the Health module is told about the owner: their height, for BMI. */
+	health?: HealthDeps;
 };
 
 /** The modules in the order their migrations and extensions are installed. */
@@ -95,6 +104,7 @@ export const MODULES: readonly DomainModule[] = [
 	approvalsModule,
 	dailyModule,
 	filesModule,
+	healthModule,
 ];
 
 export function createDomain(options: DomainOptions): Domain {
@@ -122,6 +132,7 @@ export function createDomain(options: DomainOptions): Domain {
 		approvals,
 		...(options.schedule === undefined ? {} : { schedule: options.schedule }),
 		...(options.files === undefined ? {} : { files: options.files }),
+		...(options.health === undefined ? {} : { health: options.health }),
 	};
 	for (const module of MODULES) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = MODULES.flatMap((module) => module.facts?.(deps) ?? []);
@@ -131,12 +142,14 @@ export function createDomain(options: DomainOptions): Domain {
 	const people = peopleModule.extension(deps);
 	const daily = dailyModule.extension(deps);
 	const files = filesModule.extension(deps);
+	const health = healthModule.extension(deps);
 	const guard = approvalsModule.extension(deps);
 	const toolSearch = createToolSearchExtension();
 	return {
 		migrations: collectMigrations(MODULES),
-		extensions: [tasks, followups, people, daily, files, guard, toolSearch],
+		extensions: [tasks, followups, people, daily, files, health, guard, toolSearch],
 		paExtensions: [tasks, followups, people, daily, files, guard, toolSearch],
+		healthExtensions: [health, guard, toolSearch],
 		approvals,
 		daily: dailyModule.service(deps),
 		bind: (open) => {

@@ -62,9 +62,11 @@ describe("ensureAgents", () => {
 		const result = await ensure();
 
 		expect(result).toMatchObject({ created: [], adopted: ["pa", "inbox", "health", "accountant"] });
-		expect(listAgentRows(db).map((row) => [row.id, row.conversationId])).toStrictEqual(
-			before.map((row) => [row.id, row.conversationId]),
-		);
+		// As sets: rows come back ordered by `created_at`, and adopting four agents inside one millisecond ties it, which
+		// leaves the order to the ids.
+		const byId = (rows: typeof before) =>
+			rows.map((row) => [row.id, row.conversationId] as const).sort(([a], [b]) => a.localeCompare(b));
+		expect(byId(listAgentRows(db))).toStrictEqual(byId(before));
 		const conversations = await runtime.harness.commit((tx) => tx.scanConversations({}, 100), ctx);
 		expect(conversations.items.filter((record) => record.id > 1)).toHaveLength(4);
 	});
@@ -188,21 +190,60 @@ describe("buildAgents", () => {
 	const tools = defineExtension({ name: "tasks" });
 	const guard = defineExtension({ name: "approvals" });
 
-	it("gives the PA the domain extensions and every other agent exactly what it had (capability by tool presence)", () => {
-		const built = buildAgents({ pa: [tools, guard] });
+	const exercises = defineExtension({ name: "health" });
 
-		expect(built.find((def) => def.id === "pa")?.extensions.map((extension) => extension.name)).toStrictEqual([
-			"tasks",
-			"approvals",
-		]);
-		for (const def of built.filter((candidate) => candidate.id !== "pa")) expect(def.extensions).toStrictEqual([]);
+	it("gives the PA and the Health agent their own extensions and every other agent exactly what it had (capability by tool presence)", () => {
+		const built = buildAgents({ pa: [tools, guard], health: [exercises, guard] });
+		const names = (id: string) => built.find((def) => def.id === id)?.extensions.map((extension) => extension.name);
+
+		expect(names("pa")).toStrictEqual(["tasks", "approvals"]);
+		expect(names("health")).toStrictEqual(["health", "approvals"]);
+		for (const def of built.filter((candidate) => !["pa", "health"].includes(candidate.id))) {
+			expect(def.extensions).toStrictEqual([]);
+		}
 		expect(built.map((def) => def.id)).toStrictEqual(AGENTS.map((def) => def.id));
 	});
 
+	it("leaves the Health agent as it was when it is given nothing", () => {
+		expect(buildAgents({ pa: [tools] }).find((def) => def.id === "health")?.extensions).toStrictEqual([]);
+	});
+
 	it("does not change the base definitions it was given", () => {
-		buildAgents({ pa: [tools] });
+		buildAgents({ pa: [tools], health: [exercises] });
 
 		expect(AGENTS.find((def) => def.id === "pa")?.extensions).toStrictEqual([]);
+		expect(AGENTS.find((def) => def.id === "health")?.extensions).toStrictEqual([]);
+	});
+});
+
+describe("the Health agent's rules", () => {
+	const instructions = AGENTS.find((def) => def.id === "health")?.instructions ?? "";
+
+	it("keep arithmetic in the tools, say it is not a doctor, and send deletions through approval", () => {
+		expect(instructions).toMatch(
+			/Arithmetic is the tools' job.*Never calculate, round, convert or estimate a number yourself/s,
+		);
+		expect(instructions).toMatch(/You are not a doctor.*Do not diagnose.*do not prescribe/s);
+		expect(instructions).toMatch(
+			/propose_delete_weight, propose_delete_workout and propose_merge_exercises.*tool_search/s,
+		);
+		expect(instructions).toMatch(/Never call delete_weight, delete_workout or merge_exercises yourself/);
+		expect(instructions).not.toMatch(/no tools yet/i);
+	});
+
+	it("name every tool the Health agent has, or the model would never think of it", () => {
+		for (const tool of [
+			"log_weight",
+			"weight_trend",
+			"log_workout",
+			"exercise_progress",
+			"list_workouts",
+			"current_time",
+			"rename_exercise",
+			"propose_merge_exercises",
+		]) {
+			expect(instructions, tool).toContain(tool);
+		}
 	});
 });
 

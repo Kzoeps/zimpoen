@@ -24,6 +24,15 @@ export type ProfileConfig = {
 	currency: string;
 };
 
+/**
+ * What only the Health module is told about its owner. Kept out of {@link ProfileConfig} on purpose: the profile is
+ * handed whole to the extension every agent has, and a height that rode in it would reach all of them.
+ */
+export type HealthConfig = {
+	/** The owner's height in centimetres (`ASSISTANT_OWNER_HEIGHT_CM`), for BMI. Absent when not configured: nothing shows a BMI. */
+	heightCm?: number;
+};
+
 export type Config = {
 	/**
 	 * Absolute and canonical (symlinks resolved) once `loadConfig` has run. Holds every database, upload, generated
@@ -51,6 +60,7 @@ export type Config = {
 	writePath: string;
 	auth: AuthConfig;
 	profile: ProfileConfig;
+	health: HealthConfig;
 	/** When follow-ups and birthdays fire. */
 	schedule: ScheduleSettings;
 	modelMode: ModelMode;
@@ -132,6 +142,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 			timezone: parseTimezone(env.ASSISTANT_TIMEZONE, problem),
 			currency: parseCurrency(env.ASSISTANT_CURRENCY, problem),
 		},
+		health: parseHeight(env.ASSISTANT_OWNER_HEIGHT_CM, problem),
 		schedule: parseSchedule(env, problem),
 		modelMode: parseModelMode(env, problem),
 		push: parsePush(env, problem),
@@ -509,6 +520,21 @@ function parseCurrency(raw: string | undefined, problem: ReportProblem): string 
 		);
 	}
 	return currency;
+}
+
+/** Height is optional: without it the Health agent simply shows no BMI. A value that is not a plausible height is refused. */
+function parseHeight(raw: string | undefined, problem: ReportProblem): { heightCm?: number } {
+	const text = nonEmpty(raw);
+	if (text === undefined) return {};
+	const height = Number(text);
+	if (!/^\d+(\.\d+)?$/.test(text) || height < 100 || height > 250) {
+		problem(
+			"ASSISTANT_OWNER_HEIGHT_CM",
+			`'${text}' is not a height in centimetres between 100 and 250, for example 176. Leave it unset to show no BMI.`,
+		);
+		return {};
+	}
+	return { heightCm: height };
 }
 
 function nonEmpty(value: string | undefined): string | undefined {
