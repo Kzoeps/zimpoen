@@ -14,6 +14,7 @@ import {
 	SuggestionConflict,
 	SuggestionNotFound,
 	UnknownDailyJob,
+	type UsageService,
 } from "@assistant/extensions";
 import type {
 	AgentSettingsResponse,
@@ -31,6 +32,7 @@ import type { Conversation, EntryId, Harness, TaskId } from "@earendil-works/pi-
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
+import { createActivityReader } from "../activity.ts";
 import {
 	AGENTS,
 	type AgentDef,
@@ -48,6 +50,7 @@ import { toWireEntries } from "../wire.ts";
 import { authMiddleware } from "./auth.ts";
 import { ApiError, errorBody, errorHandler, invalidRequest, notFound, notFoundHandler } from "./errors.ts";
 import { type HostPolicy, requestGuard } from "./guard.ts";
+import { createOwnerApp, type OwnerProfile } from "./owner.ts";
 import { createFilesApp, createUploadsApp } from "./uploads.ts";
 import {
 	parseDecision,
@@ -94,6 +97,10 @@ export type AppDeps = {
 	daily: DailyService;
 	/** The Inbox's Google accounts, and what the owner answers to its suggestions. */
 	inbox: InboxFacade;
+	/** The weekly token limits and what the agents spent: the dashboard, and the banner `GET /api/agents` feeds. */
+	usage: UsageService;
+	/** What the profile page shows of the owner: the server's configuration. */
+	profile: OwnerProfile;
 	/** The owner's time zone, which the schedule's times are in. */
 	timezone: string;
 	/** Where uploads are kept (`<data>/files`, resolved). */
@@ -172,11 +179,35 @@ export function createApp(deps: AppDeps): Hono {
 		return { id, conversation };
 	}
 
+	/**
+	 * The agents that have used their weekly limit, for the banner. The banner is a decoration on a list that also feeds the
+	 * sidebar, the busy flags and the parked-task warning, so a usage ledger that cannot be read gives no banner and a log line
+	 * (once for as long as the same failure lasts: every open tab asks every few seconds), never a 500 for the whole list.
+	 */
+	let budgetFailure: string | undefined;
+	async function agentsOverBudget(): Promise<AgentsResponse["budget"]["over"]> {
+		try {
+			const over = await deps.usage.alerts(agents);
+			budgetFailure = undefined;
+			return over;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (message !== budgetFailure) {
+				budgetFailure = message;
+				(deps.logger ?? console).error(
+					`[usage] The weekly-limit banner could not be worked out, so GET /api/agents answers without it: ${message}`,
+				);
+			}
+			return [];
+		}
+	}
+
 	app.get("/api/agents", async (c) => {
 		const parked = await listParkedTasks(harness, context);
 		const body: AgentsResponse = {
 			agents: await listAgentSummaries(harness, db, agents, context),
 			health: { parkedTasks: parked.length, parked: parked.slice(0, MAX_LISTED_PARKED) },
+			budget: { over: await agentsOverBudget() },
 		};
 		return c.json(body);
 	});
@@ -388,6 +419,19 @@ export function createApp(deps: AppDeps): Hono {
 		response.headers.set("X-Accel-Buffering", "no");
 		return response;
 	});
+
+	// The owner's pages: profile and memory, activity, usage and the weekly limits. After the guards and the JSON-only rule above.
+	app.route(
+		"/api",
+		createOwnerApp({
+			db,
+			agents,
+			profile: deps.profile,
+			usage: deps.usage,
+			activity: createActivityReader({ harness, db, agents, timezone: deps.timezone }),
+			...(deps.now === undefined ? {} : { now: deps.now }),
+		}),
+	);
 
 	return app;
 }

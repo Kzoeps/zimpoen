@@ -9,7 +9,9 @@
 		"build": "node scripts/build.mjs",
 		"start": "cd ../.. && env NODE_ENV=production node apps/server/dist/main.js",
 		"typecheck": "tsc --noEmit",
-		"connect:google": "cd ../.. && env NODE_ENV=production node apps/server/src/connect-google.ts"
+		"connect:google": "cd ../.. && env NODE_ENV=production node apps/server/src/connect-google.ts",
+		"login:openai": "cd ../.. && env NODE_ENV=production node apps/server/src/login-openai.ts",
+		"logout:openai": "cd ../.. && env NODE_ENV=production node apps/server/src/logout-openai.ts"
 	},
 	"dependencies": {
 		"@assistant/db": "workspace:*",

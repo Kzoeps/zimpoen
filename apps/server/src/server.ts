@@ -146,6 +146,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 				sync: { intervalMs: config.google.syncMinutes * 60_000, ...options.inboxSync },
 			},
 			...(options.delegate === undefined ? {} : { delegate: options.delegate }),
+			warn: (message) => logger.warn(message),
 		});
 		undo.push(() => domain.close());
 		const migrations = migrate(db, [...coreMigrations, ...domain.migrations]);
@@ -212,6 +213,13 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			push: { publicKey: vapid.publicKey },
 			daily: domain.daily,
 			inbox: domain.inbox,
+			usage: domain.usage,
+			profile: {
+				...(config.profile.ownerName === DEFAULT_OWNER_NAME ? {} : { ownerName: config.profile.ownerName }),
+				timezone: config.profile.timezone,
+				currency: config.profile.currency,
+				...(config.health.heightCm === undefined ? {} : { heightCm: config.health.heightCm }),
+			},
 			timezone: config.profile.timezone,
 			filesDir: config.paths.files,
 			workspaceDir: config.paths.workspace,
@@ -336,6 +344,8 @@ async function shutdown(
 ): Promise<void> {
 	const drained = new Promise<void>((resolve) => server.close(() => resolve()));
 	server.closeIdleConnections();
+	// One last reading while Durable is still open, so that what the last minutes spent is not left for the next start to date wrongly.
+	await domain.usage.sample().catch(() => {});
 	try {
 		await runtime.close();
 	} catch (error) {

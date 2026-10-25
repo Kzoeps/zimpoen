@@ -31,6 +31,7 @@ import {
 	inboxModule,
 	invoicesModule,
 	ledgerModule,
+	memoryModule,
 	peopleModule,
 	type ReconcileReport,
 	type RecoveryReport,
@@ -38,6 +39,8 @@ import {
 	type ScheduleSettings,
 	splitsModule,
 	tasksModule,
+	type UsageService,
+	usageModule,
 } from "@assistant/extensions";
 import type { GoogleSettingsResponse, PushPayload, SuggestionDecision, SuggestionState } from "@assistant/shared";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
@@ -79,6 +82,8 @@ export type Domain = {
 	inboxExtensions: Extension[];
 	/** The Inbox's accounts, as Settings shows and changes them, and the owner's answers to what it suggests. */
 	inbox: InboxFacade;
+	/** What the agents spent, sampled from Durable into days and weeks, and the weekly token limits the daily jobs obey (M8). */
+	usage: UsageService;
 	approvals: ApprovalService;
 	/** The morning briefing and the evening wrap-up: their times and whether they run. */
 	daily: DailyService;
@@ -148,6 +153,8 @@ export type DomainOptions = {
 	inbox?: InboxDeps;
 	/** How long the PA's `ask_agent` waits for an answer; tests shorten it. */
 	delegate?: DelegateDeps;
+	/** Where a failure the work goes on without is said (the server's log). */
+	warn?: (message: string) => void;
 };
 
 /**
@@ -171,6 +178,8 @@ export const MODULES: readonly DomainModule[] = [
 	invoicesModule,
 	inboxModule,
 	delegateModule,
+	memoryModule,
+	usageModule,
 ];
 
 export function createDomain(options: DomainOptions): Domain {
@@ -202,6 +211,9 @@ export function createDomain(options: DomainOptions): Domain {
 		...(options.accountant === undefined ? {} : { accountant: options.accountant }),
 		...(options.inbox === undefined ? {} : { inbox: options.inbox }),
 		...(options.delegate === undefined ? {} : { delegate: options.delegate }),
+		...(options.warn === undefined ? {} : { warn: options.warn }),
+		// The daily jobs ask this before they spend tokens; the module is built from `deps`, so it is looked up when asked.
+		budget: { check: (agent) => usageModule.service(deps).check(agent) },
 	};
 	for (const module of MODULES) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = MODULES.flatMap((module) => module.facts?.(deps) ?? []);
@@ -217,6 +229,11 @@ export function createDomain(options: DomainOptions): Domain {
 	const invoices = invoicesModule.extension(deps);
 	const inbox = inboxModule.extension(deps);
 	const delegate = delegateModule.extension(deps);
+	// Every agent is told what is remembered; all but the Inbox may also remember and (with approval) forget. The Inbox reads
+	// untrusted email text, and a line it wrote would be in a prompt for good, so it only reads (PLAN rule 6).
+	const memory = memoryModule.extension(deps);
+	const memoryRead = memoryModule.readOnlyExtension(deps);
+	const usage = usageModule.service(deps);
 	const guard = approvalsModule.extension(deps);
 	const toolSearch = createToolSearchExtension();
 	// `models: false` leaves out `models.classify()` and `models.generateImages()`: they are paid calls to a model provider,
@@ -249,14 +266,17 @@ export function createDomain(options: DomainOptions): Domain {
 			invoices,
 			inbox,
 			delegate,
+			memory,
+			memoryRead,
 			guard,
 			toolSearch,
 			codemode,
 		],
-		paExtensions: [tasks, followups, people, daily, files, delegate, guard, toolSearch],
-		healthExtensions: [health, guard, toolSearch],
-		accountantExtensions: [ledger, splits, invoices, files, guard, toolSearch, codemode],
-		inboxExtensions: [inbox],
+		paExtensions: [tasks, followups, people, daily, files, delegate, guard, toolSearch, memory],
+		healthExtensions: [health, guard, toolSearch, memory],
+		accountantExtensions: [ledger, splits, invoices, files, guard, toolSearch, codemode, memory],
+		inboxExtensions: [inbox, memoryRead],
+		usage,
 		inbox: {
 			settings: () => inboxModule.accounts(deps).settings(),
 			disconnect: (email) => inboxModule.accounts(deps).disconnect(email),
@@ -275,7 +295,7 @@ export function createDomain(options: DomainOptions): Domain {
 				// A person whose conversation is gone fails both repairs for the same reason: say it once.
 				if (!birthdays.failures.some((known) => known.itemId === failure.itemId)) birthdays.failures.push(failure);
 			}
-			return {
+			const report: RepairReport = {
 				reminders: await tasksModule.scheduler(deps).reconcile(),
 				followups: await followupsModule.scheduler(deps).reconcile(),
 				birthdays,
@@ -286,16 +306,25 @@ export function createDomain(options: DomainOptions): Domain {
 				inbox: { start: await inboxModule.start(deps), timers: await inboxModule.scheduler(deps).reconcile() },
 				delegate: await delegateModule.service(deps).recover(),
 			};
+			// Last, and before Durable runs anything: the first reading of an agent only copies its totals, so it must come
+			// before the first run that can spend. A reading that fails skips that agent and says nothing: usage is not worth a start.
+			await usage.sample();
+			return report;
 		},
-		sweep: async () => ({
-			expiredApprovals: approvals.expire(),
-			reminders: await tasksModule.scheduler(deps).reconcile(),
-			followups: await followupsModule.scheduler(deps).reconcile(),
-			birthdays: await peopleModule.scheduler(deps).reconcile(),
-			daily: await dailyModule.scheduler(deps).reconcile(),
-			inbox: await sweepInbox(),
-			delegate: await delegateModule.service(deps).recover(),
-		}),
+		sweep: async () => {
+			const report: SweepReport = {
+				expiredApprovals: approvals.expire(),
+				reminders: await tasksModule.scheduler(deps).reconcile(),
+				followups: await followupsModule.scheduler(deps).reconcile(),
+				birthdays: await peopleModule.scheduler(deps).reconcile(),
+				daily: await dailyModule.scheduler(deps).reconcile(),
+				inbox: await sweepInbox(),
+				delegate: await delegateModule.service(deps).recover(),
+			};
+			// What was spent since the last reading is dated to the day it is read: every ten minutes keeps a day's edge sharp enough.
+			await usage.sample();
+			return report;
+		},
 		close: () => sandbox.close(),
 	};
 }

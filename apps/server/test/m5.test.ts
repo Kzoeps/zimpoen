@@ -116,7 +116,7 @@ function mailbox(h: Harness, subject = "Plot viewing on Thursday: can you confir
 const synced = (server: Server, email = ALICE) => inboxStore.getAccount(server.db, email)?.lastOkAt !== undefined;
 
 describe("the Inbox through the whole server", () => {
-	it("applies the inbox and delegate tables, and gives each agent its own tools: the Inbox has its own seven and nothing else, only the PA can ask another agent", async () => {
+	it("applies the inbox and delegate tables, and gives each agent its own tools: the Inbox has its own seven and recall (it may read memory, never write it) and nothing else, only the PA can ask another agent", async () => {
 		const { server } = await start();
 
 		const ids = server.db.all<{ id: string }>("SELECT id FROM _migrations ORDER BY id").map((row) => row.id);
@@ -132,7 +132,7 @@ describe("the Inbox through the whole server", () => {
 		);
 		const extensionsOf = async (agent: AgentId) =>
 			(await server.harness.snapshot(AgentDoc, conversationOf(server, agent) as ConversationId, ctx))?.extensions;
-		expect(await extensionsOf("inbox")).toStrictEqual(["profile", "inbox"]);
+		expect(await extensionsOf("inbox")).toStrictEqual(["profile", "inbox", "memory-read"]);
 		expect(await extensionsOf("pa")).toStrictEqual([
 			"profile",
 			"tasks",
@@ -143,8 +143,9 @@ describe("the Inbox through the whole server", () => {
 			"delegate",
 			"approvals",
 			"tool-search",
+			"memory",
 		]);
-		expect(await extensionsOf("health")).toStrictEqual(["profile", "health", "approvals", "tool-search"]);
+		expect(await extensionsOf("health")).toStrictEqual(["profile", "health", "approvals", "tool-search", "memory"]);
 
 		expect(await offered(server, "inbox")).toStrictEqual([
 			"current_time",
@@ -152,6 +153,7 @@ describe("the Inbox through the whole server", () => {
 			"mark_triage",
 			"propose_sender_rule",
 			"read_mail",
+			"recall",
 			"search_mail",
 			"suggest_followup",
 		]);

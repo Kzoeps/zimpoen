@@ -84,13 +84,15 @@ describe("the Health agent through the whole server", () => {
 		const ids = server.db.all<{ id: string }>("SELECT id FROM _migrations ORDER BY id").map((row) => row.id);
 		expect(ids).toEqual(expect.arrayContaining(["health/001_weight", "health/002_workouts", "health/003_call_ledger"]));
 		const doc = await server.harness.snapshot(AgentDoc, conversationOf(server, "health") as ConversationId, ctx);
-		expect(doc?.extensions).toStrictEqual(["profile", "health", "approvals", "tool-search"]);
+		expect(doc?.extensions).toStrictEqual(["profile", "health", "approvals", "tool-search", "memory"]);
 		expect(await offered(server, "health")).toStrictEqual([
 			"current_time",
 			"exercise_progress",
 			"list_workouts",
 			"log_weight",
 			"log_workout",
+			"recall",
+			"remember",
 			"rename_exercise",
 			"tool_search",
 			"weight_trend",
@@ -99,7 +101,7 @@ describe("the Health agent through the whole server", () => {
 		const inbox = server.db.get<{ conversation_id: number }>("SELECT conversation_id FROM agents WHERE id = 'inbox'");
 		const inboxDoc = await server.harness.snapshot(AgentDoc, inbox?.conversation_id as ConversationId, ctx);
 		// The Inbox agent has its own tools (M5); none of the Health agent's.
-		expect(inboxDoc?.extensions).toStrictEqual(["profile", "inbox"]);
+		expect(inboxDoc?.extensions).toStrictEqual(["profile", "inbox", "memory-read"]);
 	});
 
 	it("is the only agent that can log a weight: the PA's call is refused before it runs", async () => {

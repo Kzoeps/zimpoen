@@ -14,7 +14,9 @@
 		"typecheck": "pnpm -r typecheck",
 		"test": "vitest run",
 		"lint": "biome check .",
-		"connect:google": "pnpm --filter @assistant/server connect:google"
+		"connect:google": "pnpm --filter @assistant/server connect:google",
+		"login:openai": "pnpm --filter @assistant/server login:openai",
+		"logout:openai": "pnpm --filter @assistant/server logout:openai"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.3",

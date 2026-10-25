@@ -92,7 +92,9 @@ const EVERYDAY = [
 	"list_txns",
 	"preview_invoice",
 	"read_file",
+	"recall",
 	"record_settlement",
+	"remember",
 	"set_balance",
 	"set_invoice_profile",
 	"spending_summary",
@@ -127,6 +129,7 @@ describe("the Accountant agent through the whole server", () => {
 			"approvals",
 			"tool-search",
 			expect.stringMatching(/code/),
+			"memory",
 		]);
 		expect(await offered(server, "accountant")).toStrictEqual(EVERYDAY);
 		for (const agent of ["pa", "health", "inbox"] as const) {

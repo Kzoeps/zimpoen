@@ -1,4 +1,5 @@
 import { type AppDb, coreMigrations, getAgentRow, migrate, openAppDb } from "@assistant/db";
+import type { UsageService } from "@assistant/extensions";
 import type {
 	AgentSettingsResponse,
 	AgentsResponse,
@@ -72,6 +73,32 @@ describe("GET /api/agents", () => {
 		expect(body.agents.map((agent) => agent.id)).toStrictEqual(["pa", "inbox", "health", "accountant"]);
 		expect(body.agents.every((agent) => typeof agent.conversationId === "number" && agent.busy === false)).toBe(true);
 		expect(body.health).toStrictEqual({ parkedTasks: 0, parked: [] });
+	});
+});
+
+describe("GET /api/agents when the usage ledger cannot be read", () => {
+	beforeEach(() => setup());
+
+	it("still lists the agents, with no banner, and says why once in the log: the banner is a decoration, not the list", async () => {
+		const logged: unknown[][] = [];
+		const usage = {
+			alerts: async () => {
+				throw new Error("no such table: usage_budget");
+			},
+		} as unknown as UsageService;
+		const app = createApp(
+			appDepsFor(runtime, db, { usage, logger: { error: (...args: unknown[]) => void logged.push(args) } }),
+		);
+
+		// Every open tab asks every few seconds: a failure that lasts is one line in the log, not one per request.
+		for (let request = 0; request < 3; request++) {
+			const { status, body } = await json<AgentsResponse>(app.request("/api/agents"));
+			expect(status).toBe(200);
+			expect(body.agents.map((agent) => agent.id)).toStrictEqual(["pa", "inbox", "health", "accountant"]);
+			expect(body.budget).toStrictEqual({ over: [] });
+		}
+		expect(logged).toHaveLength(1);
+		expect(String(logged[0]?.[0])).toContain("no such table: usage_budget");
 	});
 });
 
@@ -409,6 +436,129 @@ describe("who may talk to the API (Host and Sec-Fetch-Site)", () => {
 		for (const site of ["same-origin", "none", undefined])
 			expect((await withSite(site)).status, String(site)).toBe(200);
 		expect((await app.request("/api/agents", { headers: { "sec-fetch-site": "cross-site" } })).status).toBe(200);
+	});
+});
+
+describe("the owner's pages sit behind the same guards as every other route", () => {
+	beforeEach(() => setup());
+
+	/** Every route of the owner's pages (profile, memory, activity, usage and the limits), with a body for the writes. */
+	const ROUTES: ReadonlyArray<readonly [method: string, path: string, body?: unknown]> = [
+		["GET", "/api/profile"],
+		["PUT", "/api/profile/preferences", { tone: "Direct." }],
+		["GET", "/api/memory"],
+		["PATCH", "/api/memory/m_00000000", { pinned: true }],
+		["DELETE", "/api/memory/m_00000000", {}],
+		["GET", "/api/activity"],
+		["GET", "/api/usage"],
+		["PUT", "/api/settings/budget/pa", { weeklyTokens: 1000 }],
+	];
+	const WRITES = ROUTES.filter(([method]) => method !== "GET");
+	const OWNER = "me@example.com";
+	const appFor = (auth: AuthConfig = { mode: "off" }) =>
+		createApp(appDepsFor(runtime, db, { auth, hosts: createHostPolicy(3001, ["laptop.tail1234.ts.net"]) }));
+	const fromLoopback = { incoming: { socket: { remoteAddress: "127.0.0.1" } } };
+	const send = (
+		app: Hono,
+		[method, path, body]: (typeof ROUTES)[number],
+		headers: Record<string, string> = {},
+		payload: string | undefined = body === undefined ? undefined : JSON.stringify(body),
+	) =>
+		app.request(
+			path,
+			{
+				method,
+				headers: {
+					...(payload === undefined || "content-type" in headers ? {} : { "content-type": "application/json" }),
+					...headers,
+				},
+				...(payload === undefined ? {} : { body: payload }),
+			},
+			fromLoopback,
+		);
+
+	it("answers the owner on the right host (so that the refusals below are the guards' and nothing else's)", async () => {
+		const app = appFor({ mode: "on", ownerLogin: OWNER });
+
+		for (const route of ROUTES) {
+			const { status } = await send(app, route, { host: "laptop.tail1234.ts.net", "tailscale-user-login": OWNER });
+			// 404 is the answer for the line that does not exist: it got past the guards to the route.
+			expect([200, 404], route.join(" ")).toContain(status);
+		}
+	});
+
+	it.each([["evil.example:3001"], ["127.0.0.1:3000"], ["rebound.example"]])(
+		"refuses Host %s on every route, in both authentication modes",
+		async (host) => {
+			for (const auth of [{ mode: "off" }, { mode: "on", ownerLogin: OWNER }] as AuthConfig[]) {
+				for (const route of ROUTES) {
+					const { status, body } = await json<ApiErrorBody>(
+						send(appFor(auth), route, { host, "tailscale-user-login": OWNER }),
+					);
+					expect([status, body.error.code], `${route.join(" ")} (${auth.mode})`).toStrictEqual([403, "forbidden"]);
+				}
+			}
+		},
+	);
+
+	it("refuses a write the browser marks as cross-site or same-site, but answers the same one from the same origin", async () => {
+		const app = appFor();
+
+		for (const route of WRITES) {
+			for (const site of ["cross-site", "same-site"]) {
+				const { status, body } = await json<ApiErrorBody>(send(app, route, { "sec-fetch-site": site }));
+				expect([status, body.error.code], `${route.join(" ")} ${site}`).toStrictEqual([403, "forbidden"]);
+			}
+			expect([200, 404], route.join(" ")).toContain(
+				(await send(app, route, { "sec-fetch-site": "same-origin" })).status,
+			);
+		}
+	});
+
+	it("takes JSON and nothing else on a write: a form, plain text or no content type is a 415", async () => {
+		const app = appFor();
+
+		for (const route of WRITES) {
+			for (const type of ["application/x-www-form-urlencoded", "text/plain", "multipart/form-data; boundary=x"]) {
+				const { status, body } = await json<ApiErrorBody>(send(app, route, { "content-type": type }, "tone=Direct."));
+				expect([status, body.error.code], `${route.join(" ")} ${type}`).toStrictEqual([415, "invalid_request"]);
+			}
+			expect((await send(app, route, { "content-type": "" }, "{}")).status, `${route.join(" ")} without a type`).toBe(
+				415,
+			);
+		}
+	});
+
+	it("refuses a body over the size limit before reading it", async () => {
+		const app = appFor();
+		const huge = JSON.stringify({ tone: "x".repeat(MAX_REQUEST_BYTES) });
+
+		for (const route of WRITES) {
+			const { status, body } = await json<ApiErrorBody>(send(app, route, {}, huge));
+			expect([status, body.error.code], route.join(" ")).toStrictEqual([413, "payload_too_large"]);
+		}
+	});
+
+	it("asks who is calling when authentication is on: no login, or another one, is a 401 on every route", async () => {
+		const app = appFor({ mode: "on", ownerLogin: OWNER });
+
+		for (const route of ROUTES) {
+			for (const headers of [{}, { "tailscale-user-login": "eve@example.com" }] as Array<Record<string, string>>) {
+				expect((await send(app, route, headers)).status, `${route.join(" ")} ${JSON.stringify(headers)}`).toBe(401);
+			}
+		}
+	});
+
+	it("sends no CORS headers and answers no preflight, so another site's page cannot read these either", async () => {
+		const app = appFor();
+
+		for (const route of ROUTES) {
+			const response = await send(app, route);
+			expect(response.headers.get("access-control-allow-origin"), route.join(" ")).toBeNull();
+		}
+		expect(
+			(await app.request("/api/memory", { method: "OPTIONS", headers: { origin: "https://evil.example" } })).status,
+		).toBe(404);
 	});
 });
 

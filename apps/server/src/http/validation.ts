@@ -1,18 +1,32 @@
 import { TIME_OF_DAY } from "@assistant/extensions";
 import {
 	type ApprovalDecision,
+	DEFAULT_ACTIVITY_PAGE,
 	DEFAULT_HISTORY_PAGE,
 	type DisconnectGoogleRequest,
+	isAgentId,
+	isMemoryKind,
+	isMemoryScope,
 	isThinkingLevel,
+	MAX_ACTIVITY_PAGE,
 	MAX_HISTORY_PAGE,
+	MAX_MEMORY_CHARS,
+	MAX_MEMORY_LIST,
 	MAX_MESSAGE_CHARS,
+	MAX_WEEKLY_TOKENS,
+	type MemoryKind,
+	type MemoryScope,
 	type ModelSelection,
+	PROFILE_SLOTS,
 	type PushSubscribeRequest,
 	REQUEST_ID_PATTERN,
 	type SendMessageRequest,
 	type SuggestionDecision,
 	THINKING_LEVELS,
 	type UpdateAgentSettingsRequest,
+	type UpdateBudgetRequest,
+	type UpdateMemoryRequest,
+	type UpdatePreferencesRequest,
 	type UpdateScheduleRequest,
 } from "@assistant/shared";
 import type { Context, MiddlewareHandler } from "hono";
@@ -220,4 +234,133 @@ export function parseUpdateSchedule(body: Record<string, unknown>): UpdateSchedu
 		...(localTime === undefined ? {} : { localTime }),
 		...(enabled === undefined ? {} : { enabled }),
 	};
+}
+
+/** A real calendar day written `YYYY-MM-DD`, or a 400 that names the parameter. */
+function parseDay(raw: string, name: string): string {
+	// `Date` is NaN for a month 13 or a day 32 (and `toISOString` throws on it), and rolls 30 February over into March.
+	const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00Z`) : undefined;
+	const valid =
+		date !== undefined &&
+		!Number.isNaN(date.getTime()) &&
+		date.toISOString().slice(0, 10) === raw &&
+		raw >= "2000-01-01";
+	if (!valid)
+		throw invalidRequest(
+			`'${name}' must be a day written YYYY-MM-DD, for example 2026-10-26, got '${raw.slice(0, 20)}'.`,
+		);
+	return raw;
+}
+
+/** An optional whole number from 1 to `max`, or `fallback`. */
+function parseLimit(raw: string | undefined, max: number, fallback: number): number {
+	if (raw === undefined) return fallback;
+	const value = Number(raw);
+	if (!/^\d+$/.test(raw) || value < 1 || value > max)
+		throw invalidRequest(`'limit' must be a whole number from 1 to ${max}.`);
+	return value;
+}
+
+export type ActivityRequest = { agent?: string; from?: string; to?: string; cursor?: string; limit: number };
+
+/** `GET /api/activity?agent=&from=&to=&cursor=&limit=`. An agent that is not one is a 400, not an empty list. */
+export function parseActivityQuery(c: Context): ActivityRequest {
+	const agent = c.req.query("agent");
+	if (agent !== undefined && agent !== "all" && !isAgentId(agent)) {
+		throw invalidRequest(`'agent' must be one of pa, inbox, health, accountant or all, got '${agent.slice(0, 20)}'.`);
+	}
+	const from = c.req.query("from");
+	const to = c.req.query("to");
+	const cursor = c.req.query("cursor");
+	if (cursor !== undefined && cursor.length > 400) throw invalidRequest("'cursor' is not one this server gave out.");
+	const first = from === undefined ? undefined : parseDay(from, "from");
+	const last = to === undefined ? undefined : parseDay(to, "to");
+	if (first !== undefined && last !== undefined && first > last) throw invalidRequest("'from' is after 'to'.");
+	return {
+		...(agent === undefined || agent === "all" ? {} : { agent }),
+		...(first === undefined ? {} : { from: first }),
+		...(last === undefined ? {} : { to: last }),
+		...(cursor === undefined || cursor === "" ? {} : { cursor }),
+		limit: parseLimit(c.req.query("limit"), MAX_ACTIVITY_PAGE, DEFAULT_ACTIVITY_PAGE),
+	};
+}
+
+export type MemoryRequest = { scope?: MemoryScope; kind?: MemoryKind; q?: string; limit: number };
+
+/** `GET /api/memory?scope=&kind=&q=&limit=`. */
+export function parseMemoryQuery(c: Context): MemoryRequest {
+	const scope = c.req.query("scope");
+	const kind = c.req.query("kind");
+	const q = c.req.query("q")?.trim();
+	if (scope !== undefined && scope !== "all" && !isMemoryScope(scope)) {
+		throw invalidRequest(`'scope' must be shared, pa, inbox, health, accountant or all, got '${scope.slice(0, 20)}'.`);
+	}
+	if (kind !== undefined && kind !== "all" && !isMemoryKind(kind)) {
+		throw invalidRequest(`'kind' must be preference, fact or all, got '${kind.slice(0, 20)}'.`);
+	}
+	if (q !== undefined && q.length > 200) throw invalidRequest("'q' is at most 200 characters.");
+	return {
+		...(scope === undefined || scope === "all" ? {} : { scope: scope as MemoryScope }),
+		...(kind === undefined || kind === "all" ? {} : { kind: kind as MemoryKind }),
+		...(q === undefined || q === "" ? {} : { q }),
+		limit: parseLimit(c.req.query("limit"), MAX_MEMORY_LIST, 100),
+	};
+}
+
+/** `PATCH /api/memory/:id`: a new text, a pin, a new scope (the line moves to another agent's memory, or to every agent's), or any of them. A line's kind does not change. */
+export function parseUpdateMemory(body: Record<string, unknown>): UpdateMemoryRequest {
+	const { text, pinned, scope } = body;
+	if (text !== undefined && (typeof text !== "string" || text.trim() === "" || text.length > MAX_MEMORY_CHARS * 20)) {
+		throw invalidRequest(`'text' must be a non-empty line of at most ${MAX_MEMORY_CHARS} characters.`);
+	}
+	if (pinned !== undefined && typeof pinned !== "boolean") throw invalidRequest("'pinned' must be true or false.");
+	if (scope !== undefined && !isMemoryScope(scope)) {
+		throw invalidRequest(
+			`'scope' must be shared, pa, inbox, health or accountant, got '${String(scope).slice(0, 20)}'.`,
+		);
+	}
+	if (text === undefined && pinned === undefined && scope === undefined)
+		throw invalidRequest("Send 'text', 'pinned', 'scope' or any of them.");
+	return {
+		...(text === undefined ? {} : { text }),
+		...(pinned === undefined ? {} : { pinned }),
+		...(scope === undefined ? {} : { scope }),
+	};
+}
+
+/** `PUT /api/profile/preferences`: `tone` and `explanations`; a string sets it, null (or empty text) clears it. */
+export function parseUpdatePreferences(body: Record<string, unknown>): UpdatePreferencesRequest {
+	const change: UpdatePreferencesRequest = {};
+	for (const slot of PROFILE_SLOTS) {
+		const value = body[slot];
+		if (value === undefined) continue;
+		if (value !== null && (typeof value !== "string" || value.length > MAX_MEMORY_CHARS * 20)) {
+			throw invalidRequest(`'${slot}' must be text of at most ${MAX_MEMORY_CHARS} characters, or null to clear it.`);
+		}
+		change[slot] = value;
+	}
+	const unknown = Object.keys(body).filter((key) => !(PROFILE_SLOTS as readonly string[]).includes(key));
+	if (unknown.length > 0)
+		throw invalidRequest(
+			`Unknown field '${unknown[0]?.slice(0, 30)}'. The preferences are ${PROFILE_SLOTS.join(" and ")}.`,
+		);
+	if (Object.keys(change).length === 0) throw invalidRequest(`Send ${PROFILE_SLOTS.join(", ")} or both.`);
+	return change;
+}
+
+/** `PUT /api/settings/budget/:agent`: a whole number of tokens a week, or null to remove the limit. */
+export function parseUpdateBudget(body: Record<string, unknown>): UpdateBudgetRequest {
+	const { weeklyTokens } = body;
+	if (weeklyTokens === null) return { weeklyTokens: null };
+	if (
+		typeof weeklyTokens !== "number" ||
+		!Number.isSafeInteger(weeklyTokens) ||
+		weeklyTokens < 1 ||
+		weeklyTokens > MAX_WEEKLY_TOKENS
+	) {
+		throw invalidRequest(
+			`'weeklyTokens' must be a whole number of tokens from 1 to ${MAX_WEEKLY_TOKENS}, or null for no limit.`,
+		);
+	}
+	return { weeklyTokens };
 }

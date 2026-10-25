@@ -70,11 +70,12 @@ describe("migrations and agents", () => {
 			"delegate",
 			"approvals",
 			"tool-search",
+			"memory",
 		]);
 		const other = server.db.get<{ conversation_id: number }>("SELECT conversation_id FROM agents WHERE id = 'health'");
 		const healthDoc = await server.harness.snapshot(AgentDoc, other?.conversation_id as ConversationId, ctx);
 		// Capability by tool presence: the PA's tools are the PA's alone, and the Health agent has its own (and the hook that guards its deletions).
-		expect(healthDoc?.extensions).toStrictEqual(["profile", "health", "approvals", "tool-search"]);
+		expect(healthDoc?.extensions).toStrictEqual(["profile", "health", "approvals", "tool-search", "memory"]);
 	});
 });
 
@@ -302,8 +303,10 @@ describe("the PA's tools", () => {
 			"describe_file",
 			"list_tasks",
 			"read_file",
+			"recall",
 			"record_outcome",
 			"record_wish",
+			"remember",
 			"save_journal",
 			"snooze_reminder",
 			"tool_search",
