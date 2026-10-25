@@ -1,7 +1,8 @@
 # Personal assistant — implementation plan
 
-Status: approved direction. Milestones 1, 2, 3 and 4 are implemented (see `progress-m1.md`, `progress-m2.md`,
-`progress-m3.md`, `progress-m4.md`); this document was updated at the end of M4 to describe what was built. Owner: Dorje.
+Status: approved direction. Milestones 1, 2, 3, 4 and 6 are implemented (see `progress-m1.md`, `progress-m2.md`,
+`progress-m3.md`, `progress-m4.md`, `progress-m6.md`; M5 is not built yet); this document was updated at the end of M6 to
+describe what was built. Owner: Dorje.
 
 ## 1. Goal
 
@@ -162,12 +163,13 @@ type DomainDeps = {
 	facts: () => readonly DailyFactsProvider[]; // every module's providers, read when a daily job runs; one that throws is left out and reported
 	files?: FilesDeps; // { readPaths, images? }: the folders the PA is told it may read, and the image processor for read_file
 	schedule?: Partial<ScheduleSettings>; // when follow-ups and birthdays fire (ASSISTANT_AGENDA_LEAD_MINUTES, ...); defaults otherwise
+	health?: HealthDeps; // { heightCm? }: the owner's height for BMI (ASSISTANT_OWNER_HEIGHT_CM); only the Health module reads it
 };
 ```
 
 The server (`apps/server/src/domain.ts`) lists the modules, concatenates their migrations after the core ones
 (`migrate(db, [...coreMigrations, ...domain.migrations])`), installs every extension in the registry, and gives each agent
-the ones it should have (`buildAgents`: the PA gets `tasks`, `followups`, `people`, `approvals`, `daily` and `files`; capability is tool presence). A module never
+the ones it should have (`buildAgents`: the PA gets `tasks`, `followups`, `people`, `approvals`, `daily` and `files`; the Health agent gets `health`, `approvals` and `tool_search`; capability is tool presence). A module never
 imports server code: everything it needs arrives in `DomainDeps`.
 
 **Migrations.** An id is `<module>/<NNN>[_name]`. Ordering is a rule within one module only: its migrations must be
@@ -338,7 +340,8 @@ fed by `EventSource` → adapter (`applyEvent(state, event)`) → `convertMessag
 - Thread: one endless chat per agent; messages attributed; `app.reminder`/`app.notice` entries render as system cards,
   as `role: "system"` messages whose card travels in `metadata.custom.card`.
 - Tool cards from `details` (typed in `packages/shared`, `toolCardOf`): approval card (Approve/Deny, state derived from
-  notices), task list, single task; chart and invoice download later.
+  notices), task list, single task; the Health agent's cards (M6: a logged weight, the weight chart with its 7-day average, the
+  exercise chart with records ringed, a logged workout, a list of workouts; small SVGs, no chart library); invoice download later.
 - Composer: text, attachments (a paperclip; each file uploads as it is picked, with its own progress and a way to remove it,
   and a message may carry up to 10), stop button. Sent files are shown as chips (a thumbnail for an image) above the text;
   a message of files only has no bubble.
@@ -414,7 +417,21 @@ files_call(source_call_id PK, tool, file_id, applied_at)   -- rule 8 for describ
 memory_fact(id PK, scope /* 'shared' | agent id */, kind /* 'preference' | 'fact' */, text,
             source_call_id UNIQUE, created_at, updated_at)   -- FTS5 virtual table for recall
 
--- later milestones: health_weight, health_lift, ledger_expense, ledger_balance, splits_bill,
+-- health (module health, the Health agent; M6). Deviations from the first sketch: weight is UNIQUE per local day (the schema, not
+-- a check in code, keeps one weighing a day; `replace: true` overwrites); sessions carry source_call_id too (one log_workout call is
+-- one session written in one transaction); the ledger health_call (rule 8) is what keeps a replayed replacement from undoing a
+-- later correction; exercise.kind is 'weighted' | 'bodyweight'; exercise.key is the normalised name used for matching (letters and
+-- digits of any script). kind says what a set needs (weighted: a load on every set; bodyweight: none, an added load is allowed); what
+-- progress is measured in (estimated 1RM, or reps) is derived from the sets, never stored: a bodyweight exercise follows its added weight
+-- once a set has one. Exercises can be renamed (the old name stays an alias) and merged (approval; sets move, the name stays an alias).
+health_weight(id INTEGER PK, measured_on TEXT UNIQUE /* YYYY-MM-DD local */, kg REAL, note, source_call_id UNIQUE, created_at, updated_at)
+health_exercise(id INTEGER PK, name, key UNIQUE, aliases /* JSON array */, kind CHECK(kind IN ('weighted','bodyweight')), created_at)
+health_session(id TEXT PK /* w_xxxxxxxx */, date TEXT /* local day */, note, source_call_id UNIQUE, created_at)
+health_set(id INTEGER PK, session_id REFERENCES health_session ON DELETE CASCADE, exercise_id REFERENCES health_exercise, set_no, reps, kg /* 0: no load (or none added) */,
+           rpe NULL, source_call_id UNIQUE /* "<call id>:<n>" */, UNIQUE(session_id, exercise_id, set_no))
+health_call(source_call_id PK, tool, subject, applied_at)   -- rule 8 for log_weight's replace and rename_exercise
+
+-- later milestones: ledger_expense, ledger_balance, splits_bill,
 -- splits_share, invoice_state, inbox_message(triage) ...
 ```
 
@@ -430,7 +447,7 @@ tools (e.g. `add_expense`), not free-form memory.
 | M3 Follow-ups, agendas, birthdays, people (done)                  | FollowUp task, agenda capture, yearly birthday                                                                                                                                                                                                                                                                                 | follow-up loop works with fake clock                                                                                        |
 | M4 Briefing, wrap-up, journal, files, share target (done)                       | daily tasks, done-log, uploads + file tools, PWA share target |                                                                                                                             |
 | M5 Inbox                                                          | Gmail + Calendar read-only (multi-account), Jev triage, digest, handoff to PA                                                                                                                                                                                                                                                  |                                                                                                                             |
-| M6 Health                                                         | weight/lift tables, chart cards                                                                                                                                                                                                                                                                                                |                                                                                                                             |
+| M6 Health (done)                                                  | weight/lift tables, tools, trends, chart cards, facts for the wrap-up and briefing                                                                                                                                                                                                                                              | tools tested with replays; whole-server test; browser check                                                                 |
 | M7 Accountant                                                     | expenses (CSV/photo/chat), code-mode analysis, splits, invoice PDF from template                                                                                                                                                                                                                                               |                                                                                                                             |
 | M8 Memory/profile UI, activity log, usage dashboard, budget guard |                                                                                                                                                                                                                                                                                                                                |                                                                                                                             |
 | Ops                                                               | systemd units, tailscale serve config, OAuth login CLI (`pnpm login:openai`), backup (deferred)                                                                                                                                                                                                                                |                                                                                                                             |

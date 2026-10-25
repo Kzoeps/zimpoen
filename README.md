@@ -5,7 +5,7 @@ ChatGPT-style web chat. Several themed agents (`pa`, `inbox`, `health`, `account
 crash-safe conversation on [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable): if the
 process dies mid-answer, the next start picks the work up where it stopped.
 
-Status: **Milestone 4 (daily briefing and wrap-up, files)**. You can open the web UI, pick an agent, chat, and watch
+Status: **Milestone 6 (health: weight and gym lifts)**. You can open the web UI, pick an agent, chat, and watch
 the answer stream in. The `pa` agent keeps a task list and reminds you at the right time; it also follows your meetings:
 after one it asks how it went and, if something has to be followed up, when, and then asks about that follow-up in turn;
 through the day you add agenda points, and shortly before the meeting it posts them; and it keeps your friends' and
@@ -16,7 +16,13 @@ tasks, overdue ones, meetings and follow-ups, birthdays, what you carried over f
 it asks what you got done and keeps your answer in a journal; both times are settings. You can attach images, PDFs, CSV
 and text files to a message (or share them from your phone's share sheet), and the PA can read them, remember what each
 one is, and read files in the folders you allow. In dev mode the model is a scripted stand-in and pushes go to a file, so
-nothing leaves the machine. The other agents have no tools yet; mail, health and accounting arrive in later milestones.
+nothing leaves the machine. The `health` agent keeps your weight (one entry a day; pounds are converted, kilograms stored) and
+your gym sessions (exercises, sets, reps, weight lifted), and answers "how is my weight trending" and "how much am I picking
+up" from numbers computed in code: the 7-day moving average, the change over a range, the estimated one-rep max (Epley),
+the volume and your personal records, each with a small chart in the thread; a pull-up or dip done with a belt is followed
+by the weight you added, and a wrongly named exercise can be renamed or merged into the right one. The evening wrap-up mentions
+what you weighed and trained, and the morning briefing nudges you when yesterday's weight is missing. The `inbox` and `accountant` agents
+have no tools yet; mail and accounting arrive in later milestones.
 The full design and milestone list is in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Quickstart
@@ -42,6 +48,17 @@ are `current_time`, `add_task`, `list_tasks`, `update_task`, `complete_task`, `s
 The same works for the M3 tools (arguments in `packages/extensions/src/followups/tools.ts` and `people/tools.ts`):
 `add_followup`, `add_agenda_point`, `list_followups`, `update_followup`, `record_outcome`, `resolve_followup`,
 `propose_delete_followup`, `add_person`, `update_person`, `list_people`, `record_wish` and `propose_delete_person`.
+
+The Health agent's tools work the same way (arguments: `packages/extensions/src/health/tools.ts`), in its own thread:
+`/tool log_weight {"weight":72.4}` (`"unit":"lb"` converts, `"date":"yesterday"` or `"2026-10-23"` picks the day),
+`/tool log_workout {"exercises":[{"name":"bench","sets":[{"reps":8,"weight":60,"count":3}]}]}` (`count` makes 3 identical
+sets; `bench` is matched to Bench press), `/tool weight_trend {"range":"30d"}`, `/tool exercise_progress {"exercise":"bench"}`
+and `/tool list_workouts`. A weighted exercise needs its weight on every set; the refusal names the way out for one done
+unloaded (`lunges` with no weight: log `Bodyweight lunge`), and a bodyweight exercise (`pull ups`, `dips`) may take the weight
+you added (`"weight":20`), after which its progress is that weight. `/tool rename_exercise {"exercise":"cable crossover","new_name":"Cable fly"}`
+keeps the old name working. `propose_delete_weight`, `propose_delete_workout` and `propose_merge_exercises` (two exercises that are
+really one: it moves every set) load with `/tool tool_search {"query":"delete a workout"}` or `"merge two exercises"` first, like the
+PA's deletion tools, and then a reply of YES (or the Approve button) carries them out.
 
 **Rarely used tools are not offered until loaded.** The PA is offered `current_time`, `add_task`, `list_tasks`,
 `complete_task`, `snooze_reminder`, `add_followup`, `add_agenda_point`, `record_outcome`, `add_person`, `record_wish` and
@@ -109,7 +126,7 @@ apps/
 packages/
   shared/        API contracts: DTOs, error shape, stream event types, card types (types, plus tiny constants and guards)
   db/            app.sqlite: node:sqlite wrapper and the migration runner (ids per module), core tables
-  extensions/    Durable extensions the server installs: domain modules `tasks`, `followups`, `people`, `approvals`, `daily` (briefing, wrap-up, journal) and `files`, and `profile`; more later
+  extensions/    Durable extensions the server installs: domain modules `tasks`, `followups`, `people`, `approvals`, `daily` (briefing, wrap-up, journal), `files` and `health` (weight, lifts; the Health agent's), and `profile`; more later
 docs/            PLAN.md (architecture), design-notes.md (security and durability reasoning), handoff and progress notes
 ```
 
@@ -141,6 +158,7 @@ use a systemd unit.
 | `ASSISTANT_BIRTHDAY_CHECK_TIME` | `18:00` | Local time of day of the evening question whether the owner wished them well; later than the reminder |
 | `ASSISTANT_CURRENCY` | `BTN` | ISO 4217 default currency told to every agent |
 | `ASSISTANT_OWNER_NAME` | `the owner` | Your name, as agents address you |
+| `ASSISTANT_OWNER_HEIGHT_CM` | unset | Your height in centimetres (100 to 250, for example `176`). Only the Health agent uses it, for the BMI in its weight results; unset means no BMI anywhere. Not told to the other agents |
 | `ASSISTANT_PORT` | `3001` | API port. It always binds to `127.0.0.1` |
 | `ASSISTANT_API_ORIGIN` | `http://127.0.0.1:3001` | Where the web app proxies `/api/*` (web only). It is baked into `apps/web/.next` by `next build`: changing it, or `ASSISTANT_PORT`, needs a rebuild of the web app |
 
@@ -200,6 +218,11 @@ first before it touches either database. A lock left behind by a crash is recogn
   replying exactly `YES`, which the server handles itself before the model sees it (only when one request is waiting and
   you have sent nothing else since it was made; otherwise use the buttons); the server then carries out the deletion. A
   request expires after 24 hours.
+- **What the model provider sees:** everything you say to an agent and every tool result goes to the model provider (OpenAI
+  in production), like any chat. For the Health agent that is your weight, the BMI when `ASSISTANT_OWNER_HEIGHT_CM` is set,
+  your workouts and the notes you add. The PA is given a few lines of it (what you weighed and trained, a missed weighing) as
+  facts for the briefing and the wrap-up, and what it writes in the journal may repeat them. Only the Health agent is told
+  your height. Pushes carry none of it (see "Pushes carry no content" below). In dev mode nothing leaves the machine.
 - **Files are an allowlist:** reads inside `ASSISTANT_READ_PATHS`, `<data>/files` and the workspace; writes only inside
   `<data>/workspace`. Always refused, in any letter case: `.ssh`, `.env*`, `auth.json`, `*.pem`, `*.key`, `.netrc`, `.npmrc`,
   `.aws`, `.git-credentials`, `.gnupg`, `id_*` and `<data>/secrets/**`. The data directory, the workspace and the secrets
@@ -347,3 +370,22 @@ The web reducer is tested against event streams recorded from the real server (`
 `reminders-approvals.json`: a reminder firing and a deletion approved with the button). Durable's event protocol is
 experimental: after upgrading it, run `node apps/server/scripts/record-fixtures.ts` (it re-records all five), review the
 diff, and run the tests.
+
+M6 added: the unit conversions (pounds to kilograms once, precision of a scale), exercise names (aliases, plurals, spacing,
+unknown names, no two built-in exercises sharing a name), the arithmetic as pure functions (7-day moving average with its
+window edges, trend and weekly rate, Epley, top set, volume, personal records over the whole history, bodyweight by reps,
+thinning a chart, ranges), the tools driven by their call id (a replay on another day writes once; a replaced weight is not
+undone by a replay of an earlier call; a workout is written whole or not at all), the one-weighing-a-day rule with its
+`replace` flag, deleting through approval with the hook in front of both deletion tools, the prompt section (no clock: the
+same bytes whenever nothing is logged), the facts the wrap-up and the briefing get, the whole server (the Health agent has
+its own tools and the PA does not, a YES in the Health thread, the daily jobs carrying the health lines), and in the web the
+chart geometry and the cards rendered to markup with `react-dom/server`.
+
+M6's review fixes added: what an exercise is measured in (a bodyweight exercise follows its added weight once a set has
+one, unloaded days counting 0; a new exercise logged first without a weight is followed by its load later), the refusal that names
+`Bodyweight <exercise>`, averages, trends and changes checked against an integer oracle on 300 random histories (a mean exactly
+half-way between two tenths is rounded once), a chart thinned to 90 points that still ends with the latest five days and keeps
+the newest records, a replayed `log_workout` answering with the same records and new-exercise notes as the first run, renaming
+(and a replay that does not undo a later rename) and merging (approval, set numbers, aliases, the refusals), names in any
+script and `-ies` plurals, ranges that reach too far, the height kept out of every other agent's prompt (read from what the
+model was told, with a positive control), and in the web the card of a loaded bodyweight exercise.

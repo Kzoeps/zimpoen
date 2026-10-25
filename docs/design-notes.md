@@ -415,3 +415,108 @@ The morning briefing and the evening wrap-up (`packages/extensions/src/daily/`) 
   path), so the PA can `describe_file` it ("the March bank CSV") and `search_files` finds it again by name, description or
   tags (a `LIKE` over the three, every word must match; no ranking). Nothing is copied: a `path` file stays where it is.
 - **Nothing here writes**: the only place the assistant may write remains `<data>/workspace`.
+
+## Health: weight and lifts
+
+The `health` module (`packages/extensions/src/health/`) belongs to the Health agent alone: its extension (tools and the
+`health` prompt section), the approval hook that guards its deletions, and `tool_search` are in that agent's list, and the
+PA has none of them (capability by tool presence; a whole-server test shows the PA's `/tool log_weight` refused).
+
+- **Kilograms in the database, always.** Pounds are converted once, where they come in (`unit: "lb"` on `log_weight` and
+  `log_workout`, `0.45359237` exactly, rounded to 10 g), and every number after that is kilograms. Cards and tool text share one
+  wording (`formatKg`, `signed`, `formatVolume`, `describeSetGroup` live in `@assistant/shared`), so the thread and the model say
+  `62.5` and `5x5 100 kg` the same way. A body weight outside 20 to 500 kg, or a set above 1000 kg, is refused with a hint about
+  the unit rather than saved.
+- **One weighing a day, by the schema.** `health_weight.measured_on` is `UNIQUE` (the owner's local day). A second `log_weight` for
+  a day is refused with the existing value and what to do; `replace: true` overwrites. The insert is idempotent by `source_call_id`;
+  a replacement is recorded in the ledger `health_call` in the same transaction, so a replay of an *older* call after a later
+  correction changes nothing (the same pattern as `tasks_call`). The tools that write (`log_weight`, `log_workout`,
+  `rename_exercise`) look for their own earlier result before they read the clock, so a call replayed after midnight lands on
+  the day it was made for; the `propose_*` tools resolve `today` and `yesterday` first, so a proposal replayed after midnight may
+  meet another day, which at worst says there is no weight there (the approval service hands back the request the call id made, so
+  nothing is proposed twice and nothing else is deleted). A weight 4 kg or more from the previous entry within two weeks is
+  saved, and the result tells the model to check the unit with the owner (`replace: true` fixes it).
+- **A workout is written whole.** One `log_workout` call is one `health_session`, written with its sets (and any exercise it
+  needs) in one transaction under the call's id: a rerun finds the session and returns it, or finds nothing and writes it all.
+  Each set also carries `<call id>:<n>` in its own `UNIQUE` column. `count` expands to identical sets (5x5 at 100 kg is one entry
+  with `count: 5`). Two calls on one day are two sessions, and every chart and the wrap-up group by *day*, so they are one point.
+  What a workout did (a record, an exercise it named for the first time) is read back from the database, not remembered: the
+  sets before a workout are those of the sessions written before it (by row order) and dated no later than it, and an exercise
+  is new when nothing came before it and it was made with the session, so a rerun after a crash tells the model exactly what the
+  first run did.
+- **Exercise names.** A name is compared by its key (lower case, letters and digits of any script, accents dropped, so
+  `Bench-Press`, `bench press`, `benchpress` and `Тяга блока` agree with themselves) and with a trailing plural dropped on either
+  side (`squats`, `lunges`, `presses`, `flies` for `fly`; the exact spelling wins). It is looked up in the owner's exercises (name and
+  aliases), then in a built-in list of about 40 (`catalog.ts`: `bench`, `ohp`, `rdl`, `pull ups`, ...), which creates the exercise
+  with the list's name, aliases and kind on first use and says nothing (a built-in name the owner renamed is found under its new
+  name, not made again), and otherwise a new exercise is created under the name as typed, its kind taken from the sets (no weight
+  anywhere: bodyweight). The result tells the model the kind it got and what follows from it, and how to fix a slip: merge it into
+  the exercise it should be, or rename it. An exercise left with no set by a deletion is removed, so a wrong name does not
+  stay in the list. The prompt lists the owner's exercise names so that the model reuses them.
+- **Renaming and merging** (the coordinator overrode the first design, which had neither). `rename_exercise` gives an exercise
+  another name and keeps the old one, with its built-in aliases, as aliases; it is not destructive, so it asks nothing, and it is
+  idempotent by the call ledger (a replay after a later rename does not undo it). A name another exercise already answers to is
+  refused with the way out (merge). `propose_merge_exercises(from, into)` asks the owner first like a deletion (`merge_exercises` is
+  the guarded tool, `deferred` with the deletion tools): on Approve every set of `from` moves to `into`, numbered after the
+  sets `into` already has in the same workout, `from` is removed and stays an alias of `into` together with its own. The pair is
+  checked before the owner is asked: an exercise cannot be merged into itself, and sets with no weight cannot join a *weighted*
+  exercise (they would be zeros in its line); the other way round is fine. Both exercises' arguments are stored as ids, so a
+  rename between the proposal and the answer cannot change what is merged.
+- **Kind and metric.** The *kind* says what a set needs: `weighted` (squat, bench) needs a load on every set, which is refused
+  otherwise, because a forgotten weight is the likelier mistake; `bodyweight` (pull-up, dip, push-up) needs none. A weighted
+  movement really done with no weight is logged under its bodyweight twin, `Bodyweight lunge` (the refusal names it; the built-in list
+  has the common ones). What the progress is *measured in* is derived from the sets and never stored, so it cannot be wrong for
+  good: a weighted exercise by estimated one-rep max, Epley `kg x (1 + reps / 30)` (one rep is the weight itself; it drifts above
+  about ten reps, which is why every text says "estimated"); a bodyweight exercise by repetitions in a set **until a set of it
+  carries added weight** (a belt, a vest), from then on by the estimated 1RM of that added weight, unloaded days counting 0. So
+  loaded dips (8, then 8 with 20 kg, then 5 with 30 kg) show progress, and a new exercise first logged without a weight (`bodyweight`)
+  follows its load as soon as one is logged, with no rename, no delete and no change of kind. Unloaded days of a loaded exercise are
+  ordered by reps and are never records (the load comes first). The **top set** of a day is the set with the highest metric, the
+  heavier of equals, then the one with more reps; **volume** is the sum of reps x kg; a **personal record** is a day whose metric is
+  *strictly* better than every earlier day's (an equal day is not one, the first day is the baseline), judged against the whole
+  history even when the range is shorter, and `exercise_progress` reports the best ever separately when it is older than the range.
+  The heaviest weight is taken from every set (110 x 3 can be heavier than the top set 105 x 5). Records are counted per **day** by
+  `exercise_progress` and the wrap-up, and per **session** when a workout is logged: it is judged against every set logged before it,
+  dated that day or earlier (a late entry is not judged against later days), so a second session on a day that beats the first announces
+  its own record ("was 122.5", not "was 116.7") while the day counts once.
+- **The moving average is over calendar days.** The 7-day average at a weighing is the mean of the weighings of the 7 days up to and
+  including it; days without one are not zeros. Weights are kept to 10 g, so every sum, mean, difference and total is worked out in
+  whole hundredths of a kilogram and rounded once, where it is shown (half away from zero): rounding a rounded mean, or subtracting
+  two floats, was 0.1 kg off in a few percent of cases (72.44 and 72.45 average 72.445, which is 72.4; 71.35 after 71.2 is +0.2). A
+  test holds the numbers to an integer oracle over 300 random histories. A range fetches six days before its start, so the average at its first point is
+  what it would be had the range begun earlier. The trend is the average at the latest weighing minus the average at the first;
+  the weekly rate is given only when the entries span two weeks or more. BMI needs `ASSISTANT_OWNER_HEIGHT_CM` and is a number, with
+  no category: a label such as "overweight" is a medical judgement the agent is told not to make.
+- **Ranges** are `7d`, `12w`, `6m`, `1y` or `all` counted back from today (today included), or explicit `from`/`to` days; never both.
+  A count reaches back 100 years at most (`5000y` is refused, not read as another century). A chart card carries at most 90 points
+  (`MAX_CHART_POINTS`) because it is stored in the thread for good: the first day, the latest five (the days the card lists), the
+  newest records (at most half of the room) and the rest spread evenly; the summary always covers every entry, and a card of any
+  history is under 10 KB (measured: 9.7 KB with a record on every day; the review's 300-day card was 31 KB before the cap).
+- **The prompt section has no clock.** It lists the latest weight with the average *at that weighing*, the day of the last workout
+  and the current record of the five exercises trained most recently (by logged day), all as absolute dates, so it renders the
+  same bytes until something is logged (a test pins it). The records are the best day ever, not "this month's".
+- **The daily jobs.** The wrap-up gets a "Health today" section (what was weighed, what was trained, the records the day set); the
+  morning briefing gets a "Health" nudge, written by code, only when yesterday has no weighing, today has none yet, and the owner
+  logged at least once in the 14 days before (`NUDGE_WINDOW_DAYS`): someone who stopped logging is not nagged every morning, someone
+  who never logged is not nagged at all. The push payload stays generic; the PA is told to word the line kindly.
+- **Deleting and merging** follow the approvals design unchanged: `propose_delete_weight` (by day), `propose_delete_workout` (by id)
+  and `propose_merge_exercises` (by name, stored as ids) create the request, the server executes on Approve or YES, and the guarded
+  `delete_weight` / `delete_workout` / `merge_exercises` exist so the hook has something to guard. All six are `deferred`, as the
+  PA's deletion tools are, and the instructions name them. The YES window is per
+  conversation, so a YES in the Health thread approves only the Health thread's request.
+- **`current_time` is defined twice** (tasks, for the PA, and health): the Health agent has no other way to know today's date for "last
+  Friday" and the prompt may not carry one. The two never share an agent, and Durable composes tools by name per agent.
+- **Height is not in the profile section.** `ASSISTANT_OWNER_HEIGHT_CM` goes to the Health module only (`Config.health`, then
+  `DomainDeps.health`), so the other agents' prompts and cache are untouched; it is deliberately not a field of `ProfileConfig`, which
+  is handed whole to the extension every agent has. The BMI shows in weight results and in the Health prompt section only when it is
+  set. A server test reads what each agent was *told* (its system messages) and finds the height in the Health agent's and nowhere else.
+- **What the provider sees, and the prompt cache.** Weight, BMI, workouts and notes are chat content like any other and go to the model
+  provider; the PA receives a few lines of them as daily facts. Every logged weight or workout changes the `health` section, so the
+  next request appends a system-prompt delta and misses the provider's cache once (as the tasks section does); the render is
+  otherwise byte-stable. Tool call ids are assumed unique per conversation, across a change of model, as in M2 to M4: a repeated id
+  would be answered as a replay and write nothing.
+- **Charts are SVG without a library** (`apps/web/src/lib/chart.ts` lays out ticks, scales and paths; `components/health-charts.tsx`
+  draws them). The layout is a pure function, tested without a browser; the card components are plain functions of their card, tested
+  by rendering to markup. The drawing scales through its `viewBox` (360 x 176), colours are CSS variables, so a 390 px phone and dark
+  mode need no special case. Vitest turns JSX into calls through `oxc.jsx` in `vitest.config.ts` (the web app's `tsconfig` says
+  `preserve` because Next compiles it).
