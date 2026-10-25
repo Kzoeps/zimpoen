@@ -1,4 +1,5 @@
 import {
+	type AccountantCard,
 	AGENDA_ENTRY_KIND,
 	type AgendaEntryData,
 	type ApprovalOutcome,
@@ -16,6 +17,7 @@ import {
 	type FollowupCard,
 	type FollowupEntryData,
 	type FollowupListCard,
+	type ImportPreviewCard,
 	isDailyJobId,
 	type JournalCard,
 	NOTICE_ENTRY_KIND,
@@ -85,6 +87,9 @@ export type UiCard =
 	| ExerciseChartCard
 	| WorkoutCard
 	| WorkoutListCard
+	/** The Accountant's cards (ledger, splits, invoices). An import preview is `answered` once the import was confirmed. */
+	| Exclude<AccountantCard, { type: "import_preview" }>
+	| (ImportPreviewCard & { answered?: boolean })
 	| { type: "approval"; actionId: string; summary: string; expiresAt: number; state: ApprovalCardState };
 
 /** A file a message of the owner's carries, read back from the line that references it. */
@@ -170,13 +175,15 @@ function chipAnswers(messages: UiMessage[]): UiMessage[] {
 
 /**
  * Mark the questions the thread shows as answered: a follow-up question once a later card records its outcome or closes
- * it, an evening birthday question once a later card records the wish for that birthday ("not yet" is an answer too).
+ * it, an evening birthday question once a later card records the wish for that birthday ("not yet" is an answer too), an
+ * import preview once a later card says that import was confirmed.
  * Entries are immutable, so a question card cannot say so itself; without this its buttons stay live and a later tap ends in
  * the model's "already resolved".
  */
 function resolveAnswers(messages: UiMessage[]): UiMessage[] {
 	const closed = new Set<string>();
 	const wished = new Set<string>();
+	const imported = new Set<string>();
 	// Newest first, so that every card has been seen by the time the question it answers is reached.
 	return messages
 		.toReversed()
@@ -187,6 +194,10 @@ function resolveAnswers(messages: UiMessage[]): UiMessage[] {
 				closed.add(card.followup.id);
 			} else if (card.type === "person" && card.event === "wish" && card.year !== undefined) {
 				wished.add(`${card.person.id}:${card.year}`);
+			} else if (card.type === "import_result") {
+				imported.add(card.importId);
+			} else if (card.type === "import_preview" && imported.has(card.importId)) {
+				return { ...message, card: { ...card, answered: true } };
 			} else if (card.type === "followup_question" && closed.has(card.data.followupId)) {
 				return { ...message, card: { ...card, answered: true } };
 			} else if (card.type === "birthday" && wished.has(`${card.data.personId}:${card.data.year}`)) {

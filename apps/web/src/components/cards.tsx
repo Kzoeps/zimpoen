@@ -14,7 +14,7 @@ import {
 } from "@assistant/shared";
 import { useAui } from "@assistant-ui/react";
 import { useState } from "react";
-import { ApiRequestError, decideApproval, fileUrl } from "../lib/api.ts";
+import { ApiRequestError, decideApproval } from "../lib/api.ts";
 import {
 	FILE_EVENT_LABEL,
 	FOLLOWUP_EVENT_LABEL,
@@ -22,7 +22,22 @@ import {
 	PERSON_EVENT_LABEL,
 	TASK_EVENT_LABEL,
 } from "../lib/card-text.ts";
-import type { ApprovalCardState, UiAttachment, UiCard } from "../lib/ui-messages.ts";
+import type { ApprovalCardState, UiCard } from "../lib/ui-messages.ts";
+import {
+	AccountantNoteView,
+	BalancesView,
+	ImportPreviewView,
+	ImportResultView,
+	InvoiceListView,
+	InvoiceView,
+	SpendingView,
+	SplitView,
+	TxnListView,
+	TxnView,
+	WhoOwesView,
+} from "./accountant-cards.tsx";
+import { useChat } from "./chat-context.tsx";
+import { FileChip } from "./file-chip.tsx";
 import {
 	ExerciseChartView,
 	WeightChartView,
@@ -30,6 +45,8 @@ import {
 	WorkoutListView,
 	WorkoutLoggedView,
 } from "./health-charts.tsx";
+
+export { FileChip };
 
 /** One non-chat item of the thread: a reminder, an agenda, a question, a birthday, a notice, a task, a follow-up, a person, a list, or a request for approval. */
 export function CardView({ card }: { card: UiCard }) {
@@ -76,7 +93,73 @@ export function CardView({ card }: { card: UiCard }) {
 			return <WorkoutLoggedView card={card} />;
 		case "workout_list":
 			return <WorkoutListView card={card} />;
+		case "txn":
+			return <TxnView card={card} />;
+		case "txn_list":
+			return <TxnListView card={card} />;
+		case "balances":
+			return <BalancesView card={card} />;
+		case "spending":
+			return <SpendingView card={card} />;
+		case "import_preview":
+			return (
+				<ImportPreviewView
+					card={card}
+					answered={card.answered === true}
+					action={<ImportConfirmButton importId={card.importId} />}
+				/>
+			);
+		case "import_result":
+			return <ImportResultView card={card} />;
+		case "split":
+			return <SplitView card={card} />;
+		case "who_owes":
+			return <WhoOwesView card={card} />;
+		case "invoice":
+			return <InvoiceView card={card} />;
+		case "invoice_list":
+			return <InvoiceListView card={card} />;
+		case "accountant_note":
+			return <AccountantNoteView card={card} />;
 	}
+}
+
+/**
+ * The button of an import preview: it says "Confirm import im_..." in the chat, as the owner would, and the model then calls
+ * `confirm_import`. No other route is involved. Nothing but the model's rules ties a confirmation to this message, so the
+ * owner's own words ("yes, import it") work as well, and the button only saves typing them.
+ *
+ * The message goes to the thread directly and not through the composer: sending from the composer takes whatever the owner
+ * was typing, and the files they picked for it, along with the message.
+ */
+function ImportConfirmButton({ importId }: { importId: string }) {
+	const { store } = useChat();
+	const [busy, setBusy] = useState(false);
+	const confirm = async (): Promise<void> => {
+		setBusy(true);
+		try {
+			await store.getState().send(`Confirm import ${importId}`);
+		} catch {
+			// `send` has already put the reason in `sendError`, which the notice under the composer shows; the button stays.
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<>
+			<p className="card__muted">Nothing is added to your accounts until you confirm.</p>
+			<div className="card__actions">
+				<button
+					type="button"
+					className="card__button card__button--primary"
+					disabled={busy}
+					onClick={() => void confirm()}
+				>
+					Confirm import
+				</button>
+			</div>
+		</>
+	);
 }
 
 const DAILY_LABEL: Record<DailyEntryData["job"], { icon: string; name: string }> = {
@@ -156,36 +239,6 @@ function JournalCardView({ event, entries }: { event: keyof typeof JOURNAL_EVENT
 	);
 }
 
-/** A file as a chip: a small picture for an image, an icon and the name otherwise; it opens the stored file. */
-export function FileChip({
-	file,
-}: {
-	file: Pick<UiAttachment, "id" | "name" | "mime"> & { sizeText?: string; size?: number };
-}) {
-	const size = file.sizeText ?? (file.size === undefined ? "" : formatSize(file.size));
-	const isImage = file.mime.startsWith("image/");
-	return (
-		<a
-			className="file-chip"
-			href={fileUrl(file.id)}
-			target="_blank"
-			rel="noreferrer"
-			title={`${file.name} · ${file.mime}`}
-		>
-			{isImage ? (
-				// biome-ignore lint/performance/noImgElement: a stored upload served by the assistant's own API, at its natural size
-				<img className="file-chip__thumb" src={fileUrl(file.id)} alt="" loading="lazy" />
-			) : (
-				<span className="file-chip__icon" aria-hidden="true">
-					{file.mime === "application/pdf" ? "📕" : file.mime === "text/csv" ? "📊" : "📄"}
-				</span>
-			)}
-			<span className="file-chip__name">{file.name}</span>
-			{size !== "" ? <span className="card__muted file-chip__size">{size}</span> : null}
-		</a>
-	);
-}
-
 function FileToolCard({ event, file }: { event: keyof typeof FILE_EVENT_LABEL; file: FileSummary }) {
 	return (
 		<section className="card card--file" aria-label={FILE_EVENT_LABEL[event]}>
@@ -200,11 +253,16 @@ function FileToolCard({ event, file }: { event: keyof typeof FILE_EVENT_LABEL; f
 function FileDetail({ file }: { file: FileSummary }) {
 	return (
 		<div className="file-detail">
-			{file.source === "upload" ? <FileChip file={file} /> : <p className="card__title">{file.name}</p>}
+			{file.source === "upload" || file.source === "generated" ? (
+				<FileChip file={file} />
+			) : (
+				<p className="card__title">{file.name}</p>
+			)}
 			{file.description !== undefined ? <p>{file.description}</p> : null}
 			<p className="card__muted">
 				{file.mime} · {formatSize(file.size)}
 				{file.source === "path" ? " · from your folders" : ""}
+				{file.source === "generated" ? " · made by the assistant" : ""}
 				{file.tags !== undefined ? ` · ${file.tags.join(", ")}` : ""}
 			</p>
 		</div>

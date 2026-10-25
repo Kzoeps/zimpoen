@@ -1287,3 +1287,262 @@ button {
 	padding-top: 10px;
 	border-top: 1px solid var(--border);
 }
+
+/* Accountant: entries, balances, spending bars, a statement to confirm, split bills, who owes whom and invoices. */
+
+.card--money {
+	border-left: 4px solid #8a6fd1;
+	overflow-wrap: anywhere;
+}
+
+.card__note {
+	margin: 8px 0 0;
+	padding: 6px 10px;
+	border-radius: 10px;
+	background: var(--warn-bg);
+	font-size: 13px;
+}
+
+/* What looks wrong about a file as read: louder than a note, because the owner should hear it before agreeing. */
+.card__warning {
+	margin: 8px 0 0;
+	padding: 8px 10px 8px 26px;
+	border: 1px solid var(--danger);
+	border-radius: 10px;
+	background: var(--warn-bg);
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.card--preview {
+	border-left-color: var(--danger);
+}
+
+.badge--preview {
+	margin-left: 8px;
+	background: #c0362c;
+	color: #fff;
+	letter-spacing: 0.06em;
+}
+
+.txn--match {
+	opacity: 0.85;
+}
+
+.money {
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	font-weight: 600;
+}
+
+.money--out {
+	color: var(--danger);
+}
+
+.money--in {
+	color: #2c8a52;
+}
+
+@media (prefers-color-scheme: dark) {
+	.money--in {
+		color: #6fcf97;
+	}
+}
+
+.txns,
+.accounts,
+.debts,
+.notes {
+	margin: 8px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.txn,
+.account {
+	padding: 6px 0;
+}
+
+.txn + .txn,
+.account + .account {
+	border-top: 1px solid var(--border);
+}
+
+.txn__main {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 4px 12px;
+	margin: 0;
+}
+
+.txn__what {
+	min-width: 0;
+	font-weight: 600;
+}
+
+.txn__meta .badge {
+	margin-left: 6px;
+}
+
+.txn__sum {
+	margin-top: 8px;
+}
+
+.txn--duplicate {
+	opacity: 0.6;
+}
+
+.totals {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border);
+}
+
+.notes li {
+	padding: 2px 0;
+}
+
+.chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin: 8px 0 0;
+}
+
+.badge--role {
+	background: var(--user-bubble);
+	color: var(--text);
+}
+
+.debt {
+	padding: 4px 0;
+	font-weight: 600;
+}
+
+/* Spending: one bar per group, as wide as its share. The widths are computed by the tool, in tenths of a percent. */
+.bars {
+	margin: 10px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.bar {
+	padding: 4px 0;
+}
+
+.bar__row {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 4px 12px;
+	font-size: 14px;
+}
+
+.bar__label {
+	min-width: 0;
+	font-weight: 600;
+}
+
+.bar__value {
+	text-align: right;
+}
+
+.bar__track {
+	height: 8px;
+	margin-top: 3px;
+	border-radius: 999px;
+	background: var(--bg-hover);
+	overflow: hidden;
+}
+
+.bar__fill {
+	height: 100%;
+	min-width: 2px;
+	border-radius: 999px;
+	background: #8a6fd1;
+}
+
+/* A split: the table scrolls inside the card when a long name or a big amount needs it, never the page. */
+.table-wrap {
+	max-width: 100%;
+	margin-top: 8px;
+	overflow-x: auto;
+}
+
+.split {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 14px;
+}
+
+.split th,
+.split td {
+	padding: 4px 6px;
+	text-align: right;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+
+.split th:first-child {
+	text-align: left;
+	white-space: normal;
+}
+
+.split thead th {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-muted);
+	border-bottom: 1px solid var(--border);
+}
+
+.split tbody th {
+	font-weight: 600;
+}
+
+.split tfoot > tr > * {
+	border-top: 2px solid var(--border);
+	font-weight: 700;
+}
+
+.split tbody tr + tr > * {
+	border-top: 1px solid var(--border);
+}
+
+.split__owed {
+	font-weight: 700;
+}
+
+.split .badge {
+	margin-left: 6px;
+}
+
+.split__parts {
+	display: none;
+	font-size: 12px;
+	font-weight: 400;
+	color: var(--text-muted);
+}
+
+/* On a phone the table keeps who owes what; each person's items and extras move under the name. */
+@media (max-width: 480px) {
+	.split__col {
+		display: none;
+	}
+
+	.split__parts {
+		display: block;
+	}
+}
+
+.invoice__download {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	text-decoration: none;
+}
+
+.invoice__size {
+	font-weight: 400;
+	opacity: 0.85;
+}

@@ -2,6 +2,7 @@ import {
 	type FileCard,
 	type FollowupCard,
 	formatKg,
+	formatMoney,
 	type JournalCard,
 	type PersonCard,
 	type TaskCard,
@@ -100,5 +101,31 @@ export function cardSummary(card: UiCard): string {
 			return `Workout logged: ${card.workout.dateText}, ${card.workout.exercises.map((exercise) => exercise.name).join(", ")}`;
 		case "workout_list":
 			return `${card.heading}: ${card.total}`;
+		case "txn": {
+			const [first] = card.txns;
+			if (first === undefined) return "Entry recorded";
+			const what = first.kind === "transfer" ? "Transfer" : first.kind === "income" ? "Income" : "Expense";
+			return `${what} recorded: ${formatMoney(Math.abs(first.amountMinor), first.currency)}${first.merchant === undefined ? "" : `, ${first.merchant}`}`;
+		}
+		case "txn_list":
+			return `${card.heading}: ${card.total}`;
+		case "balances":
+			return `Balances: ${card.accounts.length} ${card.accounts.length === 1 ? "account" : "accounts"}`;
+		case "spending":
+			return `${card.heading}, ${card.rangeText}: ${formatMoney(card.totalMinor, card.currency)}`;
+		case "import_preview":
+			return `Import preview: ${card.rows} rows into ${card.account}${(card.matchCount ?? 0) > 0 ? `, ${card.matchCount} left out` : ""}`;
+		case "import_result":
+			return `Imported ${card.inserted} entries into ${card.account}`;
+		case "split":
+			return `Split: ${card.title}, ${formatMoney(card.totalMinor, card.currency)}`;
+		case "who_owes":
+			return `${card.heading}: ${card.debts.length}`;
+		case "invoice":
+			return `${card.event === "preview" ? "Invoice preview" : "Invoice"} ${card.invoice.number}: ${formatMoney(card.invoice.amountMinor, card.invoice.currency)}`;
+		case "invoice_list":
+			return `${card.heading}: ${card.total}`;
+		case "accountant_note":
+			return `${card.heading}${card.lines[0] === undefined ? "" : `: ${card.lines[0]}`}`;
 	}
 }
