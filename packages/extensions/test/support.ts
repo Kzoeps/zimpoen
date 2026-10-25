@@ -29,6 +29,7 @@ import {
 	type AccountantDeps,
 	type AskedInput,
 	approvalsModule,
+	type BudgetGate,
 	closingYesWindow,
 	closingYesWindowOnAsk,
 	collectMigrations,
@@ -54,6 +55,7 @@ import {
 	inboxModule,
 	invoicesModule,
 	ledgerModule,
+	memoryModule,
 	type PostedEntry,
 	peopleModule,
 	type ScheduleSettings,
@@ -61,6 +63,7 @@ import {
 	splitsModule,
 	type Triage,
 	tasksModule,
+	usageModule,
 } from "../src/index.ts";
 
 export const ctx = BACKGROUND_CONTEXT;
@@ -143,6 +146,8 @@ export type FixtureOptions = {
 	 */
 	inbox?: { google?: FakeGoogle; triage?: Triage; sync?: Partial<SyncSettings> };
 	delegate?: DelegateDeps;
+	/** The weekly token limits the daily jobs ask. Default: none (nothing degrades); the usage module's own service is `fixture.usage`. */
+	budget?: BudgetGate;
 };
 
 export type Fixture = {
@@ -212,6 +217,8 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		invoicesModule,
 		inboxModule,
 		delegateModule,
+		memoryModule,
+		usageModule,
 	];
 	migrate(db, [...coreMigrations, ...collectMigrations(modules)]);
 
@@ -271,6 +278,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		...(options.accountant === undefined ? {} : { accountant: options.accountant }),
 		...(inboxDeps === undefined ? {} : { inbox: inboxDeps }),
 		...(options.delegate === undefined ? {} : { delegate: options.delegate }),
+		...(options.budget === undefined ? {} : { budget: options.budget }),
 	};
 	for (const module of modules) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = [...modules.flatMap((module) => module.facts?.(deps) ?? []), ...(options.providers ?? [])];

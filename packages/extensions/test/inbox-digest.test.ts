@@ -357,6 +357,53 @@ describe("a digest with nothing in it", () => {
 	});
 });
 
+describe("a digest when the Inbox agent has used its weekly token limit", () => {
+	const over: Parameters<typeof openFixture>[0] = {
+		budget: {
+			check: async (agent) => ({ agent, used: 5_000, limit: 1_000, over: true, weekStart: "2026-10-19" }),
+		},
+	};
+
+	it("is a plain card with the mail in it, asks the model nothing, and still pushes: the mail is as worth a push as ever, it only costs nothing", async () => {
+		const f = await open(over);
+		addMail(f, { subject: "Lease is due", category: "important", urgency: 5 });
+		await startDaily(f);
+
+		f.clock.now = local("2026-10-25", "19:00");
+		f.advance(0);
+		await waitFor(
+			() => dailyStore.requireSchedule(f.db, "digest_evening").lastRunDate === "2026-10-25",
+			"the run to end",
+		);
+
+		const [card] = await inboxCards(f);
+		expect(card).toMatchObject({ job: "digest_evening", degraded: { usedTokens: 5_000, limitTokens: 1_000 } });
+		expect(card?.empty).toBeUndefined();
+		expect(card?.sections[0]?.mail?.map((item) => item.subject)).toStrictEqual(["Lease is due"]);
+		expect(digestAsks(f)).toHaveLength(0);
+		expect(f.faux.state.callCount).toBe(0);
+		expect(f.pushes).toStrictEqual([DIGEST_PUSH]);
+	});
+
+	it("is still the quiet card of a digest with nothing in it, and still sends no push", async () => {
+		const f = await open(over);
+		addMail(f, { subject: "A newsletter", category: "newsletter" });
+		await startDaily(f);
+
+		f.clock.now = local("2026-10-25", "19:00");
+		f.advance(0);
+		await waitFor(
+			() => dailyStore.requireSchedule(f.db, "digest_evening").lastRunDate === "2026-10-25",
+			"the run to end",
+		);
+
+		const [card] = await inboxCards(f);
+		expect(card).toMatchObject({ job: "digest_evening", empty: true, sections: [] });
+		expect(card?.degraded).toBeUndefined();
+		expect(f.pushes).toStrictEqual([]);
+	});
+});
+
 describe("where one digest ends and the next begins", () => {
 	it("starts the next one where the last stopped: mail is listed once, and none is missed", async () => {
 		const f = await open();

@@ -7,7 +7,7 @@ import type { TimerScheduler } from "../timers.ts";
 import { type DailyFactsProvider, sectionOf } from "./facts.ts";
 import { DAILY_JOBS, type DailyJob } from "./jobs.ts";
 import { dailyMigrations } from "./migrations.ts";
-import { buildPlan, dateText, deliver, endsWithDailyRequest } from "./run.ts";
+import { buildPlan, dateText, deliver, endsWithDailyRequest, withBudget } from "./run.ts";
 import { createDailyScheduler } from "./scheduler.ts";
 import { createDailyService, type DailyService } from "./service.ts";
 import * as store from "./store.ts";
@@ -153,7 +153,8 @@ export async function recoverRuns(deps: DomainDeps): Promise<RunRecovery> {
 			const conversationId = conversationFor(deps)(job);
 			if (conversationId === undefined || (await hasRun(deps, job, today, conversationId))) continue;
 			const now = deps.now();
-			const plan = buildPlan(job, today, { now, dueAt: now, timezone: deps.timezone }, deps.facts(), () => {});
+			const facts = buildPlan(job, today, { now, dueAt: now, timezone: deps.timezone }, deps.facts(), () => {});
+			const plan = await withBudget(deps, job, facts, () => {});
 			await deliver(deps, job, plan, { conversationId, date: today, firedAt: row.lastRunAt });
 			report.redelivered.push(job.id);
 		} catch (error) {

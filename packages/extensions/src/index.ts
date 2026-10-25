@@ -227,8 +227,23 @@ export {
 	SEED_INCOME_CATEGORIES,
 } from "./ledger/index.ts";
 export {
+	agentOfConversation,
+	MAX_FACTS_PER_SCOPE,
+	MEMORY_EXTENSION_NAME,
+	MEMORY_LINE_CHARS,
+	MEMORY_READ_EXTENSION_NAME,
+	MEMORY_SECTION_CHARS,
+	MemoryError,
+	type MemoryModule,
+	memoryModule,
+	memoryStore,
+	renderMemory,
+} from "./memory/index.ts";
+export {
 	type AccountantDeps,
 	type AskedInput,
+	type BudgetCheck,
+	type BudgetGate,
 	collectMigrations,
 	conversationIdOf,
 	DEFAULT_ASK_TIMEOUT_MS,
@@ -311,3 +326,13 @@ export {
 	weekdayName,
 } from "./time.ts";
 export { type ReconcileReport as TimerReconcileReport, TIMER_TASK_OPTIONS, type TimerScheduler } from "./timers.ts";
+export {
+	type AgentIdentity,
+	ALERT_SAMPLE_MAX_AGE_MS,
+	createUsageService,
+	type UsageModule,
+	type UsageService,
+	usageModule,
+	usageStore,
+	weekStartOf,
+} from "./usage/index.ts";

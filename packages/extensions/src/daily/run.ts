@@ -17,14 +17,46 @@ export type DailyPlan = {
 	empty: boolean;
 	/** It ran well after its time, because the server was down then. */
 	late: boolean;
+	/**
+	 * The job's agent had used its weekly token limit when the run was decided, so the model is not asked: the facts are posted
+	 * as a plain card. Part of the plan, so a rerun after a crash keeps the decision (the request ids differ between the two).
+	 */
+	degraded?: { usedTokens: number; limitTokens: number };
 };
 
 /** The run has nothing to say and its job may stay silent: a card stands alone, and the model is not asked. */
-export const standsAlone = (job: DailyJob, plan: DailyPlan): boolean => plan.empty && job.cardWhenEmpty;
+export const isQuiet = (job: DailyJob, plan: DailyPlan): boolean => plan.empty && job.cardWhenEmpty;
 
-/** Whether the run pushes to the phone: always, except a run that stands alone for a job that keeps quiet then. */
+/** The model is not asked: a quiet run, or one whose agent has used its weekly token limit. A card stands alone. */
+export const standsAlone = (job: DailyJob, plan: DailyPlan): boolean =>
+	isQuiet(job, plan) || plan.degraded !== undefined;
+
+/** Whether the run pushes to the phone: always, except a quiet run of a job that keeps quiet then (a plain card still has facts). */
 export const pushesFor = (job: DailyJob, plan: DailyPlan): boolean =>
-	!(standsAlone(job, plan) && job.pushWhenEmpty === false);
+	!(isQuiet(job, plan) && job.pushWhenEmpty === false);
+
+/**
+ * The plan, degraded when the job's agent has used its weekly token limit (M8). A soft limit that only background work
+ * obeys, checked here, once per run, and not on every request. A check that fails leaves the plan as it is: a limit that
+ * cannot be read must not silence the briefing.
+ */
+export async function withBudget(
+	deps: Pick<DomainDeps, "budget">,
+	job: DailyJob,
+	plan: DailyPlan,
+	onFailure: (error: unknown) => void,
+): Promise<DailyPlan> {
+	if (deps.budget === undefined || isQuiet(job, plan)) return plan;
+	try {
+		const standing = await deps.budget.check(job.agent);
+		return standing?.over === true
+			? { ...plan, degraded: { usedTokens: standing.used, limitTokens: standing.limit } }
+			: plan;
+	} catch (error) {
+		onFailure(error);
+		return plan;
+	}
+}
 
 /** A run later than this after its time says so on its card. */
 export const LATE_AFTER_MS = 5 * 60_000;
@@ -96,8 +128,10 @@ export function entryData(
 		date,
 		dateText: dateText(date, deps.timezone),
 		sections: plan.sections,
-		// `empty` says the card stands alone (the model was not asked), which a wrap-up never does.
-		...(standsAlone(job, plan) ? { empty: true as const } : {}),
+		// `empty` says there was nothing to report and the card stands alone; a wrap-up never does that.
+		...(isQuiet(job, plan) ? { empty: true as const } : {}),
+		// A plain card with the facts in it: the model was not asked because the weekly token limit was used.
+		...(plan.degraded !== undefined && !isQuiet(job, plan) ? { degraded: plan.degraded } : {}),
 		...(plan.late ? { late: true as const } : {}),
 		firedAt,
 	};
@@ -127,6 +161,10 @@ export async function deliver(
 			data: data as unknown as JsonValue,
 			requestId: `${job.id}:${target.date}:empty`,
 		});
+		// A wrap-up that could not be asked still has its journal day: the owner may answer it unasked, and the PA's prompt names it.
+		if (job.id === "wrapup" && plan.degraded !== undefined) {
+			store.recordWrapupAsked(db, target.date, renderSections(plan.sections), target.firedAt);
+		}
 		return { asked: false };
 	}
 	const content = renderRequest(job, target.date, dateText(target.date, timezone), plan.sections);

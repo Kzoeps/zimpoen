@@ -6,7 +6,7 @@ import type { TimerScheduler } from "../timers.ts";
 import type { DailyFactsProvider } from "./facts.ts";
 import { type DailyJob, jobOf } from "./jobs.ts";
 import { nextOccurrence, occurrenceOn } from "./occurrence.ts";
-import { buildPlan, type DailyPlan, deliver, pushesFor } from "./run.ts";
+import { buildPlan, type DailyPlan, deliver, pushesFor, withBudget } from "./run.ts";
 import * as store from "./store.ts";
 
 /** Durable task kind of a daily job's timer. Stored in task records, so renaming it orphans timers that are waiting. */
@@ -28,7 +28,7 @@ export type DailyResult =
 	/** The server was not there in time, and the run's window was over when it came back: the day is skipped. */
 	| { done: false; reason: "missed"; date: string };
 
-type DailyTaskDeps = Pick<DomainDeps, "db" | "timezone" | "post" | "ask" | "notify">;
+type DailyTaskDeps = Pick<DomainDeps, "db" | "timezone" | "post" | "ask" | "notify" | "budget">;
 type Runtime = TaskRuntime<DailyInput, DailyState, DailyResult, object>;
 
 /** The conversation a job writes into, or undefined when its agent has no conversation yet. */
@@ -147,7 +147,16 @@ export function createDailyTask(
 							),
 						),
 				);
-				const plan = await runtime.memo<DailyPlan>(`plan:${row.dueDate}`, candidate, context);
+				// The weekly token limit is decided once, here, and kept in the memo with the facts: a rerun after a crash must not ask
+				// the model for a day whose first attempt posted the plain card (the two have different request ids).
+				const decided = await withBudget(deps, job, candidate, (error) =>
+					runtime.report(
+						new Error(`The weekly token limit of agent '${job.agent}' could not be read; the run goes ahead.`, {
+							cause: error,
+						}),
+					),
+				);
+				const plan = await runtime.memo<DailyPlan>(`plan:${row.dueDate}`, decided, context);
 				const { asked } = await deliver(deps, job, plan, { conversationId, date: row.dueDate, firedAt: row.dueAt });
 				if (pushesFor(job, plan)) await push(runtime, job.push);
 				await startNext(row, job, task.input.gen, runtime, now, { date: row.dueDate, at: now });

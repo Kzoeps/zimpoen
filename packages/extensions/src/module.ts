@@ -51,6 +51,31 @@ export type DomainDeps = {
 	inbox?: InboxDeps;
 	/** How the PA's `ask_agent` waits. Omitted: {@link DEFAULT_ASK_TIMEOUT_MS}. */
 	delegate?: DelegateDeps;
+	/** The weekly token limits (M8). Omitted: no agent has one, and every daily job asks the model as it always did. */
+	budget?: BudgetGate;
+	/** Say that something failed which the work goes on without (the server logs it). Omitted: nothing is said. Never throws. */
+	warn?: (message: string) => void;
+};
+
+/** An agent's standing against the weekly token limit the owner set for it. */
+export type BudgetCheck = {
+	agent: string;
+	/** Tokens used this week (Monday to today in the owner's zone), as the provider counts them. */
+	used: number;
+	limit: number;
+	/** `used` has reached `limit`: background model work for this agent degrades to a card that costs nothing. */
+	over: boolean;
+	/** The Monday the week began. */
+	weekStart: string;
+};
+
+/**
+ * What the daily jobs ask before they spend tokens (M8): has this agent used up its weekly limit? It is a soft limit. A
+ * job that would ask the model posts a plain card instead; what the owner types still goes through, and nothing is
+ * checked on a request. Resolves to undefined for an agent that has no limit.
+ */
+export type BudgetGate = {
+	check(agentId: string): Promise<BudgetCheck | undefined>;
 };
 
 export type DelegateDeps = {
