@@ -196,3 +196,31 @@ export function weekdayName(ms: number, timezone: string): string {
 }
 
 const shorten = (value: string): string => (value.length > 60 ? `${value.slice(0, 60)}…` : value);
+
+/** The calendar day of a moment in the zone, `2026-10-27`. */
+export function localDate(ms: number, timezone: string): string {
+	return isoLocal(ms, timezone).slice(0, 10);
+}
+
+/** `2026-10-27` plus `days` (negative for before), by calendar: no time zone, so no daylight saving to get wrong. */
+export function addDays(date: string, days: number): string {
+	const [year = 0, month = 1, day = 1] = date.split("-").map(Number);
+	return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * The instant at which the zone's wall clock shows `time` (`HH:MM`) on the calendar day `date`. A time the clock skips
+ * that day moves to the later instant and one it shows twice takes the first, as {@link parseWhen} does.
+ */
+export function atLocalTime(date: string, time: string, timezone: string): number {
+	const parsed = parseWhen(`${date}T${time}`, timezone);
+	if (!parsed.ok) throw new Error(`Not a date and time of day: ${date} ${time}. ${parsed.error}`);
+	return parsed.ms;
+}
+
+/** The last moment of the calendar day `date` in the zone, whatever its length (23, 24 or 25 hours). */
+export function endOfLocalDay(date: string, timezone: string): number {
+	const parsed = parseWhen(date, timezone);
+	if (!parsed.ok) throw new Error(`Not a date: ${date}. ${parsed.error}`);
+	return parsed.ms;
+}

@@ -1,5 +1,6 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Harness } from "@earendil-works/pi-durable";
+import type { ApprovalService } from "./approvals/service.ts";
 import { conversationIdOf, type EntryPoster } from "./module.ts";
 
 /**
@@ -25,5 +26,21 @@ export function createEntryPoster(harness: () => Harness): EntryPoster {
 			BACKGROUND_CONTEXT,
 		);
 		return { submissionId: Number(submission.id) };
+	};
+}
+
+/**
+ * The poster the feature modules get: it writes like `post`, and first closes the YES window of the conversation (see
+ * `ApprovalService.closeYesWindow`). A timer can ask the owner a yes/no question at any moment ("did you wish Tashi a
+ * happy birthday?"), and a bare "yes" typed to it must not approve a deletion that is waiting in the same conversation.
+ * The window closes before the write, so a card is never visible while a YES can still approve something.
+ *
+ * Not for the approval service's own notices: they report how a request ended, and are written by the service with the
+ * plain poster.
+ */
+export function closingYesWindow(post: EntryPoster, approvals: Pick<ApprovalService, "closeYesWindow">): EntryPoster {
+	return async (conversationId, entry) => {
+		approvals.closeYesWindow(conversationId);
+		return await post(conversationId, entry);
 	};
 }

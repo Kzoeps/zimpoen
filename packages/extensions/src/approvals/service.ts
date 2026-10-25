@@ -95,6 +95,13 @@ export type ApprovalService = {
 	 * waiting (the buttons still do). Resending the same `requestId` returns the same notice.
 	 */
 	tryYes(conversationId: number, text: string, requestId: string): Promise<{ submissionId: number } | undefined>;
+	/**
+	 * Something other than the approval itself has just appeared in the conversation, so a bare "yes" may be the answer
+	 * to that and not to the request that is waiting: no YES approves the requests that are waiting now (the buttons
+	 * still do). `tryYes` does this for every message of the owner; {@link closingYesWindow} does it for every card a
+	 * module posts by itself, such as a question the assistant asks the owner on a timer.
+	 */
+	closeYesWindow(conversationId: number): void;
 	/** For the destructive tool itself: carry out the approved request for this call. Throws if there is none. */
 	runApproved(conversationId: number, tool: string, args: ActionArgs): Promise<string>;
 	/**
@@ -248,6 +255,8 @@ export function createApprovalService(deps: Deps): ApprovalService {
 			store.closeYesWindow(db, conversationId);
 			return undefined;
 		},
+
+		closeYesWindow: (conversationId) => store.closeYesWindow(db, conversationId),
 
 		async runApproved(conversationId, tool, args) {
 			const action = actionFor(tool);

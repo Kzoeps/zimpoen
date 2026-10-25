@@ -1,10 +1,11 @@
-import type { TaskCard, TaskCardItem, ToolCard } from "@assistant/shared";
+import type { TaskCard, TaskCardItem } from "@assistant/shared";
 import type { JsonValue } from "@earendil-works/chord";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { ApprovalAction } from "../approvals/service.ts";
 import type { DomainDeps } from "../module.ts";
 import { formatLocal, formatLocalDate, isoLocal, parseWhen, weekdayName } from "../time.ts";
+import { asDetails, TIME_HELP, text } from "../tool-support.ts";
 import type { ReminderScheduler } from "./scheduler.ts";
 import * as store from "./store.ts";
 
@@ -13,11 +14,6 @@ type Deps = Pick<DomainDeps, "db" | "timezone" | "approvals">;
 const MAX_LISTED = 50;
 const DEFAULT_LISTED = 20;
 const MAX_SNOOZE_MINUTES = 525_600;
-
-const text = (value: string) => [{ type: "text" as const, text: value }];
-
-/** A card as the plain JSON a tool result's `details` must be (drops undefined fields, proves it serializes). */
-const asDetails = (card: ToolCard): JsonValue => JSON.parse(JSON.stringify(card)) as JsonValue;
 
 export function toCardItem(row: store.TaskRow, timezone: string): TaskCardItem {
 	return {
@@ -53,10 +49,6 @@ export function describeTask(row: store.TaskRow, timezone: string): string {
 	if (row.notes !== "") parts.push(`notes: ${row.notes}`);
 	return `${row.id} “${row.title}” — ${parts.join("; ")}`;
 }
-
-const TIME_HELP =
-	"ISO 8601 in the owner's time zone, for example 2026-10-27T09:00 (add an offset like +06:00 to be exact). " +
-	"Call current_time first when you must work out what 'tomorrow' or 'next Friday' means.";
 
 const taskId = Type.String({ minLength: 1, description: "The task's id, as list_tasks shows it (t_...)." });
 
@@ -203,6 +195,7 @@ export function createTaskTools(deps: Deps, scheduler: ReminderScheduler): ToolR
 
 	const updateTask = defineTool({
 		name: "update_task",
+		deferred: true,
 		description:
 			"Change a task's title, notes, due date or reminder. Send null for due or remind_at to clear it. Changing the reminder replaces the old one.",
 		parameters: Type.Object({
@@ -352,6 +345,7 @@ export function createTaskTools(deps: Deps, scheduler: ReminderScheduler): ToolR
 
 	const proposeDelete = defineTool({
 		name: "propose_delete_task",
+		deferred: true,
 		description:
 			"Ask the owner to approve deleting a task for good. Nothing is deleted until they tap Approve or reply YES; " +
 			"never say a task is deleted before they have. To merely finish a task use complete_task instead.",
@@ -384,6 +378,7 @@ export function createTaskTools(deps: Deps, scheduler: ReminderScheduler): ToolR
 
 	const deleteTask = defineTool({
 		name: "delete_task",
+		deferred: true,
 		description:
 			"Permanently delete a task. This is blocked unless the owner has approved exactly this deletion: do not call it " +
 			"yourself, use propose_delete_task and wait for their answer. (The assistant normally carries out an approved deletion by itself.)",

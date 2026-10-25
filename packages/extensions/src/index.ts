@@ -15,6 +15,25 @@ export {
 	type RecoveryReport,
 } from "./approvals/index.ts";
 export {
+	AGENDA_GRACE_MS,
+	AGENDA_PUSH,
+	describeFollowup,
+	FOLLOWUP_NUDGE_PUSH,
+	FOLLOWUP_PUSH,
+	FOLLOWUP_REASK_PUSH,
+	FOLLOWUP_TASK_NAME,
+	FOLLOWUP_URL,
+	FOLLOWUPS_EXTENSION_NAME,
+	type FollowupInput,
+	type FollowupsModule,
+	followupStore,
+	followupsModule,
+	matchMeetings,
+	renderFollowupsSection,
+	significantWords,
+	toCardItem as toFollowupCardItem,
+} from "./followups/index.ts";
+export {
 	collectMigrations,
 	conversationIdOf,
 	type DomainDeps,
@@ -22,8 +41,24 @@ export {
 	type EntryPoster,
 	type PostedEntry,
 } from "./module.ts";
-export { createEntryPoster } from "./post.ts";
+export {
+	BIRTHDAY_CHECK_PUSH,
+	BIRTHDAY_PUSH,
+	BIRTHDAY_TASK_NAME,
+	BIRTHDAY_URL,
+	type BirthdayInput,
+	birthdays,
+	describePerson,
+	PEOPLE_EXTENSION_NAME,
+	type PeopleModule,
+	peopleModule,
+	peopleStore,
+	renderPeopleSection,
+	toCardItem as toPersonCardItem,
+} from "./people/index.ts";
+export { closingYesWindow, createEntryPoster } from "./post.ts";
 export { createProfileExtension, PROFILE_EXTENSION_NAME, type ProfileFacts, renderProfile } from "./profile.ts";
+export { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings, scheduleOf } from "./schedule.ts";
 export {
 	describeTask,
 	REMINDER_PUSH,
@@ -38,4 +73,17 @@ export {
 	tasksModule,
 	toCardItem,
 } from "./tasks/index.ts";
-export { formatLocal, formatLocalDate, isoLocal, offsetMs, type ParsedWhen, parseWhen, weekdayName } from "./time.ts";
+export {
+	addDays,
+	atLocalTime,
+	endOfLocalDay,
+	formatLocal,
+	formatLocalDate,
+	isoLocal,
+	localDate,
+	offsetMs,
+	type ParsedWhen,
+	parseWhen,
+	weekdayName,
+} from "./time.ts";
+export { type ReconcileReport as TimerReconcileReport, TIMER_TASK_OPTIONS, type TimerScheduler } from "./timers.ts";

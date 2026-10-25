@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { NOTICE_ENTRY_KIND, type NoticeEntryData, type ToolCard } from "@assistant/shared";
+import { BIRTHDAY_ENTRY_KIND, NOTICE_ENTRY_KIND, type NoticeEntryData, type ToolCard } from "@assistant/shared";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { APPROVAL_TTL_MS, ApprovalConflict, isYes, REMINDER_TASK_NAME, taskStore } from "../src/index.ts";
@@ -286,6 +286,23 @@ describe('a reply of "YES"', () => {
 		expect(taskExists(f, id)).toBe(true);
 		expect(f.deps.approvals.state(card.actionId)?.status).toBe("pending");
 		expect((await f.deps.approvals.decide(card.actionId, "approve", "button")).status).toBe("executed");
+	});
+
+	it("does not approve a deletion with a yes typed to a question the assistant asked by itself", async () => {
+		const f = await open();
+		await f.callTool("add_task", { title: "Pay rent" }, "add-plain");
+		const id = taskStore.listTasks(f.db, { status: "open", limit: 5 }).tasks[0]?.id ?? "";
+		await f.callTool("add_person", { name: "Tashi", birthday: "10-25" }, "add-tashi"); // today: asked at 18:00
+		const { card } = await propose(f, id);
+
+		f.advance(4 * 60 * MINUTE); // 18:00: the timer posts "Did you wish Tashi a happy birthday?"
+		await waitFor(async () => (await f.entriesOfKind(BIRTHDAY_ENTRY_KIND)).length === 1, "the evening question");
+
+		// The owner's "yes" answers the question that is on screen, not the request that was waiting before it.
+		expect(await f.deps.approvals.tryYes(Number(f.conversation.id), "yes", "req-1")).toBeUndefined();
+		expect(taskExists(f, id)).toBe(true);
+		expect(f.deps.approvals.state(card.actionId)?.status).toBe("pending");
+		expect((await f.deps.approvals.decide(card.actionId, "approve", "button")).status).toBe("executed"); // the button still works
 	});
 
 	it("a request made after the other message is answerable again", async () => {

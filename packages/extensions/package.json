@@ -5,7 +5,8 @@
 	"type": "module",
 	"description": "Durable extensions installed by the server, one domain module each: profile, tasks, approvals; memory, files, ... later",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./schedule": "./src/schedule.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit"

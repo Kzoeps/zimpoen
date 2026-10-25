@@ -25,12 +25,16 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
 	approvalsModule,
+	closingYesWindow,
 	collectMigrations,
 	createApprovalService,
 	createEntryPoster,
 	type DomainDeps,
 	type EntryPoster,
+	followupsModule,
 	type PostedEntry,
+	peopleModule,
+	type ScheduleSettings,
 	tasksModule,
 } from "../src/index.ts";
 
@@ -42,6 +46,11 @@ export const TIMEZONE = "Asia/Thimphu";
 export const START = Date.UTC(2026, 9, 25, 8, 0, 0);
 
 export const MINUTE = 60_000;
+
+/** The text a tool result tells the model. */
+export function textOf(result: ToolExecutionResult): string {
+	return (result.output ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
+}
 
 /** Poll until `check` is truthy: Durable runs tasks in the background. */
 export async function waitFor<T>(
@@ -86,6 +95,8 @@ export type FixtureOptions = {
 	wrapPost?: (post: EntryPoster) => EntryPoster;
 	/** Make the push throw. */
 	failPush?: () => boolean;
+	/** When follow-ups and birthdays fire; the defaults otherwise. */
+	schedule?: Partial<ScheduleSettings>;
 };
 
 export type Fixture = {
@@ -134,7 +145,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 	const now = (): number => clock.now;
 
 	const db = openAppDb(join(dir, "app.sqlite"));
-	const modules = [tasksModule, approvalsModule];
+	const modules = [tasksModule, followupsModule, peopleModule, approvalsModule];
 	migrate(db, [...coreMigrations, ...collectMigrations(modules)]);
 
 	const pushes: PushPayload[] = [];
@@ -151,9 +162,11 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		posted.push(entry);
 		return result;
 	};
-	const post = options.wrapPost === undefined ? recordingPost : options.wrapPost(recordingPost);
+	const plainPost = options.wrapPost === undefined ? recordingPost : options.wrapPost(recordingPost);
 
-	const approvals = createApprovalService({ db, now, post });
+	// As in the server: the approval service writes its notices with the plain poster, the modules' cards close the YES window.
+	const approvals = createApprovalService({ db, now, post: plainPost });
+	const post = closingYesWindow(plainPost, approvals);
 	const deps: DomainDeps = {
 		db,
 		timezone: TIMEZONE,
@@ -165,6 +178,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 			pushes.push(payload);
 		},
 		approvals,
+		...(options.schedule === undefined ? {} : { schedule: options.schedule }),
 	};
 	for (const module of modules) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	const extensions = modules.map((module) => module.extension(deps));
@@ -185,7 +199,12 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		{ models, registry, now, onReport: (error, info) => reports.push({ error, info }) },
 		ctx,
 	);
-	const conversation = await harness.root(ctx, { agent: { model: FAUX_MODEL, extensions } });
+	// The PA is offered its everyday tools and finds the rest with `tool_search`. These tests are about what the tools do,
+	// so the rarely used ones are loaded up front (the server test "offers the everyday tools" covers the loading).
+	const deferred = extensions.flatMap((extension) => extension.tools ?? []).filter((tool) => tool.deferred === true);
+	const conversation = await harness.root(ctx, {
+		agent: { model: FAUX_MODEL, extensions, modelTools: { add: deferred } },
+	});
 	// What the server does once everything is in place: continue interrupted work and run sleepers that are due.
 	harness.resume();
 

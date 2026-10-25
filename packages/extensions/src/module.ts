@@ -3,6 +3,7 @@ import type { PushPayload } from "@assistant/shared";
 import type { JsonValue } from "@earendil-works/chord";
 import type { ConversationId, Extension, Harness } from "@earendil-works/pi-durable";
 import type { ApprovalAction, ApprovalService } from "./approvals/service.ts";
+import type { ScheduleSettings } from "./schedule.ts";
 
 /** What a domain module may ask of the server it runs in. Built once by the server and shared by every module. */
 export type DomainDeps = {
@@ -24,6 +25,8 @@ export type DomainDeps = {
 	/** Send a Web Push to every subscribed device. Never throws: a failed push must not fail the work that triggered it. */
 	notify: (payload: PushPayload) => Promise<void>;
 	approvals: ApprovalService;
+	/** When follow-ups and birthdays fire, where the server configured it; anything left out takes {@link DEFAULT_SCHEDULE}. */
+	schedule?: Partial<ScheduleSettings>;
 };
 
 export type PostedEntry = {
