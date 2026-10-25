@@ -1,8 +1,8 @@
 # Personal assistant — implementation plan
 
-Status: approved direction. Milestones 1 to 7 are implemented (see `progress-m1.md` … `progress-m7.md`; M5, the inbox, was built last);
-this document was updated at the end of M5 to describe what was built. M8 and Ops remain. Owner: Dorje. What the owner has to do is
-`SETUP.md`.
+Status: approved direction. **All milestones are built**: M1 to M8 and Ops (see `progress-m1.md` … `progress-m8.md`). This document
+describes what was built; what could not be checked without the real services is the "Known unverified" list in §9. Owner: Dorje.
+What the owner has to do, in order, is `SETUP.md`.
 
 ## 1. Goal
 
@@ -36,9 +36,9 @@ Anthropic subscription OAuth must NOT be used (violates Anthropic consumer terms
    `.npmrc`, `.aws/**`, `.git-credentials`, `.gnupg/**`, `id_*`, `<data>/secrets/**`. Paths are absolute in config;
    startup verifies each allowed path is readable, rejects one that would expose the databases, and fails loudly.
 5. **No `bash` tool** for any agent.
-6. **Inbox agent has no file tools** (it processes untrusted email text). As built: its extension list is `[profile, inbox]` and its only tools are
-   `search_mail`, `read_mail`, `list_events`, `mark_triage` (one mail), `propose_sender_rule` (asks; the owner's Approve writes the rule), `suggest_followup` and
-   `current_time`: no file tools, no `tool_search`, no approval hook, no `ask_agent`. Email text is data in every layer (`design-notes.md`: "Inbox").
+6. **Inbox agent has no file tools** (it processes untrusted email text). As built: its extension list is `[profile, inbox, memory-read]` and its only tools are
+   `search_mail`, `read_mail`, `list_events`, `mark_triage` (one mail), `propose_sender_rule` (asks; the owner's Approve writes the rule), `suggest_followup`,
+   `recall` (it reads memory and never writes it: M8) and `current_time`: no file tools, no `tool_search`, no approval hook, no `ask_agent`. Email text is data in every layer (`design-notes.md`: "Inbox").
 7. **Arithmetic is code, never the model** (splits, balances, totals, invoice numbers).
 8. **Every app.sqlite write from a tool is idempotent** by the tool call ID (`source_call_id UNIQUE`,
    `ON CONFLICT DO NOTHING`), because Durable may rerun a replay-safe tool after a crash.
@@ -177,7 +177,7 @@ type DomainDeps = {
 
 The server (`apps/server/src/domain.ts`) lists the modules, concatenates their migrations after the core ones
 (`migrate(db, [...coreMigrations, ...domain.migrations])`), installs every extension in the registry, and gives each agent
-the ones it should have (`buildAgents`: the PA gets `tasks`, `followups`, `people`, `approvals`, `daily`, `files` and `delegate` (`ask_agent`); the Inbox agent gets `inbox` alone (`inboxExtensions`: no files, no `tool_search`, no approvals); the Health agent gets `health`, `approvals` and `tool_search`; the Accountant gets `ledger`, `splits`, `invoices`, `files`, `approvals`, `tool_search` and Durable's code mode (`@earendil-works/pi-durable/codemode` over a QuickJS sandbox with `models: false`, so a script has no paid model calls, and a time limit written into every script: `createBoundedCodemodeExtension`, 30 s by default and 2 minutes at most); capability is tool presence). A module never
+the ones it should have (`buildAgents`: the PA gets `tasks`, `followups`, `people`, `approvals`, `daily`, `files` and `delegate` (`ask_agent`); the Inbox agent gets `inbox` and `memory-read` (`inboxExtensions`: no files, no `tool_search`, no approvals; the PA, Health and the Accountant also get `memory`); the Health agent gets `health`, `approvals` and `tool_search`; the Accountant gets `ledger`, `splits`, `invoices`, `files`, `approvals`, `tool_search` and Durable's code mode (`@earendil-works/pi-durable/codemode` over a QuickJS sandbox with `models: false`, so a script has no paid model calls, and a time limit written into every script: `createBoundedCodemodeExtension`, 30 s by default and 2 minutes at most); capability is tool presence). A module never
 imports server code: everything it needs arrives in `DomainDeps`.
 
 **Migrations.** An id is `<module>/<NNN>[_name]`. Ordering is a rule within one module only: its migrations must be
@@ -307,6 +307,14 @@ GET  /api/settings/google                 -> { mode: "real"|"fake", clientConfig
 DELETE /api/settings/google/accounts      { email } -> the same body (local only: the sign-in is forgotten, the sync stops, the mail stays; 404 unknown, 400 bad address)
 POST /api/suggestions/:id                 { decision: "add"|"dismiss" } -> { id, status }; Add asks the PA to add the follow-up (message written by code from the stored suggestion); 404 unknown, 409 answered the other way
 POST /api/uploads                         multipart, ONE `file` field, <= 20 MB -> 201 { file: FileSummary }; the only non-JSON write
+GET  /api/profile                         -> { owner: { name?, timezone, currency, heightCm? }, preferences: { tone?, explanations? }, people: [{ id, name, relation?, birthdayText }] }   (M8)
+PUT  /api/profile/preferences             { tone?: string|null, explanations?: string|null } -> the profile; the two shared preference lines the prompt shows to every agent (null clears one)
+GET  /api/memory?scope=&kind=&q=&limit=   -> { facts: MemoryFactView[], total, counts: { shared, pa, inbox, health, accountant } }; q is an FTS5 search
+PATCH /api/memory/:id                     { text?, pinned? } -> the line; the owner's edit needs no approval (404 unknown, 400 empty or too long)
+DELETE /api/memory/:id                    -> { removed: true }; the owner's delete needs no approval (an agent's `forget` does)
+GET  /api/activity?agent=&from=&to=&limit=&cursor=   -> { timezone, items: ActivityItem[], next?, truncated? }; derived from the conversations, newest first, by the owner's calendar days
+GET  /api/usage                           -> { timezone, weekStart, today, agents: [{ week, allTime, models, limit?, over }], days (14), weeks (8), sampledAt }; samples Durable's totals first
+PUT  /api/settings/budget/:agent          { weeklyTokens: number|null } -> the usage body; the soft limit the daily jobs check (§5.4)
 GET  /api/files/:id                       an upload's bytes (nosniff, sandbox CSP; inline for images, download for the rest)
 ```
 The web app also has two routes of its own that are not under `/api`: `POST /share` (the Android share target: it stores the
@@ -440,9 +448,23 @@ files_index(id TEXT PK /* fi_xxxxxxxx */, path UNIQUE /* absolute, links resolve
             description, tags, added_at, updated_at)   -- an upload, a file the PA found in an allowed folder, or one the assistant made (M7: files/002 rebuilds the table to allow 'generated')
 files_call(source_call_id PK, tool, file_id, applied_at)   -- rule 8 for describe_file and read_file_path
 
--- memory (M8)
-memory_fact(id PK, scope /* 'shared' | agent id */, kind /* 'preference' | 'fact' */, text,
-            source_call_id UNIQUE, created_at, updated_at)   -- FTS5 virtual table for recall
+-- memory (module memory, M8). As built: `seq` (AUTOINCREMENT) is the key the FTS5 index points at and `id` (m_xxxxxxxx) is what the
+-- tools and the page name a line by; `pinned` puts a line first in the prompt; `slot` ('tone' | 'explanations') marks the two preferences
+-- the profile page owns (one row each, UNIQUE where set); `source` says whether the owner or an agent wrote it (an agent never writes a preference: it asks,
+-- and the owner's Approve writes the row, with source 'agent' and the origin below). A scope is 'shared' or an agent id
+-- (checked in code, so a new agent needs no migration). Rule 8: `source_call_id` makes a replayed `remember` find its own row.
+-- origin_agent / origin_conversation / origin_at (migration memory/002_origin): who wrote or asked for it, in which conversation, when.
+memory_fact(seq INTEGER PK AUTOINCREMENT, id TEXT UNIQUE, scope, kind CHECK(kind IN ('preference','fact')), text, pinned, slot, source CHECK(source IN ('agent','owner')),
+            source_call_id UNIQUE, origin_agent, origin_conversation, origin_at, created_at, updated_at)
+memory_fact_fts(text)   -- FTS5, external content over memory_fact, kept by three triggers; unicode61 with diacritics folded
+
+-- usage (module usage, M8). Durable's per-conversation totals (`pi.usage`) have no dates, so they are sampled (at start, every 10 minutes,
+-- at shutdown, and fresh whenever a page or the daily jobs ask) and what is new since the last sample is added to the owner's local day.
+-- Money is micro-dollars (integers). The first sample of an agent only seeds the baseline: what was spent before has no day.
+usage_baseline(agent_id, bucket CHECK(bucket IN ('model','tool')), key /* 'provider/model' or a tool name */, input, output, cache_read, cache_write, tokens, cost_micro, PK(agent_id, bucket, key))
+usage_day(agent_id, day /* YYYY-MM-DD local */, bucket, key, input, output, cache_read, cache_write, tokens, cost_micro, PK(agent_id, day, bucket, key))
+usage_seed(agent_id PK, seeded_at)
+usage_budget(agent_id PK, weekly_tokens CHECK(weekly_tokens > 0), updated_at)   -- the weekly soft limit, in the provider's totalTokens; no row: no limit
 
 -- health (module health, the Health agent; M6). Deviations from the first sketch: weight is UNIQUE per local day (the schema, not
 -- a check in code, keeps one weighing a day; `replace: true` overwrites); sessions carry source_call_id too (one log_workout call is
@@ -525,8 +547,8 @@ tools (e.g. `add_expense`), not free-form memory.
 | M5 Inbox (done)                                                   | Gmail + Calendar read-only (multi-account), Jev triage (rules without a key), digests at 12:30 and 19:00, suggestions to the PA, `ask_agent` | fakes for Google and Jev throughout; whole-server tests; browser check; the real services are the owner's first run (`SETUP.md`) |
 | M6 Health (done)                                                  | weight/lift tables, tools, trends, chart cards, facts for the wrap-up and briefing                                                                                                                                                                                                                                              | tools tested with replays; whole-server test; browser check                                                                 |
 | M7 Accountant (done)                                              | expenses (CSV/photo/chat), code-mode analysis, splits, invoice PDF from template                                                                                                                                                                                                                                               |                                                                                                                             |
-| M8 Memory/profile UI, activity log, usage dashboard, budget guard |                                                                                                                                                                                                                                                                                                                                |                                                                                                                             |
-| Ops                                                               | systemd units, tailscale serve config, OAuth login CLI (`pnpm login:openai`), backup (deferred)                                                                                                                                                                                                                                |                                                                                                                             |
+| M8 Memory/profile UI, activity log, usage dashboard, budget guard (done) | `memory_fact` + FTS5 with `remember`/`recall`/`forget` and a bounded prompt section per agent; Profile page with a memory editor; Activity page derived from the threads; Usage page sampled from Durable's totals, weekly soft limits per agent, a guard in the daily jobs (plain cards over the limit) and a banner | tests per module and through the whole server; browser check (`/tmp/assistant-shots/m8/`); `progress-m8.md` |                                                                                                                             |
+| Ops (done)                                                        | `ops/` systemd units, `tailscale-serve.sh`, `check.sh`, the env file example; `pnpm login:openai` / `logout:openai`; `SETUP.md` as the one ordered checklist; backup (deferred) | units pass `systemd-analyze verify`; scripts have a dry run and tests on temporary directories; the login CLI was run against a fake provider only (§9) |                                                                                                                             |
 
 ## 9. Open items (deferred decisions)
 
@@ -550,8 +572,26 @@ tools (e.g. `add_expense`), not free-form memory.
   lasting sender rule needs the owner's Approve; a Jev that fails three mails in a row is paused for 15 minutes (Settings says so) and one sync gives Jev at most 90 s; `setup-google.md` recommends publishing the Google app
   "In production" so that sign-ins do not expire weekly. Open, cannot be checked offline: Google's REST behaviour (the history 404, label records, a Desktop client's loopback redirect) and the 7-day expiry of a Testing-mode refresh
   token are written from knowledge; Jev's request and answer shape were written without its documentation (`triage/jev-contract.ts`, `TODO(verify)`); no real model has driven the Inbox
-  instructions, the digests or `ask_agent`; `pnpm login:openai` still does not exist (`SETUP.md` says how to make the credential file by hand).
+  instructions, the digests or `ask_agent`; `pnpm login:openai` (M8) was only run against a fake provider: the callback on 127.0.0.1:1455, the SSH paste path and OpenAI accepting the saved refresh token for the server are the owner's first run (`SETUP.md` step 5).
 - Backups (deferred by user).
+- **Known unverified** (everything is built; none of this could be run on the machine it was written on, so it is the owner's first run,
+  `SETUP.md` ends with `ops/check.sh`): the `tailscale serve` flags and the form Serve stores them in (read from Tailscale's source in the M8 fix round, which also showed that `--set-path` strips its
+  prefix, so the API's target ends in `/api`, and that `tailscale funnel --https=443 off` deletes the mappings, so nothing runs it; the script was only run with a stand-in for `tailscale` and with `--dry-run`), and that Serve and https
+  certificates work on the owner's plan; that `ops/check.sh`'s request to `https://<host>/api/agents` through Serve is answered from the same machine; the
+  systemd units on a real machine (the hardening options against a real Node and Next start; `ReadWritePaths` with a data directory under
+  `/home`); `pnpm login:openai` against the real ChatGPT sign-in (the loopback callback on 127.0.0.1:1455, the pasted-address path over SSH,
+  and that OpenAI accepts the saved refresh token for the server); push delivery through FCM and Apple; Google's REST behaviour, the 7-day
+  expiry of a Testing-mode refresh token and Jev's request shape (M5); a real model driving the memory rules (a preference only when asked,
+  nothing remembered from a file or an email), the Inbox, `ask_agent` and digest instructions; that the real provider's `totalTokens` is the
+  number the owner expects (cache reads count) and that a ChatGPT sign-in's answers carry usage at all (if they report zeros the weekly limit
+  never trips, and the Usage page would show zeros); the Android share target on a device.
+- (Decided in M8, cheap to reverse; `design-notes.md`) The Inbox agent may read memory and never write it; an agent cannot write a preference, it asks and the owner's Approve writes it, and a fact
+  stays with the agent that noted it until the owner moves it (M8 fix round); the weekly limit is in `totalTokens`
+  (cache reads included), Monday to Sunday in the owner's zone, checked once per daily run (the daily jobs of that agent: a briefing can still call `ask_agent` and spend a specialist's tokens, which count in
+  that agent's week and are not blocked), never on what the owner types; a provider response that is cut off or aborted reports no usage, so it counts for nothing; usage is sampled
+  from Durable's totals because they carry no dates; the activity log is derived from the transcripts, with no table of its own and no way to reach past the newest 5,000 entries of a conversation.
+- A replayed `remember` or an approved preference run again after the owner deleted its line makes the line again (the row that held the call id is gone): it takes a crash and a delete in the same
+  window, and the owner can delete it again. A table of used call ids would close it.
 - PDFs are stored and shown but the PA cannot read them yet: text extraction is a dependency decision (M7 needs it for
   statements; bank CSVs and receipt photos already work).
 - An upload whose row insert is cut off by a crash between the rename and the insert leaves an orphan file; there is no sweep.

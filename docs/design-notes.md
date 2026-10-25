@@ -766,3 +766,93 @@ a delete that needs approval, and the owner can still search it). Nothing is rev
 256 KB part of nothing but ampersands took about 290 ms, and a hostile mail can carry many such parts. It now looks twelve characters ahead
 (`closingSemicolon`), and `apps/server/test/google-clients.test.ts` pins it.
 
+
+## Memory: a few plain lines, never a place to hide instructions
+
+M8 gives the PA, Health and the Accountant a memory (the Inbox reads it: below) (`packages/extensions/src/memory/`). The reasoning, because most of it is what the memory is **not**:
+
+**One plain line, two kinds.** A line is at most 400 characters, with `<` and `>` removed; a longer one is refused rather than cut (a cut
+sentence changes its meaning), at most 400 lines per scope, and an identical line in the same scope and kind is "already remembered". A
+*preference* is how the owner wants things done and is asked for **only when the owner explicitly asks** ("remember that I like short answers"); a
+*fact* is a lasting detail that has no tool of its own (a favourite gym, a nickname). Money, weight, tasks, birthdays and the like go through their
+domain tools, never here. "Only on request" is a **prompt rule** (`remember`'s description and `MEMORY_RULES` in `agents.ts`): code cannot tell whether
+the owner asked. What code does is make the rule cheap to break safely, as the next two paragraphs say.
+
+**An agent cannot write a preference; it asks.** A preference goes into prompts as "what the owner asked". A line written by an agent that had just read a bank CSV, a receipt or a file would
+carry the owner's authority into every agent's prompt (the review of M8 reproduced it: the Accountant told the Inbox to hide the bank's mail). So `remember` with `kind: "preference"` only files an
+approval request (the `save_preference` action, `createPreferenceAction`): the owner sees a card naming the line and who it is for ("Remember for every agent: “…”"), taps Approve or replies YES,
+and the server writes it. Until then there is no row and no prompt text. The line keeps its **origin**: the agent, its conversation and the time it asked (`origin_agent`,
+`origin_conversation`, `origin_at`, migration `memory/002_origin`), and the Profile page says "asked for by the Accountant agent, and you approved it". The request is refused before it is made when the
+line could never be kept (empty, too long, the scope full), is the same request when Durable runs the call again or the owner has not answered the same line yet, and carrying it out twice keeps one line.
+**A fact stays with the agent that noted it**, whatever scope it asks for (the result says so): a fact is in no prompt but its own agent's, and the other agents reach it only by `recall`, which is
+a thing the owner decides: **Profile → Move to → Every agent** (`PATCH /api/memory/:id` with `scope`; the page owns the two profile lines, so they cannot move, and a pin only means something
+for a fact kept for one agent: preferences are always in the prompt and a shared fact is in none). The owner's page changes, moves and deletes without asking: approval protects the owner from the model, not from themselves.
+
+**Scopes.** `shared` (every agent is told its preferences, and finds its facts by `recall`) and one per agent. The PA, Health and the Accountant have `remember` (a fact in their own scope, or
+a request for a preference, in their own scope or for every agent), `recall` (their own and shared) and `forget`. The prompt section `memory` has a fixed shape: an intro line, "Preferences for every agent", "Preferences for you", "Facts" (pinned first, then
+newest), each line cut to 240 characters, the whole at most 2,400 characters (about 600 tokens of English; the budget is in characters, so a script that takes more tokens per character, Tibetan or Devanagari, costs more), the rest counted in a last line; it has no ids (`recall`
+gives them) and no clock, so it only changes when a line does and the provider's prompt cache keeps working. It is absent when nothing is stored.
+The two profile preferences (tone, explanations) are shared preference rows with a `slot`: one row each, changed in place, shown under their labels.
+
+**The Inbox agent reads memory and never writes it, not even by asking.** It processes untrusted email (rule 6), and the owner would be asked to approve a line that mail talked it into.
+It has `recall` and the prompt section (`memory-read`), not `remember` or `forget`. Adding it back is one line in `domain.ts`
+(`inboxExtensions: [inbox, memory]`, and it would then also need the approval hook and `tool_search` for `forget`). Every agent's rules also say never to
+remember what a file, an email or another agent's answer asks it to keep.
+
+**Forgetting asks, the owner's page does not.** `forget(id)` is the proposing tool (the `propose_delete_*` pattern with the name the scope asked for) and
+`delete_memory(id)` the guarded one that only runs after an approval; both are `deferred`, so `tool_search` loads them. The server deletes on Approve
+(`createForgetAction`). The owner's page deletes and edits without asking: the approval rule protects the owner from the model, not from themselves.
+
+**Search.** `memory_fact_fts` is an FTS5 index with external content, kept by three triggers (the rowid is an explicit `seq`, because a `VACUUM` may renumber a table
+that only has an implicit one). The query is turned into quoted prefix terms that must all match (`ftsQuery`, shared with the Inbox's mail search), so a word is never read as an FTS operator or a column name.
+
+## Usage and the weekly limit: sampled, checked once per daily run
+
+**Why sampled.** Durable keeps one running total per conversation (`pi.usage`, per model and per tool) with no dates, so "this week" and "per day" cannot be asked
+of it. The usage module copies the totals (`usage_baseline`) and adds what is new since the previous reading to `usage_day`, under the owner's local day of the
+reading. Readings are taken at start (the last step of `domain.repair()`, before `harness.resume()`), every ten minutes (`sweep`), at shutdown, fresh whenever the
+Usage page or a daily job asks, and at most every 30 seconds for the banner. **The first reading of an agent only seeds the baseline**: what was spent before
+anyone looked has no day, and must not land on today's (the page says so). A ledger that went down (a restored database) counts nothing and the baseline follows
+it down. Readings run one at a time (a mutex), because an older snapshot applied over a newer baseline would count the same growth twice.
+
+**The unit is the provider's `totalTokens`** (cache reads included), because it is what the provider reports and a stable number; the page also shows input, output
+and cache so the owner can judge. A week is Monday to Sunday in the owner's time zone; "reached" is `used >= limit`. Money is shown as API-price dollars (a ChatGPT
+subscription is not billed by it) and stored as micro-dollars so sums stay exact. If a provider reports zero usage, the limit never trips and the page shows the zeros.
+
+**The guard is in the daily engine, not on every request** (`withBudget` in `daily/run.ts`, called in `task.ts` before the plan is saved in the Durable memo, and again in
+`recoverRuns`). Over the limit, the run's plan is `degraded`: no model call, and `deliver` posts the `app.daily` card with `degraded: { usedTokens, limitTokens }` and the request id
+`<job>:<date>:empty`. The decision is kept in the memo so that a rerun after a crash cannot ask the model for a day whose first attempt already posted the plain card (the two
+have different request ids). A wrap-up still opens its journal day, so an unasked answer has a day to land on; the push still goes. A plan with nothing to say stays the old
+"nothing today" card. A gate that throws leaves the run as it was (fail open, reported in the log): a broken meter must not silence the briefing. **What the owner types is never checked**:
+the limit is soft, and a message from the owner is the one thing that must always get an answer. The digests of the Inbox agent go through the same engine.
+
+## Activity: derived from the transcripts, no table
+
+The Activity page is not a log somebody writes. `apps/server/src/activity.ts` reads each agent's thread newest first and turns two things into items: a **tool result**
+(tool name, the first line of its text, or two when the first only introduces a list, and whether it failed) and five kinds of **timer card** (`app.reminder`, `agenda`, `followup`, `birthday`,
+`daily`, dated by `firedAt`). Looking at the clock (`current_time`) and loading a tool (`tool_search`) are left out; chat messages and notices are not items. Because it is derived, it
+cannot disagree with the conversation, needs no migration, and costs nothing to keep. Paging uses a cursor, base64url JSON `{agent: oldest entry id shown}`: the four threads are
+read newest first and merged by time, at most 5,000 entries per thread per request (then `truncated: true`: the newest 5,000 entries of a conversation were searched and older items are not
+listed. Dates cannot reach past that: a `from`/`to` only skips what is out of range, because Durable has no query by time and entries carry none of their own). Day filters are the owner's
+calendar days (`from` and `to`, both inclusive), not UTC's, and a day that does not exist (`2026-13-01`) is a 400. A failed tool call is summarised by its reason: Durable wraps it in `<harness>` tags
+with an `[error]` marker, which the summary drops. A day-filtered scan stops at the first **tool** result older than the range, never at a timer card: a card posted again late (after a power cut) carries
+the time it was due and sits among newer entries. Tool-result times come from the Harness clock, so a test that moves the fake clock also dates the activity.
+
+## Deployment files (Ops)
+
+`ops/` holds files only; nothing in the repository installs a service. **The units** run the built server and `next start` (through Node directly, so the unit needs no pnpm on its PATH)
+as an ordinary user, `Restart=on-failure`, with an environment file (`/etc/assistant/assistant.env`, mode 0600, from `ops/assistant.env.example`). Hardening that keeps the app working:
+`ProtectHome=read-only` (not `true`), so `~/Documents` and `~/Downloads` stay readable for the file tools, and `ReadWritePaths=` equal to `ASSISTANT_DATA_DIR`, the only place the server writes;
+`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, kernel and cgroup protections, `RestrictAddressFamilies`. There is deliberately no `MemoryDenyWriteExecute` (V8 needs writable and
+executable memory). **`install-units.sh`** fills in the lines of the two units that depend on the machine (the user, the repository path, the absolute path of Node, and `ReadWritePaths=`, taken from the
+data folder the settings file names, which it creates) and installs them, so the tracked files are never edited and the one thing that must agree (the writable path and `ASSISTANT_DATA_DIR`) cannot
+disagree. **`tailscale-serve.sh`** publishes the web app at `/` and the API at `/api` on the tailnet only, reads the configuration back, prints the URL and the two settings the server needs
+(`ASSISTANT_PUBLIC_HOST`, `ASSISTANT_OWNER_LOGIN`); it is idempotent and has `--dry-run`. Two facts from Tailscale's source decide its shape: `--set-path` **strips** its mount path before it proxies
+(`ipn/ipnlocal/serve.go`: "Trim the mount point from the URL path before proxying", #6571), so the API's target carries `/api` itself; and **`tailscale funnel --https=443 off` with no path deletes every web
+handler of the port** (`removeWebServe`: the "TODO: remove funnel" is still a TODO), so the script never runs it: Funnel is never turned on, and each `serve` run removes it from its port
+(`applyFunnel(…, allowFunnel=false)`). **`check.sh`** prints one `PASS`, `FAIL` or `WARN` line per thing a first install gets wrong (permissions of the
+data directory and the secrets, sign-ins present, VAPID, the example values of the settings file, the ports bound to `127.0.0.1` only, the lock, the API, the Serve mappings read from
+`tailscale serve status --json`, Funnel, `GET https://<host>/api/agents` through Serve, Google accounts, Jev mode) and exits non-zero on a `FAIL`; a settings file it cannot read is one `FAIL` and an end.
+**`pnpm login:openai`** is a CLI over pi-ai's OAuth login for `openai` ("Sign in with ChatGPT"): it starts pi's loopback server on 127.0.0.1:1455, prints the link and, for a browser on
+another machine, accepts the pasted redirect address; the sign-in is saved through the same file credential store the server reads (`<data>/secrets/credentials.json`, 0600). Its logic is a
+function over an injected auth provider, so the tests run it against a fake one and never reach OpenAI.

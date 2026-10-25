@@ -5,7 +5,7 @@ ChatGPT-style web chat. Several themed agents (`pa`, `inbox`, `health`, `account
 crash-safe conversation on [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable): if the
 process dies mid-answer, the next start picks the work up where it stopped.
 
-Status: **Milestones 1 to 7 are implemented; the latest is M5 (inbox: Gmail and Calendar, read-only, with Jev triage)**. You can open the web UI, pick an agent, chat, and watch
+Status: **all eight milestones are implemented; the latest is M8 (memory and profile, the activity log, usage with a weekly limit, and the deployment files)**. You can open the web UI, pick an agent, chat, and watch
 the answer stream in. The `pa` agent keeps a task list and reminds you at the right time; it also follows your meetings:
 after one it asks how it went and, if something has to be followed up, when, and then asks about that follow-up in turn;
 through the day you add agenda points, and shortly before the meeting it posts them; and it keeps your friends' and
@@ -41,6 +41,18 @@ suggests a follow-up, which appears in the assistant's chat as a card with **Add
 press Add; one nobody answers expires after a week), and the assistant can ask it a question on your behalf (`ask_agent`). To connect your accounts, see
 [`docs/SETUP.md`](docs/SETUP.md) (everything you have to do, in one list), [`docs/setup-google.md`](docs/setup-google.md) and
 [`docs/setup-jev.md`](docs/setup-jev.md).
+The PA, Health and the Accountant also have a **memory** (the Inbox agent reads it and never writes it: it reads untrusted mail): one plain line at a
+time, either a *preference* (only when you ask it to remember something: "remember that I like short answers") or a *fact* (a detail no
+tool has a place for, like a favourite gym). An agent cannot write a preference by itself: it asks, as an approval card in its chat, and the
+line exists once you approve it (for that agent alone or for every agent; it keeps who asked). A fact an agent notes stays with that agent
+until you move it to every agent on the **Profile** page. The lines are in the agent's prompt (about 2,400 characters, which is about 600
+tokens of English), and are listed on the **Profile** page, where you search, edit, pin, move and delete any of them without anyone's
+approval (an agent that wants to forget one needs yours). **Activity** lists what the agents did, worked out from
+the conversations themselves, with filters by agent and day. **Usage** shows the tokens each agent and model spent this
+week and day by day, and lets you set a weekly limit per agent: past it, that agent's briefing, wrap-up and digests are
+posted as plain cards that cost no model tokens until Monday, a banner says so on every page, and what you type still gets
+an answer. Putting it on the always-on machine is one ordered checklist, [`docs/SETUP.md`](docs/SETUP.md), with its files
+in `ops/`.
 The full design and milestone list is in [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Quickstart
@@ -157,6 +169,18 @@ answer back. `ASSISTANT_GOOGLE_MODE=real` (the default in production) reads real
 `pnpm connect:google`: [`docs/setup-google.md`](docs/setup-google.md) (publish the Google app "In production" there: in Testing mode
 Google may expire each sign-in after 7 days, which this guide marks as to verify).
 
+**Memory, profile, activity and usage.** In the PA's, Health's or the Accountant's thread `/tool remember {"text":"The dentist is Dr Wangmo"}`
+keeps a fact for that agent and shows a card; `/tool remember {"text":"Tea without sugar","kind":"preference"}` asks you to approve a preference
+(`"scope":"shared"` for every agent) and the line exists once you press Approve or reply YES; `/tool recall {"query":"tea"}` searches what that
+agent and the shared scope hold (the Inbox agent has `recall` too). Forgetting asks you first: `/tool tool_search {"query":"forget"}`, then
+`/tool forget {"id":"m_…"}` (the id is in the text `recall` gives the model and in the Activity list, not on its card; the Profile page deletes a line
+directly) and press Approve. **Profile** in the sidebar lists, searches, edits, pins and deletes the lines, and sets the tone and the explanations
+every agent is told; **Activity** filters by agent and day and pages with **Load more**; **Usage** has a weekly limit box per
+agent (`500k`, `2m`). To see the limit work, set `1k` on the Assistant, spend a few turns, and move the briefing two minutes
+ahead as above: its card says it is a plain version, and lists the tasks and mail it found instead of a model's text. The dev
+model never decides to remember anything; the real one follows the rules in its instructions (preferences only when you ask,
+nothing from a file or an email).
+
 On first start the server must be able to read `~/Documents` and `~/Downloads`, which agents may read once file tools
 exist. If you do not have them, point it elsewhere and it will tell you what is wrong in any case:
 
@@ -170,6 +194,8 @@ ASSISTANT_READ_PATHS=/some/folder:/another/folder pnpm dev
 | `pnpm build` | Bundles the server to `apps/server/dist/main.js` and builds the web app |
 | `pnpm start` | Runs the built server in production mode (`NODE_ENV=production`: auth on and cannot be turned off, OpenAI model, `./data`). Run the built web app with `pnpm --filter @assistant/web start` |
 | `pnpm connect:google` | Connects a Gmail account (read-only), once per account: prints a link, waits for the approval in your browser, saves the sign-in in `<data>/secrets/google-accounts.json`. `--list` shows the accounts. [`docs/setup-google.md`](docs/setup-google.md) |
+| `pnpm login:openai` | Signs the assistant in to OpenAI with your ChatGPT subscription: prints a link, waits for the approval in your browser (or a pasted address, over SSH), saves the sign-in in `<data>/secrets/credentials.json`. `pnpm logout:openai` removes it. [`docs/SETUP.md`](docs/SETUP.md) |
+| `ops/check.sh` | Checks the deployment (private folders and files, sign-ins, the server, the ports on `127.0.0.1` only, the API, Tailscale Serve with Funnel off and `/api` answering through it, the services) and prints one `PASS`/`FAIL`/`WARN` line each; `--dry-run` lists the checks, `--only`/`--skip` pick groups. `ops/tailscale-serve.sh` publishes the web app and the API on your tailnet (idempotent; `--dry-run`). `ops/install-units.sh` fills in and installs the two systemd units in `ops/systemd/` (`--dry-run`), `ops/assistant.env.example` is the settings file |
 | `pnpm typecheck` | `tsc --noEmit` in every package |
 | `pnpm test` | Vitest for the whole workspace |
 | `pnpm lint` | Biome (lint and format check) |
@@ -184,8 +210,9 @@ apps/
 packages/
   shared/        API contracts: DTOs, error shape, stream event types, card types (types, plus tiny constants and guards)
   db/            app.sqlite: node:sqlite wrapper and the migration runner (ids per module), core tables
-  extensions/    Durable extensions the server installs: domain modules `tasks`, `followups`, `people`, `approvals`, `daily` (briefing, wrap-up, journal), `files`, `health` (weight, lifts; the Health agent's), `ledger`, `splits` and `invoices` (the Accountant's: accounts and entries in integer minor units, CSV import, bills and who owes whom, the invoice PDF made with pdfkit and Mustache), and `profile`; more later
-docs/            PLAN.md (architecture), design-notes.md (security and durability reasoning), handoff and progress notes
+  extensions/    Durable extensions the server installs: domain modules `tasks`, `followups`, `people`, `approvals`, `daily` (briefing, wrap-up, journal), `files`, `health` (weight, lifts; the Health agent's), `ledger`, `splits` and `invoices` (the Accountant's: accounts and entries in integer minor units, CSV import, bills and who owes whom, the invoice PDF made with pdfkit and Mustache), `inbox`, `delegate`, `memory` (remembered lines with a full-text index), `usage` (what Durable's totals say each agent spent, and the weekly limits) and `profile` (who the owner is, in the prompt)
+ops/             deployment files: systemd units, `install-units.sh`, `tailscale-serve.sh`, `check.sh`, `assistant.env.example` (docs/SETUP.md)
+docs/            PLAN.md (architecture), SETUP.md (the install checklist), OPS.md (running it), design-notes.md (security and durability reasoning), handoff and progress notes
 ```
 
 Workspace packages export TypeScript source. Node 24 runs it directly in dev, Next compiles `@assistant/shared`
@@ -231,7 +258,7 @@ production mode: `ASSISTANT_AUTH=off ASSISTANT_MODEL_MODE=faux node apps/server/
 `pnpm --filter @assistant/web start`. `pnpm start` itself refuses `ASSISTANT_AUTH=off`.
 
 OpenAI mode reads credentials from `<data>/secrets/credentials.json` (mode 0600, pi-ai's `CredentialStore` format). There is
-no sign-in command yet (PLAN.md lists `pnpm login:openai` under Ops; [`docs/SETUP.md`](docs/SETUP.md) says how to make the file today), and the server never logs in or calls OpenAI by itself.
+made by `pnpm login:openai` (Sign in with ChatGPT: it prints a link, you approve it in a browser; `pnpm logout:openai` removes it; [`docs/SETUP.md`](docs/SETUP.md) step 5), and the server never logs in or calls OpenAI by itself.
 Google and Jev are read from two more files in the same folder, which you make from their guides: `google-oauth.json` (the OAuth
 client you created) and `jev.json` (the key); `pnpm connect:google` writes `google-accounts.json`. A missing `jev.json` means local
 rules, a missing `google-oauth.json` means no Google account can be connected; neither stops the server.
@@ -246,7 +273,7 @@ FCM or Apple's push service has not been tried yet.
 
 ```text
 data/
-  app.sqlite       domain tables (agents, tasks, follow-ups, people, approvals, push subscriptions, daily schedule, journal, file index, health, ledger, splits, invoices, the inbox's accounts, mail with its full-text index, events, rules, suggestions and digest windows, questions between agents), WAL
+  app.sqlite       domain tables (agents, tasks, follow-ups, people, approvals, push subscriptions, daily schedule, journal, file index, health, ledger, splits, invoices, the inbox's accounts, mail with its full-text index, events, rules, suggestions and digest windows, questions between agents, remembered lines with their full-text index, the usage ledger and the weekly limits), WAL
   durable.sqlite   Durable's storage: conversations, entries, tasks (reminder timers included), WAL
   files/           uploads, `<yyyy-mm>/<id>-<name>`, mode 0600. Agents may read; the browser gets them back through `GET /api/files/:id`
   workspace/       generated files. The only place agents may write
@@ -256,7 +283,8 @@ data/
   templates/       your document templates, mode 0700: `invoice.html` (the server writes a default the first time and never over yours)
                    and the images it uses. Agents can neither read nor change it
   secrets/         credentials and keys, mode 0700. Never readable by an agent
-    credentials.json   the OpenAI sign-in, mode 0600
+    credentials.json   the OpenAI sign-in, mode 0600, written by `pnpm login:openai`
+    device-id          the installation id sent with the OpenAI sign-in, mode 0600, created the first time it is needed
     vapid.json         the Web Push key pair, mode 0600, created at the first start
     google-oauth.json  the Google Cloud OAuth client (Desktop app) you made: id and secret. You put it there (docs/setup-google.md)
     google-accounts.json  one refresh token per connected Gmail account, mode 0600, written by `pnpm connect:google`
@@ -325,8 +353,8 @@ first before it touches either database. A lock left behind by a crash is recogn
   (`gmail.readonly`, `calendar.readonly`, `openid`, `email`: `apps/server/src/google/oauth.ts`), the HTTP clients behind the Inbox
   tools only `GET` and only to Google's hosts, and no tool can send, reply, label, archive or delete, so there is nothing for a
   prompt to talk a model into. The Inbox agent has no file tools, no approval or search tools and no way to call another agent:
-  its only tools are `search_mail`, `read_mail`, `list_events`, `mark_triage`, `propose_sender_rule`, `suggest_followup` and
-  `current_time` (capability by tool presence, tested through the whole server). Text from an email is data: every tool result
+  its only tools are `search_mail`, `read_mail`, `list_events`, `mark_triage`, `propose_sender_rule`, `suggest_followup`,
+  `recall` (it reads memory and never writes it) and `current_time` (capability by tool presence, tested through the whole server). Text from an email is data: every tool result
   frames it as such, the Inbox's and the PA's instructions say never to follow it, and what it can reach is bounded:
   `mark_triage` changes one mail's category and nothing else, a lasting rule for every later mail of a sender is only a card
   (`propose_sender_rule`) that takes effect when you tap **Approve** (a typed YES does not count), `suggest_followup` only writes
@@ -373,7 +401,10 @@ browser ──/api/*──► Next (dev proxy)  ──►  Hono API ──► Du
   `POST|DELETE /api/push/subscribe` (one device's subscription), `POST /api/approvals/:id`
   (`{ "decision": "approve" | "deny" }`), `POST /api/admin/tasks/:id/retry`, `GET /api/settings/schedule` and
   `PUT /api/settings/schedule/:job` (`{ "localTime"?, "enabled"? }`, job `briefing` or `wrapup`), `POST /api/uploads`
-  (multipart, one `file` field) and `GET /api/files/:id` (an upload, back). Errors are
+  (multipart, one `file` field) and `GET /api/files/:id` (an upload, back). The owner's pages use `GET /api/profile`,
+  `PUT /api/profile/preferences` (`{ "tone"?, "explanations"? }`, `null` clears one), `GET /api/memory` (`scope`, `kind`, `q`,
+  `limit` up to 500), `PATCH /api/memory/:id` (`{ "text"?, "pinned"?, "scope"? }`: `scope` moves the line), `DELETE /api/memory/:id`, `GET /api/activity` (`agent`, `from`, `to`, `limit`, `cursor`), `GET /api/usage` and
+  `PUT /api/settings/budget/:agent` (`{ "weeklyTokens": 500000 | null }`). Errors are
   `{ "error": { "code", "message" } }`. Types are in `packages/shared`. Only conversations that belong to an agent are
   reachable.
 - A message needs a client-generated `requestId`; resending it never sends the message twice. The web app keeps one id per
