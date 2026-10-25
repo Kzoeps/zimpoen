@@ -79,6 +79,23 @@ export {
 	toCardItem as toFollowupCardItem,
 } from "./followups/index.ts";
 export {
+	CATALOG as HEALTH_CATALOG,
+	describeExercise,
+	describeGroup,
+	exerciseKey,
+	findInCatalog,
+	HEALTH_EXTENSION_NAME,
+	healthDayLabel,
+	healthModule,
+	healthStats,
+	healthStore,
+	healthUnits,
+	NUDGE_WINDOW_DAYS,
+	renderHealthSection,
+	resolveRange as resolveHealthRange,
+	tidyExerciseName,
+} from "./health/index.ts";
+export {
 	type AskedInput,
 	collectMigrations,
 	conversationIdOf,
@@ -86,6 +103,7 @@ export {
 	type DomainModule,
 	type EntryPoster,
 	type FilesDeps,
+	type HealthDeps,
 	type InputSubmitter,
 	type PostedEntry,
 } from "./module.ts";

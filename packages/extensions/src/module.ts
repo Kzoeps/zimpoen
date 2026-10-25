@@ -42,6 +42,13 @@ export type DomainDeps = {
 	schedule?: Partial<ScheduleSettings>;
 	/** What the file tools need from the server. Omitted: no folder is offered to the model and images pass through as they are. */
 	files?: FilesDeps;
+	/** What the Health module needs of the owner's profile. Omitted: nothing that depends on it (BMI) is shown. */
+	health?: HealthDeps;
+};
+
+export type HealthDeps = {
+	/** The owner's height in centimetres, for BMI. */
+	heightCm?: number;
 };
 
 export type FilesDeps = {

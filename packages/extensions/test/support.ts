@@ -41,6 +41,8 @@ import {
 	type FilesDeps,
 	filesModule,
 	followupsModule,
+	type HealthDeps,
+	healthModule,
 	type InputSubmitter,
 	type PostedEntry,
 	peopleModule,
@@ -116,6 +118,8 @@ export type FixtureOptions = {
 	files?: FilesDeps;
 	/** Extra facts providers, read next to the modules' own by the briefing and the wrap-up. */
 	providers?: readonly DailyFactsProvider[];
+	/** What the Health module is told about the owner (their height, for BMI). Default: nothing. */
+	health?: HealthDeps;
 };
 
 export type Fixture = {
@@ -166,7 +170,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 	const now = (): number => clock.now;
 
 	const db = openAppDb(join(dir, "app.sqlite"));
-	const modules = [tasksModule, followupsModule, peopleModule, approvalsModule, dailyModule, filesModule];
+	const modules = [tasksModule, followupsModule, peopleModule, approvalsModule, dailyModule, filesModule, healthModule];
 	migrate(db, [...coreMigrations, ...collectMigrations(modules)]);
 
 	const pushes: PushPayload[] = [];
@@ -212,6 +216,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		approvals,
 		...(options.schedule === undefined ? {} : { schedule: options.schedule }),
 		...(options.files === undefined ? {} : { files: options.files }),
+		...(options.health === undefined ? {} : { health: options.health }),
 	};
 	for (const module of modules) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = [...modules.flatMap((module) => module.facts?.(deps) ?? []), ...(options.providers ?? [])];
