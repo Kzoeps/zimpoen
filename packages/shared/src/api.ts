@@ -1,5 +1,6 @@
 import type { EntryRecord } from "@earendil-works/pi-durable";
 import type { AgentId, AgentSummary } from "./agents.ts";
+import type { BudgetHealth } from "./usage.ts";
 
 /** Longest message the composer may send, in UTF-16 code units. */
 export const MAX_MESSAGE_CHARS = 20_000;
@@ -116,6 +117,8 @@ export type ApprovalState = {
 export type AgentsResponse = {
 	agents: AgentSummary[];
 	health: ServerHealth;
+	/** The agents that have reached their weekly token limit: the daily jobs post plain cards for them until the week turns. */
+	budget: BudgetHealth;
 };
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;

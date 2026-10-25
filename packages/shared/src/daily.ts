@@ -37,6 +37,11 @@ export type DailyEntryData = {
 	empty?: true;
 	/** It ran well after its time because the server was down at that time. */
 	late?: true;
+	/**
+	 * The agent had used its weekly token limit, so the model was not asked: the card is the plain version, with the facts in
+	 * the open. The numbers are the week's tokens and the limit at that moment.
+	 */
+	degraded?: { usedTokens: number; limitTokens: number };
 	firedAt: number;
 };
 

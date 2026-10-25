@@ -23,6 +23,13 @@ export {
 	type TxnListCard,
 	type WhoOwesCard,
 } from "./accountant.ts";
+export {
+	type ActivityAgentFilter,
+	type ActivityItem,
+	type ActivityResponse,
+	DEFAULT_ACTIVITY_PAGE,
+	MAX_ACTIVITY_PAGE,
+} from "./activity.ts";
 export { AGENT_IDS, type AgentId, type AgentSummary, isAgentId } from "./agents.ts";
 export {
 	type AgentSettings,
@@ -174,6 +181,29 @@ export {
 	URGENCY_RANGE,
 } from "./inbox.ts";
 export {
+	canPin,
+	isMemoryKind,
+	isMemoryScope,
+	MAX_MEMORY_CHARS,
+	MAX_MEMORY_LIST,
+	MEMORY_KINDS,
+	type MemoryCard,
+	type MemoryFactResponse,
+	type MemoryFactView,
+	type MemoryKind,
+	type MemoryListCard,
+	type MemoryOrigin,
+	type MemoryResponse,
+	type MemoryScope,
+	PROFILE_SLOT_LABEL,
+	PROFILE_SLOTS,
+	type ProfilePerson,
+	type ProfileResponse,
+	type ProfileSlot,
+	type UpdateMemoryRequest,
+	type UpdatePreferencesRequest,
+} from "./memory.ts";
+export {
 	currencyExponent,
 	currencyLabel,
 	formatAmount,
@@ -198,3 +228,15 @@ export {
 	type UnansweredInput,
 	type UserChatMessage,
 } from "./stream.ts";
+export {
+	type AgentUsage,
+	type BudgetAlert,
+	type BudgetHealth,
+	MAX_WEEKLY_TOKENS,
+	type UpdateBudgetRequest,
+	type UsageDay,
+	type UsageFigures,
+	type UsageModelRow,
+	type UsageResponse,
+	type UsageWeek,
+} from "./usage.ts";

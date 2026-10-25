@@ -11,6 +11,7 @@ import type { JournalCard } from "./daily.ts";
 import type { FileCard, FileListCard } from "./files.ts";
 import type { ExerciseChartCard, WeightCard, WeightChartCard, WorkoutCard, WorkoutListCard } from "./health.ts";
 import type { InboxCard } from "./inbox.ts";
+import type { MemoryCard, MemoryListCard } from "./memory.ts";
 
 /** Entry kind of a reminder that fired. Its `data` is a {@link ReminderEntryData}. */
 export const REMINDER_ENTRY_KIND = "app.reminder";
@@ -224,7 +225,9 @@ export type ToolCard =
 	| WorkoutListCard
 	| ExerciseChartCard
 	| AccountantCard
-	| InboxCard;
+	| InboxCard
+	| MemoryCard
+	| MemoryListCard;
 
 const CARD_TYPES: readonly string[] = [
 	"task_list",
@@ -259,6 +262,8 @@ const CARD_TYPES: readonly string[] = [
 	"inbox_note",
 	"suggestion_sent",
 	"agent_answer",
+	"memory",
+	"memory_list",
 ];
 
 /**
