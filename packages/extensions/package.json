@@ -16,6 +16,13 @@
 		"@assistant/shared": "workspace:*",
 		"@earendil-works/chord": "1.4.0",
 		"@earendil-works/pi-ai": "1.4.0",
-		"@earendil-works/pi-durable": "1.4.0"
+		"@earendil-works/pi-codemode": "1.4.0",
+		"@earendil-works/pi-durable": "1.4.0",
+		"mustache": "4.2.0",
+		"pdfkit": "0.20.2"
+	},
+	"devDependencies": {
+		"@types/mustache": "4.2.6",
+		"@types/pdfkit": "0.17.7"
 	}
 }

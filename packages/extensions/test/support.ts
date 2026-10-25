@@ -26,6 +26,7 @@ import {
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
+	type AccountantDeps,
 	type AskedInput,
 	approvalsModule,
 	closingYesWindow,
@@ -44,9 +45,12 @@ import {
 	type HealthDeps,
 	healthModule,
 	type InputSubmitter,
+	invoicesModule,
+	ledgerModule,
 	type PostedEntry,
 	peopleModule,
 	type ScheduleSettings,
+	splitsModule,
 	tasksModule,
 } from "../src/index.ts";
 
@@ -120,6 +124,10 @@ export type FixtureOptions = {
 	providers?: readonly DailyFactsProvider[];
 	/** What the Health module is told about the owner (their height, for BMI). Default: nothing. */
 	health?: HealthDeps;
+	/** What the Accountant's modules are told: the owner's currency and name, where invoices go. Default: the Ngultrum, nothing else. */
+	accountant?: AccountantDeps;
+	/** More extensions for the registry and the conversation's agent, such as code mode, whose tools reach the modules'. */
+	extraExtensions?: readonly Extension[];
 };
 
 export type Fixture = {
@@ -170,7 +178,18 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 	const now = (): number => clock.now;
 
 	const db = openAppDb(join(dir, "app.sqlite"));
-	const modules = [tasksModule, followupsModule, peopleModule, approvalsModule, dailyModule, filesModule, healthModule];
+	const modules = [
+		tasksModule,
+		followupsModule,
+		peopleModule,
+		approvalsModule,
+		dailyModule,
+		filesModule,
+		healthModule,
+		ledgerModule,
+		splitsModule,
+		invoicesModule,
+	];
 	migrate(db, [...coreMigrations, ...collectMigrations(modules)]);
 
 	const pushes: PushPayload[] = [];
@@ -217,10 +236,11 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		...(options.schedule === undefined ? {} : { schedule: options.schedule }),
 		...(options.files === undefined ? {} : { files: options.files }),
 		...(options.health === undefined ? {} : { health: options.health }),
+		...(options.accountant === undefined ? {} : { accountant: options.accountant }),
 	};
 	for (const module of modules) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = [...modules.flatMap((module) => module.facts?.(deps) ?? []), ...(options.providers ?? [])];
-	const extensions = modules.map((module) => module.extension(deps));
+	const extensions = [...modules.map((module) => module.extension(deps)), ...(options.extraExtensions ?? [])];
 
 	const faux = fauxProvider({
 		provider: "faux",

@@ -6,6 +6,7 @@
  * - the server and the timers write `app.*` entries (a reminder, an agenda, a follow-up question, a birthday, a notice)
  *   without calling the model.
  */
+import type { AccountantCard } from "./accountant.ts";
 import type { JournalCard } from "./daily.ts";
 import type { FileCard, FileListCard } from "./files.ts";
 import type { ExerciseChartCard, WeightCard, WeightChartCard, WorkoutCard, WorkoutListCard } from "./health.ts";
@@ -216,7 +217,8 @@ export type ToolCard =
 	| WeightChartCard
 	| WorkoutCard
 	| WorkoutListCard
-	| ExerciseChartCard;
+	| ExerciseChartCard
+	| AccountantCard;
 
 const CARD_TYPES: readonly string[] = [
 	"task_list",
@@ -234,6 +236,17 @@ const CARD_TYPES: readonly string[] = [
 	"workout",
 	"workout_list",
 	"exercise_chart",
+	"txn",
+	"txn_list",
+	"balances",
+	"spending",
+	"import_preview",
+	"import_result",
+	"split",
+	"who_owes",
+	"invoice",
+	"invoice_list",
+	"accountant_note",
 ];
 
 /**

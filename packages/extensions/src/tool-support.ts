@@ -1,9 +1,34 @@
 import type { ToolCard } from "@assistant/shared";
 import type { JsonValue } from "@earendil-works/chord";
-import { atLocalTime, isoLocal, parseWhen } from "./time.ts";
+import { Type } from "@earendil-works/pi-ai";
+import { defineTool } from "@earendil-works/pi-durable";
+import { atLocalTime, formatLocalDate, isoLocal, parseWhen, weekdayName } from "./time.ts";
 
 /** A tool result's text content: what the model reads. */
 export const text = (value: string) => [{ type: "text" as const, text: value }];
+
+/** `Mon 26 Oct 2026` for a local calendar day, `2026-10-26`: fixed wording, whatever the machine's locale. */
+export const dayText = (date: string, timezone: string): string =>
+	formatLocalDate(atLocalTime(date, "12:00", timezone), timezone);
+
+/**
+ * `current_time` for an agent whose prompt may not carry a clock: the date, time and weekday from the Harness clock, for
+ * turning "last Friday" into a date. The tasks and health modules each define their own copy for the agents that have them.
+ */
+export const currentTimeTool = (timezone: string) =>
+	defineTool({
+		name: "current_time",
+		description:
+			"The current date, time and weekday in the owner's time zone. Call it before turning 'yesterday', 'last Friday' or 'this month' into a date.",
+		parameters: Type.Object({}),
+		replay: "safe",
+		async execute(_args, api) {
+			const now = api.now();
+			return {
+				output: text(`Now: ${isoLocal(now, timezone)} (${weekdayName(now, timezone)}), time zone ${timezone}.`),
+			};
+		},
+	});
 
 /** A card as the plain JSON a tool result's `details` must be (drops undefined fields, proves it serializes). */
 export const asDetails = (card: ToolCard): JsonValue => JSON.parse(JSON.stringify(card)) as JsonValue;

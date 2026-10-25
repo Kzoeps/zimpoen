@@ -44,6 +44,24 @@ export type DomainDeps = {
 	files?: FilesDeps;
 	/** What the Health module needs of the owner's profile. Omitted: nothing that depends on it (BMI) is shown. */
 	health?: HealthDeps;
+	/** What the Accountant's modules need: the owner's currency and name, and where invoices are made. Omitted: the Ngultrum, no name, no invoices. */
+	accountant?: AccountantDeps;
+};
+
+export type AccountantDeps = {
+	/** ISO 4217 code of the owner's currency (`ASSISTANT_CURRENCY`, BTN by default): what an account, an entry or an invoice is in unless said otherwise. */
+	currency: string;
+	/** The owner's name as bills and invoices should say it. Absent when the owner never configured one. */
+	ownerName?: string;
+	/** Where invoices are made. Absent: the invoice tools say that invoices are not set up. */
+	invoices?: InvoiceDeps;
+};
+
+export type InvoiceDeps = {
+	/** `<data>/workspace/invoices`: where the PDFs are written. Absolute, links resolved. */
+	outDir: string;
+	/** `<data>/templates`: where `invoice.html` and the images it uses live. Absolute, links resolved. */
+	templatesDir: string;
 };
 
 export type HealthDeps = {

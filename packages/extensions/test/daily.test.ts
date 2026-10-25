@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import { DAILY_ENTRY_KIND, type DailyEntryData } from "@assistant/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -31,6 +32,8 @@ import {
 
 const HOUR = 60 * MINUTE;
 const fixtures: Fixture[] = [];
+/** Copies of Durable's database a test kept to put back later (see "after a power cut"): not inside a fixture's directory, so removed here. */
+const backups: string[] = [];
 async function open(...args: Parameters<typeof openFixture>): Promise<Fixture> {
 	const fixture = await openFixture(...args);
 	fixtures.push(fixture);
@@ -41,6 +44,7 @@ afterEach(async () => {
 		await fixture.close().catch(() => {});
 		await fixture.dispose();
 	}
+	for (const backup of backups.splice(0)) await rm(backup, { recursive: true, force: true });
 });
 
 /** What the server does at start: the rows of the jobs, what a power cut may have taken, and the timers. */
@@ -675,6 +679,7 @@ describe("after a power cut", () => {
 		addTask(f, "Pay rent", local("2026-10-26", "09:00"));
 		await startDaily(f);
 		const backup = `${f.dir}-backup`;
+		backups.push(backup);
 		await f.close();
 		await snapshotDurable(f.dir, backup);
 		const reopened = await openFixture({ dir: f.dir, clock: f.clock });

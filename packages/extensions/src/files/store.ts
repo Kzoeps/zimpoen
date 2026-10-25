@@ -10,7 +10,7 @@ export type FileRow = {
 	mime: string;
 	kind: FileKind;
 	size: number;
-	source: "upload" | "path";
+	source: "upload" | "path" | "generated";
 	description: string;
 	tags: string[];
 	addedAt: number;
@@ -24,7 +24,7 @@ type DbRow = {
 	mime: string;
 	kind: FileKind;
 	size: number;
-	source: "upload" | "path";
+	source: "upload" | "path" | "generated";
 	description: string;
 	tags: string;
 	added_at: number;
@@ -66,7 +66,7 @@ export type NewFile = {
 	mime: string;
 	kind: FileKind;
 	size: number;
-	source: "upload" | "path";
+	source: "upload" | "path" | "generated";
 	now: number;
 };
 

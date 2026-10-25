@@ -28,8 +28,8 @@ export type FileSummary = {
 	size: number;
 	description?: string;
 	tags?: string[];
-	/** An upload, or a file the PA found in an allowed folder. */
-	source: "upload" | "path";
+	/** An upload, a file the PA found in an allowed folder, or one the assistant made itself (an invoice PDF in the workspace). */
+	source: "upload" | "path" | "generated";
 	addedAt: number;
 };
 

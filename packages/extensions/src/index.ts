@@ -15,6 +15,12 @@ export {
 	type RecoveryReport,
 } from "./approvals/index.ts";
 export {
+	boundCodemodeSource,
+	type CodemodeLimits,
+	createBoundedCodemodeExtension,
+	DEFAULT_CODEMODE_LIMITS,
+} from "./codemode.ts";
+export {
 	BRIEFING_JOB,
 	BRIEFING_PUSH,
 	collectFacts,
@@ -96,6 +102,47 @@ export {
 	tidyExerciseName,
 } from "./health/index.ts";
 export {
+	checkPattern,
+	DEFAULT_INVOICE_TEMPLATE,
+	DEFAULT_NUMBER_PATTERN,
+	escapeHtml,
+	formatNumber,
+	INVOICES_EXTENSION_NAME,
+	invoicesModule,
+	invoicesStore,
+	longDate,
+	parseHtml,
+	patternProblem,
+	renderInvoicePdf,
+	renderInvoicesSection,
+	seedInvoiceTemplate,
+	TEMPLATE_FILE,
+	TemplateError,
+	templateFields,
+	toWinAnsi,
+} from "./invoices/index.ts";
+export {
+	decodeCsv,
+	detectDelimiter,
+	fingerprints,
+	LEDGER_EXTENSION_NAME,
+	ledgerModule,
+	ledgerStore,
+	merchantKey,
+	monthName,
+	nameKey,
+	normalizeRows,
+	parseCsv,
+	parseDateCell,
+	proposeMapping,
+	renderLedgerSection,
+	resolveMapping,
+	resolveSpendRange,
+	SEED_EXPENSE_CATEGORIES,
+	SEED_INCOME_CATEGORIES,
+} from "./ledger/index.ts";
+export {
+	type AccountantDeps,
 	type AskedInput,
 	collectMigrations,
 	conversationIdOf,
@@ -105,8 +152,20 @@ export {
 	type FilesDeps,
 	type HealthDeps,
 	type InputSubmitter,
+	type InvoiceDeps,
 	type PostedEntry,
 } from "./module.ts";
+export {
+	allocate,
+	convertMinor,
+	type DecimalSeparator,
+	detectDecimalSeparator,
+	parseAmountText,
+	percentOf,
+	toBasisPoints,
+	toMinor,
+	toRateMicro,
+} from "./money.ts";
 export {
 	BIRTHDAY_CHECK_PUSH,
 	BIRTHDAY_PUSH,
@@ -125,6 +184,18 @@ export {
 export { closingYesWindow, closingYesWindowOnAsk, createEntryPoster, createInputSubmitter } from "./post.ts";
 export { createProfileExtension, PROFILE_EXTENSION_NAME, type ProfileFacts, renderProfile } from "./profile.ts";
 export { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings, scheduleOf } from "./schedule.ts";
+export {
+	type BillExtra,
+	type BillItem,
+	netEntries,
+	renderSplitsSection,
+	SPLITS_EXTENSION_NAME,
+	type SplitResult,
+	splitEqually,
+	splitItems,
+	splitsModule,
+	splitsStore,
+} from "./splits/index.ts";
 export {
 	describeTask,
 	REMINDER_PUSH,
