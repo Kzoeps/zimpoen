@@ -1,6 +1,6 @@
 # Personal assistant — implementation plan
 
-Status: approved direction. **All milestones are built**: M1 to M8 and Ops (see `progress-m1.md` … `progress-m8.md`). This document
+Status: approved direction. **All milestones are built**: M1 to M8 and Ops. This document
 describes what was built; what could not be checked without the real services is the "Known unverified" list in §9. Owner: Dorje.
 What the owner has to do, in order, is `SETUP.md`.
 
@@ -547,7 +547,7 @@ tools (e.g. `add_expense`), not free-form memory.
 | M5 Inbox (done)                                                   | Gmail + Calendar read-only (multi-account), Jev triage (rules without a key), digests at 12:30 and 19:00, suggestions to the PA, `ask_agent` | fakes for Google and Jev throughout; whole-server tests; browser check; the real services are the owner's first run (`SETUP.md`) |
 | M6 Health (done)                                                  | weight/lift tables, tools, trends, chart cards, facts for the wrap-up and briefing                                                                                                                                                                                                                                              | tools tested with replays; whole-server test; browser check                                                                 |
 | M7 Accountant (done)                                              | expenses (CSV/photo/chat), code-mode analysis, splits, invoice PDF from template                                                                                                                                                                                                                                               |                                                                                                                             |
-| M8 Memory/profile UI, activity log, usage dashboard, budget guard (done) | `memory_fact` + FTS5 with `remember`/`recall`/`forget` and a bounded prompt section per agent; Profile page with a memory editor; Activity page derived from the threads; Usage page sampled from Durable's totals, weekly soft limits per agent, a guard in the daily jobs (plain cards over the limit) and a banner | tests per module and through the whole server; browser check (`/tmp/assistant-shots/m8/`); `progress-m8.md` |                                                                                                                             |
+| M8 Memory/profile UI, activity log, usage dashboard, budget guard (done) | `memory_fact` + FTS5 with `remember`/`recall`/`forget` and a bounded prompt section per agent; Profile page with a memory editor; Activity page derived from the threads; Usage page sampled from Durable's totals, weekly soft limits per agent, a guard in the daily jobs (plain cards over the limit) and a banner | tests per module and through the whole server; browser check |                                                                                                                             |
 | Ops (done)                                                        | `ops/` systemd units, `tailscale-serve.sh`, `check.sh`, the env file example; `pnpm login:openai` / `logout:openai`; `SETUP.md` as the one ordered checklist; backup (deferred) | units pass `systemd-analyze verify`; scripts have a dry run and tests on temporary directories; the login CLI was run against a fake provider only (§9) |                                                                                                                             |
 
 ## 9. Open items (deferred decisions)
@@ -568,7 +568,7 @@ tools (e.g. `add_expense`), not free-form memory.
   its address, payment details or notes, so a lost PDF cannot be made again under its own number (`docs/OPS.md` says to back it up).
 - (Decided in M5, cheap to reverse) Digest windows are saved per job and day (`inbox_digest`) rather than derived from the last run; Disconnect forgets the sign-in but keeps the mail; a
   suggestion acts only through the owner's Add, on a message written by code and expires after 7 days; late `ask_agent` answers are cards, not prompt text; the briefing quotes the top three subjects; an empty
-  digest is a card and no push. After the M5 review (`review-m5.md`): one unreadable message cannot stall an account's sync (it is skipped after 5 tries and shown in Settings); `mark_triage` changes one mail and a
+  digest is a card and no push. After the M5 review: one unreadable message cannot stall an account's sync (it is skipped after 5 tries and shown in Settings); `mark_triage` changes one mail and a
   lasting sender rule needs the owner's Approve; a Jev that fails three mails in a row is paused for 15 minutes (Settings says so) and one sync gives Jev at most 90 s; `setup-google.md` recommends publishing the Google app
   "In production" so that sign-ins do not expire weekly. Open, cannot be checked offline: Google's REST behaviour (the history 404, label records, a Desktop client's loopback redirect) and the 7-day expiry of a Testing-mode refresh
   token are written from knowledge; Jev's request and answer shape were written without its documentation (`triage/jev-contract.ts`, `TODO(verify)`); no real model has driven the Inbox
@@ -600,4 +600,4 @@ tools (e.g. `add_expense`), not free-form memory.
   (`docs/OPS.md`).
 - `search_files` is a plain word match over name, description and tags; add ranking (or FTS5, with `memory_fact`) if it is not enough.
 - (Resolved in M1) Durable conversation-creation and event APIs were confirmed against the installed 1.4.0 package; where
-  it differs from the repository checkout the code follows the package (progress-m1.md §2.1).
+  it differs from the repository checkout the code follows the package.

@@ -6,7 +6,7 @@ the permissions asked for are fixed in the code (`apps/server/src/google/oauth.t
 
 > **Not verified.** This was written without access to Google: the console's menu names change from time to time and
 > every step below comes from knowledge of it, not from a run. Where a step is the likeliest to differ it says so. The
-> first real run is yours; `docs/progress-m5.md` lists what could not be checked.
+> first real run is yours; `docs/PLAN.md` §9 lists what could not be checked.
 
 ## What you need
 
@@ -103,7 +103,7 @@ Two things in this guide were written from knowledge of Google and not from a ru
    production, as step 6 recommends). *Needs to be connected again* about a week after approving means it is, which means
    the app is still in **Testing**: do step 6, then connect every account again as described below.
 2. **Does the approval reach the machine?** If the browser step in section 2 fails in some way not in the table at the end,
-   `docs/progress-m5.md` says what else could not be checked (the loopback redirect of a Desktop client, Gmail's history
+   `docs/PLAN.md` §9 says what else could not be checked (the loopback redirect of a Desktop client, Gmail's history
    behaviour).
 
 ## When the sign-in stops working
