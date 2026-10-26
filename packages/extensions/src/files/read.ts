@@ -1,7 +1,8 @@
 import type { Context } from "@earendil-works/chord";
 import { type BinaryReader, type ExecutionEnv, getOrThrow } from "@earendil-works/pi-durable/env";
 import { DEFAULT_IMAGE_LIMITS, type ImageProcessor } from "@earendil-works/pi-durable/tools";
-import { detectBinary, hasNoNul, imageSize, SNIFF_BYTES } from "./sniff.ts";
+import { OFFICE_DOCUMENTS, officeToPdf, readPdfPages } from "./convert.ts";
+import { detectBinary, detectOffice, hasNoNul, imageSize, SNIFF_BYTES } from "./sniff.ts";
 
 /** Lines of a text or CSV file shown at once. The model continues with `offset`. */
 export const DEFAULT_TEXT_LINES = 200;
@@ -16,6 +17,12 @@ export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
  * after every restart. 100 megapixels (400 MB) still takes a 50 or 108 megapixel phone photo.
  */
 export const MAX_IMAGE_PIXELS = 100_000_000;
+/** The largest document (PDF or Office) read: it is converted in full, in a scratch directory. */
+export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+/** Pages of a document whose text is shown at once. The model continues with `page`. */
+export const DOCUMENT_PAGES = 10;
+/** Pages of a document shown as pictures at once, from the first page shown: the layout, tables, scans and signatures. */
+export const DOCUMENT_PAGE_IMAGES = 3;
 
 /** What reading a file for the model found. */
 export type ReadOutcome =
@@ -41,6 +48,19 @@ export type ReadOutcome =
 			/** 1-based number of a line that is longer than the cap and shown only in part: its end is not available. */
 			truncatedLine?: number;
 	  }
+	| {
+			type: "document";
+			kind: "pdf" | "other";
+			mime: string;
+			size: number;
+			/** What it was converted from, when it was not a PDF: `docx`, `xlsx`, ... */
+			convertedFrom?: string;
+			pageCount: number;
+			first: number;
+			last: number;
+			texts: string[];
+			images: Array<{ page: number; data: string; mimeType: string }>;
+	  }
 	| { type: "unreadable"; kind: "pdf" | "other"; mime: string; size: number; reason: string };
 
 type TextOutcome = Extract<ReadOutcome, { type: "text" }>;
@@ -53,6 +73,10 @@ export type ReadOptions = {
 	images?: ImageProcessor | undefined;
 	/** A name the file is called by, for `.csv` files, since a CSV is text that only its name distinguishes. */
 	name?: string | undefined;
+	/** First page of a document to show, 1-based. */
+	page?: number | undefined;
+	/** Whether to include pictures of a document's pages. Default true. */
+	pageImages?: boolean | undefined;
 };
 
 const base64Length = (bytes: number): number => Math.ceil(bytes / 3) * 4;
@@ -84,16 +108,15 @@ export async function readForModel(
 			const bytes = getOrThrow(await reader.read(0, info.size, context));
 			return await readImage(bytes, binary.mime, options.images);
 		}
-		if (binary?.kind === "pdf") {
-			return {
-				type: "unreadable",
-				kind: "pdf",
-				mime: binary.mime,
-				size: info.size,
-				reason:
-					"This is a PDF, and the assistant cannot read the text of a PDF yet. Ask the owner for a photo of the page, " +
-					"a CSV export, or the text itself.",
-			};
+		const office = binary === undefined ? detectOffice(head, options.name) : undefined;
+		if (binary?.kind === "pdf" || office !== undefined) {
+			if (info.size > MAX_DOCUMENT_BYTES) {
+				throw new Error(
+					`The document is ${(info.size / 1024 / 1024).toFixed(1)} MB, more than the ${MAX_DOCUMENT_BYTES / 1024 / 1024} MB that can be read.`,
+				);
+			}
+			const bytes = getOrThrow(await reader.read(0, info.size, context));
+			return await readDocument(bytes, office?.ext, info.size, options);
 		}
 		if (!hasNoNul(head)) {
 			return {
@@ -108,6 +131,47 @@ export async function readForModel(
 	} finally {
 		await reader.close(context);
 	}
+}
+
+async function readDocument(
+	bytes: Uint8Array,
+	officeExt: string | undefined,
+	size: number,
+	options: ReadOptions,
+): Promise<ReadOutcome> {
+	const pdf = officeExt === undefined ? bytes : await officeToPdf(bytes, officeExt);
+	const pages = await readPdfPages(pdf, {
+		first: Math.max(1, Math.trunc(options.page ?? 1)),
+		maxPages: DOCUMENT_PAGES,
+		imageCount: options.pageImages === false ? 0 : DOCUMENT_PAGE_IMAGES,
+	});
+	const images: Array<{ page: number; data: string; mimeType: string }> = [];
+	for (const { page, png } of pages.images) {
+		const prepared = await readImage(png, "image/png", options.images);
+		if (prepared.type === "image") images.push({ page, data: prepared.data, mimeType: prepared.mimeType });
+	}
+	// Text over the cap is cut at a page boundary where possible, so the model is told exactly which pages it saw.
+	const texts: string[] = [];
+	let used = 0;
+	for (const text of pages.texts) {
+		if (texts.length > 0 && used + text.length > MAX_TEXT_BYTES) break;
+		texts.push(
+			text.length > MAX_TEXT_BYTES ? `${text.slice(0, MAX_TEXT_BYTES)}\n(the rest of this page is cut)` : text,
+		);
+		used += text.length;
+	}
+	return {
+		type: "document",
+		kind: officeExt === undefined ? "pdf" : "other",
+		mime: officeExt === undefined ? "application/pdf" : (OFFICE_DOCUMENTS[officeExt] ?? "application/octet-stream"),
+		size,
+		...(officeExt === undefined ? {} : { convertedFrom: officeExt }),
+		pageCount: pages.pageCount,
+		first: pages.first,
+		last: pages.first + texts.length - 1,
+		texts,
+		images,
+	};
 }
 
 async function readImage(bytes: Uint8Array, mime: string, images: ImageProcessor | undefined): Promise<ReadOutcome> {

@@ -107,7 +107,7 @@ describe("POST /api/uploads", () => {
 			uploadBody(Buffer.from([0x50, 0x4b, 3, 4, 0, 0, 1]), "archive.zip", "application/zip"),
 		);
 		expect([zip.status, errorOf(zip.body).code]).toStrictEqual([415, "invalid_request"]);
-		expect(errorOf(zip.body).message).toMatch(/Only images .* PDF, CSV and plain text/);
+		expect(errorOf(zip.body).message).toMatch(/Only images .* PDF, Office documents .* CSV and plain text/);
 		const pem = await upload(server, uploadBody("-----BEGIN RSA PRIVATE KEY-----\nMIIE\n", "notes.txt", "text/plain"));
 		expect([pem.status, errorOf(pem.body).message]).toStrictEqual([415, expect.stringContaining("private key")]);
 		const empty = await upload(server, uploadBody("", "empty.txt", "text/plain"));

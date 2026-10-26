@@ -8,13 +8,14 @@ export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 /**
  * What a file is, decided by looking at its content, never at its name or the type the sender claimed. An upload is one of
- * the first four; `other` is a binary file the PA found in an allowed folder and cannot read.
+ * the first four, or `other` for an Office document (read by converting it to PDF); `other` is also a binary file the PA
+ * found in an allowed folder and cannot read.
  */
 export type FileKind = "image" | "pdf" | "csv" | "text" | "other";
 
 /** The `accept` list of the file picker: what the server takes (the server decides again from the content). */
 export const UPLOAD_ACCEPT =
-	"image/png,image/jpeg,image/gif,image/webp,application/pdf,text/csv,text/plain,.csv,.txt,.md";
+	"image/png,image/jpeg,image/gif,image/webp,application/pdf,text/csv,text/plain,.csv,.txt,.md,.docx,.xlsx,.pptx,.odt,.ods,.odp,.doc,.xls,.ppt";
 
 /** A file in the index, as the API and the tools' cards describe it. */
 export type FileSummary = {

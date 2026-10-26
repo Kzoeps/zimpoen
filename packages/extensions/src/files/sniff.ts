@@ -1,4 +1,5 @@
 import type { FileKind } from "@assistant/shared";
+import { OFFICE_DOCUMENTS } from "./convert.ts";
 
 /**
  * What a file is, decided from its first bytes and never from its name or the type the sender claimed: a browser
@@ -6,7 +7,7 @@ import type { FileKind } from "@assistant/shared";
  */
 export type Detected = {
 	kind: FileKind;
-	/** Only types the server stores and serves back: raster images, PDF, CSV and plain text. */
+	/** Only types the server stores and serves back: raster images, PDF, Office documents, CSV and plain text. */
 	mime: string;
 	/** The extension a stored file gets, whatever it was called. */
 	ext: string;
@@ -38,6 +39,20 @@ export function detectBinary(head: Uint8Array): Detected | undefined {
 	return undefined;
 }
 
+/**
+ * An Office document (Word, Excel, PowerPoint, OpenDocument), which the assistant reads by converting it to PDF. Its
+ * name says which kind, and its first bytes must agree: a ZIP container for the modern formats, OLE for the old ones.
+ */
+export function detectOffice(head: Uint8Array, name: string | undefined): Detected | undefined {
+	const ext = /\.([a-z]{3,4})$/i.exec(name ?? "")?.[1]?.toLowerCase();
+	const mime = ext === undefined || ext === "rtf" ? undefined : OFFICE_DOCUMENTS[ext];
+	if (ext === undefined || mime === undefined) return undefined;
+	const zip = startsWith(head, [0x50, 0x4b, 0x03, 0x04]);
+	const ole = startsWith(head, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+	const old = ext === "doc" || ext === "xls" || ext === "ppt";
+	return (old ? ole : zip) ? { kind: "other", mime, ext } : undefined;
+}
+
 /** No NUL byte in the start: the quick test of whether a file is text at all. */
 export const hasNoNul = (head: Uint8Array): boolean => !head.includes(0);
 
@@ -55,6 +70,8 @@ export function judgeUpload(bytes: Uint8Array, name: string): UploadVerdict {
 	if (bytes.length === 0) return { ok: false, reason: "The file is empty." };
 	const binary = detectBinary(bytes.subarray(0, SNIFF_BYTES));
 	if (binary !== undefined) return { ok: true, detected: binary };
+	const office = detectOffice(bytes.subarray(0, SNIFF_BYTES), name);
+	if (office !== undefined) return { ok: true, detected: office };
 	if (!hasNoNul(bytes.subarray(0, SNIFF_BYTES))) return hasUtf16Mark(bytes) ? anotherEncoding() : notSupported();
 	let text: string;
 	try {
@@ -90,7 +107,7 @@ function notSupported(): UploadVerdict {
 	return {
 		ok: false,
 		reason:
-			"Only images (PNG, JPEG, GIF, WebP), PDF, CSV and plain text files can be uploaded. This file is none of them.",
+			"Only images (PNG, JPEG, GIF, WebP), PDF, Office documents (Word, Excel, PowerPoint, OpenDocument), CSV and plain text files can be uploaded. This file is none of them.",
 	};
 }
 

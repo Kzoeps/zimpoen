@@ -193,6 +193,11 @@ check_files() {
 	else
 		warn "Rules mode: no Jev key (secrets/jev.json), mail is classified by local rules"
 	fi
+	for program in pdfinfo pdftotext pdftoppm soffice; do
+		if ! command -v "$program" > /dev/null 2>&1; then
+			warn "$program is not installed: PDFs or Office documents cannot be read (docs/SETUP.md, Documents and web search)"
+		fi
+	done
 	if [ -e "$DATA_DIR/templates/invoice.html" ]; then pass "an invoice template is in place (templates/invoice.html)"; else warn "no invoice template yet: the server writes a default at its first start (docs/setup-invoice.md)"; fi
 }
 

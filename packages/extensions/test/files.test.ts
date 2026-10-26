@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -47,10 +48,20 @@ describe("what an upload is", () => {
 		});
 	});
 
+	it("takes an Office document when its name and its container agree, and nothing that only claims to be one", () => {
+		const zip = Buffer.from([0x50, 0x4b, 3, 4, 0, 0]);
+		const ole = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0]);
+		expect(judgeUpload(zip, "Invoice.DOCX")).toMatchObject({ ok: true, detected: { kind: "other", ext: "docx" } });
+		expect(judgeUpload(zip, "budget.xlsx")).toMatchObject({ ok: true, detected: { ext: "xlsx" } });
+		expect(judgeUpload(ole, "old.doc")).toMatchObject({ ok: true, detected: { mime: "application/msword" } });
+		expect(judgeUpload(zip, "old.doc").ok).toBe(false);
+		expect(judgeUpload(ole, "new.docx").ok).toBe(false);
+	});
+
 	it("refuses what is not one of those, and says what is accepted", () => {
 		const verdict = judgeUpload(Buffer.from([0x50, 0x4b, 3, 4, 0, 0]), "archive.zip");
 		expect(verdict.ok).toBe(false);
-		expect(verdict.ok ? "" : verdict.reason).toMatch(/Only images \(PNG, JPEG, GIF, WebP\), PDF, CSV and plain text/);
+		expect(verdict.ok ? "" : verdict.reason).toMatch(/Only images \(PNG, JPEG, GIF, WebP\), PDF, Office documents/);
 		expect(judgeUpload(new Uint8Array(), "empty.txt")).toStrictEqual({ ok: false, reason: "The file is empty." });
 	});
 
@@ -120,6 +131,32 @@ describe("what an upload is", () => {
 	});
 });
 
+const HAS_CONVERTERS = ["soffice", "pdftoppm", "pdftotext", "pdfinfo"].every(
+	(program) => spawnSync("which", [program]).status === 0,
+);
+
+/** A real Office document (or its PDF) made by LibreOffice from plain paragraphs, one per page when asked. */
+async function officeFile(
+	dir: string,
+	name: string,
+	paragraphs: string[],
+	options: { pageBreaks?: boolean } = {},
+	as?: "pdf",
+): Promise<Uint8Array> {
+	const work = await mkdtemp(join(dir, "make-"));
+	const html = paragraphs
+		.map((line, i) => `<p${options.pageBreaks && i > 0 ? ' style="page-break-before: always"' : ""}>${line}</p>`)
+		.join("");
+	await writeFile(join(work, "source.html"), `<html><body>${html}</body></html>`);
+	const ext = as ?? name.split(".").pop() ?? "docx";
+	const filter = ext === "docx" ? "docx:MS Word 2007 XML" : ext === "pdf" ? "pdf:writer_web_pdf_Export" : ext;
+	execFileSync("soffice", ["--headless", "--convert-to", filter, "--outdir", work, join(work, "source.html")], {
+		env: { ...process.env, HOME: work },
+		stdio: "ignore",
+	});
+	return new Uint8Array(await readFile(join(work, `source.${ext}`)));
+}
+
 describe("the file tools", () => {
 	const fixtures: Fixture[] = [];
 	let dir: string;
@@ -149,7 +186,7 @@ describe("the file tools", () => {
 		name: string,
 		content: Uint8Array | string,
 		mime: string,
-		kind: "image" | "pdf" | "csv" | "text",
+		kind: "image" | "pdf" | "csv" | "text" | "other",
 	) {
 		const path = join(dir, name);
 		await writeFile(path, content);
@@ -286,15 +323,47 @@ describe("the file tools", () => {
 			expect(textOf(result)).toContain("Converted from image/png to image/jpeg.");
 		});
 
-		it("says plainly what it cannot read: a PDF, a binary file, a file that has gone", async () => {
+		it.skipIf(!HAS_CONVERTERS)(
+			"reads a Word document as page text and pictures, and a PDF page by page",
+			async () => {
+				const f = await open();
+				const docx = await officeFile(dir, "invoice.docx", ["Invoice No. 3", "GainForest e.V.", "USD 250.00"]);
+				const row = await upload(f, "invoice.docx", docx, "application/octet-stream", "other");
+
+				const result = await f.callTool("read_file", { file_id: row.id }, "d1");
+				expect(textOf(result)).toMatch(/DOCX document, .*1 page\(s\); page 1 shown\. Pictures of page\(s\) 1/);
+				expect(textOf(result)).toContain("GainForest e.V.");
+				expect((result.output ?? []).filter((part) => part.type === "image")).toHaveLength(1);
+
+				const pdf = await officeFile(
+					dir,
+					"long.odt",
+					Array.from({ length: 14 }, (_, i) => `Section ${i + 1}`),
+					{ pageBreaks: true },
+					"pdf",
+				);
+				const long = await upload(f, "long.pdf", pdf, "application/pdf", "pdf");
+				const first = await f.callTool("read_file", { file_id: long.id, page_images: false }, "d2");
+				expect(textOf(first)).toMatch(/14 page\(s\); pages 1-10 shown\./);
+				expect(textOf(first)).toContain("Call again with page=11");
+				expect((first.output ?? []).some((part) => part.type === "image")).toBe(false);
+				const rest = textOf(await f.callTool("read_file", { file_id: long.id, page: 11 }, "d3"));
+				expect(rest).toMatch(/pages 11-14 shown/);
+				expect(rest).toContain("Section 14");
+				await expect(f.callTool("read_file", { file_id: long.id, page: 15 }, "d4")).rejects.toThrow(/past the end/);
+			},
+			60_000,
+		);
+
+		it("says plainly what it cannot read: a damaged PDF, a binary file, a file that has gone", async () => {
 			const f = await open();
 			const pdf = await upload(f, "statement.pdf", "%PDF-1.4\n%binary", "application/pdf", "pdf");
 			const blob = await upload(f, "blob.dat", Buffer.from([1, 2, 0, 3, 0, 0]), "text/plain", "text");
 			const gone = await upload(f, "gone.txt", "x", "text/plain", "text");
 			await rm(join(dir, "gone.txt"));
 
-			expect(textOf(await f.callTool("read_file", { file_id: pdf.id }, "r1"))).toMatch(
-				/cannot read the text of a PDF yet/,
+			await expect(f.callTool("read_file", { file_id: pdf.id }, "r1")).rejects.toThrow(
+				/“statement.pdf” could not be read: .*(could not read the document|no pages|not installed)/,
 			);
 			expect(textOf(await f.callTool("read_file", { file_id: blob.id }, "r2"))).toMatch(/binary file/);
 			await expect(f.callTool("read_file", { file_id: gone.id }, "r3")).rejects.toThrow(/“gone.txt” could not be read/);
@@ -344,11 +413,11 @@ describe("the file tools", () => {
 
 		it("indexes a file it cannot read as well, so that it can be described", async () => {
 			const f = await open();
-			await writeFile(join(dir, "statement.pdf"), "%PDF-1.4 x");
-			const result = await f.callTool("read_file_path", { path: join(dir, "statement.pdf") }, "p1");
-			expect(textOf(result)).toMatch(/cannot read the text of a PDF yet/);
+			await writeFile(join(dir, "statement.dat"), Buffer.from([1, 2, 0, 3, 0, 0]));
+			const result = await f.callTool("read_file_path", { path: join(dir, "statement.dat") }, "p1");
+			expect(textOf(result)).toMatch(/binary file/);
 			expect(fileStore.searchFiles(f.db, "statement", 10).files).toMatchObject([
-				{ kind: "pdf", mime: "application/pdf" },
+				{ kind: "other", mime: "application/octet-stream" },
 			]);
 		});
 
