@@ -132,7 +132,7 @@ at a time; `server.lock` enforces this.
 - The API binds `127.0.0.1` only and checks `Host`, `Sec-Fetch-Site` and the Tailscale identity.
 - Pushes carry no content.
 
-Details: [`docs/PLAN.md`](docs/PLAN.md) §2 and [`docs/design-notes.md`](docs/design-notes.md).
+Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §2 and [`docs/design-notes.md`](docs/design-notes.md).
 
 ## Deployment
 

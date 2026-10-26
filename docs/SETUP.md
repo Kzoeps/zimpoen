@@ -8,7 +8,7 @@ Commands run from the repository root, on the laptop that will run the assistant
 repository), `./data-dev` for `pnpm dev`, or what `ASSISTANT_DATA_DIR` says.
 
 > **To verify.** Several steps touch services this repository could not reach while it was built: OpenAI, Tailscale, the push services, Google and Jev. Each step
-> says what is **to verify** at your first real run; `docs/PLAN.md` §9 lists everything that was written without being run against the real thing.
+> says what is **to verify** at your first real run; `docs/ARCHITECTURE.md` §9 lists everything that was written without being run against the real thing.
 
 ## 1. Laptop: keep it awake and on power
 
