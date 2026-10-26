@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { type AppDb, getAgentRow, getAgentRowByConversation, insertAgentRow } from "@assistant/db";
 import type { AgentId, AgentSummary, ParkedTask } from "@assistant/shared";
 import type { Context } from "@earendil-works/chord";
@@ -13,7 +14,6 @@ import {
 	LiveDoc,
 	type ModelRef,
 } from "@earendil-works/pi-durable";
-import { readFileSync } from "node:fs";
 import type { ModelMode } from "./config.ts";
 import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from "./dev-model.ts";
 
