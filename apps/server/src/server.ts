@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
+import type { WebDeps } from "@assistant/extensions";
 import {
 	type AccountantDeps,
 	type DelegateDeps,
@@ -30,6 +31,7 @@ import { createNotifier } from "./push/notifier.ts";
 import { createWebPushSender, type PushSender } from "./push/sender.ts";
 import { loadOrCreateVapidKeys } from "./push/vapid.ts";
 import { openRuntime, type Runtime } from "./runtime.ts";
+import { createWebSetup } from "./web.ts";
 
 export type ServerLogger = Pick<Console, "info" | "warn" | "error">;
 
@@ -58,6 +60,8 @@ export type StartServerOptions = {
 	/** Replaces `fetch` for Google in `real` mode, and for Jev: a test plays the servers. Only their own hosts are reachable. */
 	google?: { fetch?: typeof fetch; allowHosts?: readonly string[] };
 	jevFetch?: typeof fetch;
+	/** The web tools' search and HTTP client. Default: the real ones (`<data>/secrets/search.json` picks Brave). Tests play them. */
+	web?: WebDeps;
 	/** How the Inbox sync runs (the interval is `ASSISTANT_INBOX_SYNC_MINUTES` unless this says otherwise). Tests shorten it. */
 	inboxSync?: Partial<SyncSettings>;
 	/** How long `ask_agent` waits for an answer. Tests shorten it. */
@@ -146,6 +150,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 				sync: { intervalMs: config.google.syncMinutes * 60_000, ...options.inboxSync },
 			},
 			...(options.delegate === undefined ? {} : { delegate: options.delegate }),
+			web: options.web ?? (await createWebSetup(config.paths.search, logger)),
 			warn: (message) => logger.warn(message),
 		});
 		undo.push(() => domain.close());

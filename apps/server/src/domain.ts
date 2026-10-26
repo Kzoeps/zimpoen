@@ -41,6 +41,8 @@ import {
 	tasksModule,
 	type UsageService,
 	usageModule,
+	type WebDeps,
+	webModule,
 } from "@assistant/extensions";
 import type { GoogleSettingsResponse, PushPayload, SuggestionDecision, SuggestionState } from "@assistant/shared";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
@@ -153,6 +155,8 @@ export type DomainOptions = {
 	inbox?: InboxDeps;
 	/** How long the PA's `ask_agent` waits for an answer; tests shorten it. */
 	delegate?: DelegateDeps;
+	/** Web search and page reading for the PA and the Accountant. Omitted: they have no web tools. */
+	web?: WebDeps;
 	/** Where a failure the work goes on without is said (the server's log). */
 	warn?: (message: string) => void;
 };
@@ -180,6 +184,7 @@ export const MODULES: readonly DomainModule[] = [
 	delegateModule,
 	memoryModule,
 	usageModule,
+	webModule,
 ];
 
 export function createDomain(options: DomainOptions): Domain {
@@ -207,6 +212,7 @@ export function createDomain(options: DomainOptions): Domain {
 		approvals,
 		...(options.schedule === undefined ? {} : { schedule: options.schedule }),
 		...(options.files === undefined ? {} : { files: options.files }),
+		...(options.web === undefined ? {} : { web: options.web }),
 		...(options.health === undefined ? {} : { health: options.health }),
 		...(options.accountant === undefined ? {} : { accountant: options.accountant }),
 		...(options.inbox === undefined ? {} : { inbox: options.inbox }),
@@ -229,6 +235,9 @@ export function createDomain(options: DomainOptions): Domain {
 	const invoices = invoicesModule.extension(deps);
 	const inbox = inboxModule.extension(deps);
 	const delegate = delegateModule.extension(deps);
+	// The PA and the Accountant read the public web; the Inbox never does: it reads untrusted mail, and a page fetch is a
+	// way to send what it read somewhere.
+	const web = webModule.extension(deps);
 	// Every agent is told what is remembered; all but the Inbox may also remember and (with approval) forget. The Inbox reads
 	// untrusted email text, and a line it wrote would be in a prompt for good, so it only reads (PLAN rule 6).
 	const memory = memoryModule.extension(deps);
@@ -266,15 +275,16 @@ export function createDomain(options: DomainOptions): Domain {
 			invoices,
 			inbox,
 			delegate,
+			web,
 			memory,
 			memoryRead,
 			guard,
 			toolSearch,
 			codemode,
 		],
-		paExtensions: [tasks, followups, people, daily, files, delegate, guard, toolSearch, memory],
+		paExtensions: [tasks, followups, people, daily, files, web, delegate, guard, toolSearch, memory],
 		healthExtensions: [health, guard, toolSearch, memory],
-		accountantExtensions: [ledger, splits, invoices, files, guard, toolSearch, codemode, memory],
+		accountantExtensions: [ledger, splits, invoices, files, web, guard, toolSearch, codemode, memory],
 		inboxExtensions: [inbox, memoryRead],
 		usage,
 		inbox: {

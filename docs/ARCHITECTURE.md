@@ -31,16 +31,21 @@ subscription OAuth is not used: its consumer terms don't allow it.
    and the workspace. Write: `<data>/workspace` only. Always denied, in any case and after resolving symlinks: `.ssh`,
    `.env*`, `auth.json`, `*.pem`, `*.key`, `.netrc`, `.npmrc`, `.aws`, `.git-credentials`, `.gnupg`, `id_*`,
    `<data>/secrets/**`. Startup rejects a read path that would expose the databases.
-5. **No shell tool** for any agent.
+5. **No shell tool** for any agent. Documents are converted by the server itself (poppler, LibreOffice) with fixed
+   arguments; no agent chooses what runs.
 6. **The Inbox agent has no file tools,** because it handles untrusted email. Its only tools are `search_mail`,
    `read_mail`, `list_events`, `mark_triage`, `propose_sender_rule`, `suggest_followup`, `recall` and `current_time`. No
    `tool_search`, no approval hook, no `ask_agent`. Email text is treated as data everywhere.
 7. **Arithmetic is code, never the model:** splits, balances, totals, invoice numbers.
 8. **Every tool write to `app.sqlite` is idempotent by tool call id** (`source_call_id UNIQUE`, or a per-module `*_call`
    table), because Durable may replay a tool after a crash.
-9. **Secrets** (`credentials.json`, `vapid.json`, `google-oauth.json`, `google-accounts.json`, `jev.json`) live in
+9. **Secrets** (`credentials.json`, `vapid.json`, `google-oauth.json`, `google-accounts.json`, `jev.json`, `search.json`) live in
    `<data>/secrets/` (0700, files 0600) and are never readable by an agent.
 10. **Server and web bind to `127.0.0.1` only.** Tailscale Serve is the only way in.
+11. **The web is read, public only.** The PA and the Accountant have `web_search` and `fetch_page` (GET only). Every
+    connection, redirects included, is checked at the socket's DNS lookup: loopback, private ranges, link-local and the
+    tailnet (`100.64.0.0/10`, `fd7a::/16`, `*.ts.net`) are refused. Web text is untrusted, like email. The Inbox has no web
+    tools.
 
 ## 3. Topology
 
@@ -63,9 +68,11 @@ flowchart LR
     api -- "read-only GET" --> google["Gmail / Calendar"]
     api -- "triage (optional)" --> jev["TypeSafe Jev"]
     api -- "content-free push" --> push["FCM / Apple Push"]
+    harness -- "web_search · fetch_page (PA, Accountant)" --> web["Public web<br/>DuckDuckGo or Brave"]
 ```
 
-Outbound traffic is only to those four services. Push payloads say things like "1 reminder" and never carry content.
+Outbound traffic is to those four services, plus public web pages and the search provider when the PA or the
+Accountant searches or reads a page. Push payloads say things like "1 reminder" and never carry content.
 
 Use a non-identifying machine name before enabling Tailscale HTTPS: certificate names are public in transparency logs.
 Development uses `./data-dev` and production `./data`, so the two never share a database.
@@ -334,7 +341,9 @@ Conventions:
 **Open:**
 
 - Backups are not automated.
-- The PA can't read PDFs yet; text extraction needs a dependency decision.
+- A page fetched from the web can carry instructions aimed at the model. They are marked untrusted and destructive tools
+  need approval, but a page could still nudge an agent into an unapproved write (a task, a memory fact), or into putting
+  something it knows in a URL it fetches.
 - Invoice PDFs use standard fonts, so non-Latin text (Dzongkha) prints as `?`. Embedding a font is the fix.
 - An issued invoice keeps no snapshot of its address or payment details, so a lost PDF can't be regenerated under the
   same number. Back up `workspace/invoices/`.

@@ -35,6 +35,7 @@ describe("parseConfig", () => {
 			googleOAuth: "/work/assistant/state/secrets/google-oauth.json",
 			googleAccounts: "/work/assistant/state/secrets/google-accounts.json",
 			jev: "/work/assistant/state/secrets/jev.json",
+			search: "/work/assistant/state/secrets/search.json",
 		});
 		expect(config.writePath).toBe("/work/assistant/state/workspace");
 	});

@@ -87,6 +87,7 @@ const EVERYDAY = [
 	"confirm_import",
 	"current_time",
 	"describe_file",
+	"fetch_page",
 	"generate_invoice",
 	"import_csv",
 	"list_txns",
@@ -100,6 +101,7 @@ const EVERYDAY = [
 	"spending_summary",
 	"split_bill",
 	"tool_search",
+	"web_search",
 	"who_owes",
 ];
 
@@ -126,6 +128,7 @@ describe("the Accountant agent through the whole server", () => {
 			"splits",
 			"invoices",
 			"files",
+			"web",
 			"approvals",
 			"tool-search",
 			expect.stringMatching(/code/),

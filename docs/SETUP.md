@@ -145,6 +145,25 @@ sudo systemctl restart assistant-server
 
 **Verify:** Settings → Google accounts shows **Jev** instead of **Rules mode**. See [setup-jev.md](setup-jev.md).
 
+## 11a. Documents and web search
+
+PDFs are read with poppler and Office documents (Word, Excel, PowerPoint, OpenDocument) with LibreOffice:
+
+```bash
+sudo apt install poppler-utils libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui
+```
+
+Web search works without a key (DuckDuckGo). To use Brave Search instead:
+
+```bash
+read -rsp 'Brave Search API key: ' KEY; echo
+( umask 077; printf '{ "BRAVE_API_KEY": "%s" }\n' "$KEY" > "${ASSISTANT_DATA_DIR:-./data}/secrets/search.json" ); unset KEY
+sudo systemctl restart assistant-server
+```
+
+**Verify:** the log says `[web] web search through Brave` (or `DuckDuckGo`), and attaching a PDF to the Assistant and
+asking what it says gets its contents.
+
 ## 12. Invoice template (optional)
 
 See [setup-invoice.md](setup-invoice.md). Use a test numbering pattern while you experiment, because invoice numbers are

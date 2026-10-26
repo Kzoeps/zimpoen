@@ -79,6 +79,8 @@ export type Config = {
 		googleAccounts: string;
 		/** The TypeSafe Jev key, `{ "JEV_API_KEY": "..." }`. Optional: without it mail is classified by local rules. Inside `secrets`. */
 		jev: string;
+		/** A Brave Search key, `{ "BRAVE_API_KEY": "..." }`. Optional: without it web searches go to DuckDuckGo. Inside `secrets`. */
+		search: string;
 	};
 	/** Absolute directories agents may read: `ASSISTANT_READ_PATHS` (or its defaults) plus `<data>/files`. */
 	readPaths: readonly string[];
@@ -161,6 +163,7 @@ export function resolveDataPaths(
 			googleOAuth: join(dataDir, "secrets", "google-oauth.json"),
 			googleAccounts: join(dataDir, "secrets", "google-accounts.json"),
 			jev: join(dataDir, "secrets", "jev.json"),
+			search: join(dataDir, "secrets", "search.json"),
 		},
 	};
 }
@@ -265,6 +268,7 @@ export async function canonicalizeDataPaths(config: Config): Promise<Config> {
 		googleOAuth: join(secrets, "google-oauth.json"),
 		googleAccounts: join(secrets, "google-accounts.json"),
 		jev: join(secrets, "jev.json"),
+		search: join(secrets, "search.json"),
 	};
 	return { ...config, dataDir, paths, writePath: workspace };
 }

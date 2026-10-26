@@ -67,6 +67,7 @@ describe("migrations and agents", () => {
 			"people",
 			"daily",
 			"files",
+			"web",
 			"delegate",
 			"approvals",
 			"tool-search",
@@ -301,6 +302,7 @@ describe("the PA's tools", () => {
 			"complete_task",
 			"current_time",
 			"describe_file",
+			"fetch_page",
 			"list_tasks",
 			"propose_daily_schedule",
 			"read_file",
@@ -311,6 +313,7 @@ describe("the PA's tools", () => {
 			"save_journal",
 			"snooze_reminder",
 			"tool_search",
+			"web_search",
 		]);
 		await say(server, '/tool add_followup {"title":"Meeting about the house","event_in_minutes":600}');
 		const id = followupStore.listFollowups(server.db, { status: "all", limit: 5 }).followups[0]?.id ?? "";

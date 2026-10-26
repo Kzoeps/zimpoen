@@ -7,6 +7,7 @@ import type { ApprovalAction, ApprovalService } from "./approvals/service.ts";
 import type { DailyFactsProvider } from "./daily/facts.ts";
 import type { InboxDeps } from "./inbox/types.ts";
 import type { ScheduleSettings } from "./schedule.ts";
+import type { WebDeps } from "./web/index.ts";
 
 /** What a domain module may ask of the server it runs in. Built once by the server and shared by every module. */
 export type DomainDeps = {
@@ -43,6 +44,8 @@ export type DomainDeps = {
 	schedule?: Partial<ScheduleSettings>;
 	/** What the file tools need from the server. Omitted: no folder is offered to the model and images pass through as they are. */
 	files?: FilesDeps;
+	/** Web search and page reading. Omitted: the web extension has no tools. */
+	web?: WebDeps;
 	/** What the Health module needs of the owner's profile. Omitted: nothing that depends on it (BMI) is shown. */
 	health?: HealthDeps;
 	/** What the Accountant's modules need: the owner's currency and name, and where invoices are made. Omitted: the Ngultrum, no name, no invoices. */

@@ -64,6 +64,8 @@ import {
 	type Triage,
 	tasksModule,
 	usageModule,
+	type WebDeps,
+	webModule,
 } from "../src/index.ts";
 
 export const ctx = BACKGROUND_CONTEXT;
@@ -146,6 +148,8 @@ export type FixtureOptions = {
 	 */
 	inbox?: { google?: FakeGoogle; triage?: Triage; sync?: Partial<SyncSettings> };
 	delegate?: DelegateDeps;
+	/** The web tools' search and HTTP client. Default: none, and the web extension has no tools. */
+	web?: WebDeps;
 	/** The weekly token limits the daily jobs ask. Default: none (nothing degrades); the usage module's own service is `fixture.usage`. */
 	budget?: BudgetGate;
 };
@@ -219,6 +223,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		delegateModule,
 		memoryModule,
 		usageModule,
+		webModule,
 	];
 	migrate(db, [...coreMigrations, ...collectMigrations(modules)]);
 
@@ -279,6 +284,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		...(inboxDeps === undefined ? {} : { inbox: inboxDeps }),
 		...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 		...(options.budget === undefined ? {} : { budget: options.budget }),
+		...(options.web === undefined ? {} : { web: options.web }),
 	};
 	for (const module of modules) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = [...modules.flatMap((module) => module.facts?.(deps) ?? []), ...(options.providers ?? [])];

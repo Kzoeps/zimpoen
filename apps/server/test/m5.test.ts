@@ -140,6 +140,7 @@ describe("the Inbox through the whole server", () => {
 			"people",
 			"daily",
 			"files",
+			"web",
 			"delegate",
 			"approvals",
 			"tool-search",

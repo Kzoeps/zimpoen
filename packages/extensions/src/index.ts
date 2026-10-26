@@ -336,3 +336,21 @@ export {
 	usageStore,
 	weekStartOf,
 } from "./usage/index.ts";
+export {
+	BlockedAddress,
+	brave,
+	checkUrl,
+	duckDuckGo,
+	type HttpClient,
+	type HttpResponse,
+	htmlToText,
+	isPublicAddress,
+	PAGE_CHARS,
+	parseDuckDuckGo,
+	publicHttp,
+	type SearchProvider,
+	type SearchResult,
+	WEB_EXTENSION_NAME,
+	type WebDeps,
+	webModule,
+} from "./web/index.ts";
