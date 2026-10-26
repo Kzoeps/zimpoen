@@ -12,6 +12,8 @@ import {
 	useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import { useEffect, useMemo } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useStore } from "zustand";
 import { attached } from "../lib/attachments.ts";
 import { convertMessage } from "../lib/convert-message.ts";
@@ -193,6 +195,10 @@ function CardMessage() {
 function AssistantMessage({ agent }: { agent: AgentSummary }) {
 	const status = useAuiState((state) => state.message.status);
 	const chip = useAuiState((state) => state.message.metadata.custom.chip);
+	// A running draft with no words yet (or only thinking) still shows that the agent is working.
+	const noTextYet = useAuiState(
+		(state) => !state.message.parts.some((part) => part.type === "text" && part.text.trim() !== ""),
+	);
 	return (
 		<MessagePrimitive.Root className="msg msg--assistant">
 			<span className="msg__avatar" aria-hidden="true">
@@ -200,14 +206,29 @@ function AssistantMessage({ agent }: { agent: AgentSummary }) {
 			</span>
 			<div className="msg__body">
 				{typeof chip === "string" ? <span className="chip">{chip}</span> : null}
-				<MessagePrimitive.Parts components={{ Text: PlainText, Reasoning }} />
+				<MessagePrimitive.Parts components={{ Text: MarkdownText, Reasoning }} />
+				{status?.type === "running" && noTextYet ? <Dots /> : null}
 				<StatusLine status={status} />
 			</div>
 		</MessagePrimitive.Root>
 	);
 }
 
-// Text is shown as written, whitespace and all. Markdown rendering is a later milestone.
+/** Agent answers are Markdown. Raw HTML is not rendered (react-markdown's default), so model output cannot inject markup. */
+function MarkdownText({ text }: { text: string }) {
+	return (
+		<div className="text text--md">
+			<Markdown
+				remarkPlugins={[remarkGfm]}
+				components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" /> }}
+			>
+				{text}
+			</Markdown>
+		</div>
+	);
+}
+
+// What the owner typed is shown as written, whitespace and all.
 function PlainText({ text }: { text: string }) {
 	return <p className="text">{text}</p>;
 }
@@ -237,9 +258,16 @@ function describeStatus(status: StatusLike): { kind: "stopped" | "error"; text: 
 	return { kind: "error", text: typeof status.error === "string" ? status.error : "The model returned an error." };
 }
 
-/** Between sending and the first words of the answer. */
+/**
+ * Between sending and the first words of the answer, including after a tool card. Once a running assistant draft
+ * exists, that message shows its own dots instead.
+ */
 function WaitingForAnswer({ agent }: { agent: AgentSummary }) {
-	const waiting = useAuiState((state) => state.thread.isRunning && state.thread.messages.at(-1)?.role === "user");
+	const waiting = useAuiState((state) => {
+		if (!state.thread.isRunning) return false;
+		const last = state.thread.messages.at(-1);
+		return last !== undefined && !(last.role === "assistant" && last.status?.type === "running");
+	});
 	if (!waiting) return null;
 	return (
 		<div className="msg msg--assistant" role="status" aria-label={`${agent.name} is thinking`}>
@@ -247,13 +275,19 @@ function WaitingForAnswer({ agent }: { agent: AgentSummary }) {
 				{agent.avatar}
 			</span>
 			<div className="msg__body">
-				<span className="dots" aria-hidden="true">
-					<i />
-					<i />
-					<i />
-				</span>
+				<Dots />
 			</div>
 		</div>
+	);
+}
+
+function Dots() {
+	return (
+		<span className="dots" aria-hidden="true">
+			<i />
+			<i />
+			<i />
+		</span>
 	);
 }
 

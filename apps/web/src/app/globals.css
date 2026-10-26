@@ -328,9 +328,85 @@ button {
 	overflow-wrap: anywhere;
 }
 
+/* Agent replies sit in an outlined bubble that fits their content; the owner's are filled. */
+.msg--assistant .msg__body {
+	flex: 0 1 auto;
+	max-width: 85%;
+	padding: 9px 14px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
 .text {
 	margin: 0;
 	white-space: pre-wrap;
+}
+
+/* Markdown answers: normal whitespace, compact block spacing. */
+.text--md {
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+.text--md > :first-child {
+	margin-top: 0;
+}
+
+.text--md > :last-child {
+	margin-bottom: 0;
+}
+
+.text--md :is(p, ul, ol, pre, blockquote, table, h1, h2, h3, h4) {
+	margin: 0 0 10px;
+}
+
+.text--md :is(ul, ol) {
+	padding-left: 22px;
+}
+
+.text--md li + li {
+	margin-top: 4px;
+}
+
+.text--md :is(h1, h2, h3, h4) {
+	font-size: 1.05em;
+}
+
+.text--md code {
+	font-family: ui-monospace, monospace;
+	font-size: 0.9em;
+	padding: 1px 5px;
+	border-radius: 5px;
+	background: var(--border);
+}
+
+.text--md pre {
+	overflow-x: auto;
+	padding: 10px 12px;
+	border-radius: 8px;
+	background: var(--border);
+}
+
+.text--md pre code {
+	padding: 0;
+	background: none;
+}
+
+.text--md blockquote {
+	padding-left: 12px;
+	border-left: 3px solid var(--border);
+	color: var(--text-muted);
+}
+
+.text--md table {
+	border-collapse: collapse;
+	display: block;
+	overflow-x: auto;
+}
+
+.text--md :is(th, td) {
+	padding: 4px 10px;
+	border: 1px solid var(--border);
 }
 
 .text + .text,
