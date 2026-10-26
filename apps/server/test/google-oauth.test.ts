@@ -304,6 +304,95 @@ describe("the sign-in", () => {
 	});
 });
 
+describe("a browser on another machine: the owner pastes the redirect address", () => {
+	/** A sign-in whose terminal answers each question from `answers` and records what it was asked. */
+	async function startPasteSignIn(
+		google: Endpoint,
+		answers: (redirect: { state: string; redirectUri: string }) => string[],
+	) {
+		const questions: string[] = [];
+		let aborted = false;
+		let flow: { state: string; redirectUri: string } | undefined;
+		let queue: string[] = [];
+		const result = connectAccount({
+			client: CLIENT,
+			endpoints: google.endpoints,
+			fetch: google.fetch,
+			timeoutMs: 30_000,
+			onConsentUrl: (link) => {
+				const url = new URL(link);
+				flow = { state: url.searchParams.get("state") ?? "", redirectUri: url.searchParams.get("redirect_uri") ?? "" };
+				queue = answers(flow);
+			},
+			ask: (question, signal) => {
+				questions.push(question);
+				const next = queue.shift();
+				if (next !== undefined) return Promise.resolve(next);
+				return new Promise((_resolve, reject) =>
+					signal.addEventListener("abort", () => {
+						aborted = true;
+						reject(new Error("aborted"));
+					}),
+				);
+			},
+		});
+		result.catch(() => {});
+		return { result, questions, flow: () => flow, aborted: () => aborted };
+	}
+
+	it("exchanges the code from a pasted address against this run's redirect address", async () => {
+		const google = await endpoint(() => goodTokens());
+		const run = await startPasteSignIn(google, ({ state, redirectUri }) => [
+			`  ${redirectUri}?${new URLSearchParams({ state, code: "pasted-code", scope: SCOPES.join(" ") })}  `,
+		]);
+
+		expect(await run.result).toStrictEqual({ email: "owner@x.example", refreshToken: "rt-1", scopes: SCOPES });
+		expect(google.calls[0]?.form.code).toBe("pasted-code");
+		expect(google.calls[0]?.form.redirect_uri).toBe(run.flow()?.redirectUri);
+	});
+
+	it("asks again after a paste that is not an address, is for another redirect, or has another run's state", async () => {
+		const google = await endpoint(() => goodTokens());
+		const run = await startPasteSignIn(google, ({ state, redirectUri }) => [
+			"not a url",
+			`http://127.0.0.1:1/?${new URLSearchParams({ state, code: "c" })}`,
+			`${redirectUri}?${new URLSearchParams({ state: "someone-else", code: "c" })}`,
+			`${redirectUri}?${new URLSearchParams({ state })}`,
+			`${redirectUri}?${new URLSearchParams({ state, code: "good" })}`,
+		]);
+
+		await run.result;
+		expect(run.questions).toHaveLength(5);
+		expect(run.questions[1]).toMatch(/not an address/);
+		expect(run.questions[2]).toMatch(/not this sign-in's redirect/);
+		expect(run.questions[3]).toMatch(/another sign-in/);
+		expect(run.questions[4]).toMatch(/no code/);
+		expect(google.calls.map((call) => call.form.code)).toStrictEqual(["good"]);
+	});
+
+	it("stops on a pasted refusal without asking Google for a token", async () => {
+		const google = await endpoint(() => goodTokens());
+		const run = await startPasteSignIn(google, ({ state, redirectUri }) => [
+			`${redirectUri}?${new URLSearchParams({ state, error: "access_denied" })}`,
+		]);
+
+		await expect(run.result).rejects.toThrow(/Access was not approved/);
+		expect(google.calls).toHaveLength(0);
+	});
+
+	it("cancels the question when the browser reaches the listener first", async () => {
+		const google = await endpoint(() => goodTokens());
+		const run = await startPasteSignIn(google, () => []);
+		await vi.waitFor(() => expect(run.questions).toHaveLength(1));
+		const flow = run.flow();
+
+		await browser(flow?.redirectUri ?? "", { code: "c", state: flow?.state ?? "" });
+		await run.result;
+
+		expect(run.aborted()).toBe(true);
+	});
+});
+
 describe("a sign-in that cannot be used is refused and nothing is saved", () => {
 	async function runCli(
 		reply: Reply,

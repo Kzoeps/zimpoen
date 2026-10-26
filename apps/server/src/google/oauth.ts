@@ -195,6 +195,72 @@ export async function startLoopback(options: { state: string; port?: number; tim
 	return { redirectUri: `http://127.0.0.1:${port}/`, port, result, close };
 }
 
+/**
+ * The code from a redirect address the owner pasted, for a sign-in on a machine whose browser cannot reach this one's
+ * 127.0.0.1 (a cloud server): the browser's last page fails to load, but its address still holds Google's answer. The
+ * same rules as the listener apply: it must be for this run's redirect address and carry this run's `state`.
+ * Returns the code, Google's refusal as an error to throw, or a problem with the paste to show before asking again.
+ */
+export function codeFromPastedRedirect(
+	pasted: string,
+	expected: { state: string; redirectUri: string },
+): { code: string } | { refused: GoogleOAuthError } | { problem: string } {
+	let url: URL;
+	try {
+		url = new URL(pasted.trim());
+	} catch {
+		return {
+			problem: `That is not an address. Copy the whole address from the browser's bar (it starts with ${expected.redirectUri}).`,
+		};
+	}
+	const want = new URL(expected.redirectUri);
+	if (url.origin !== want.origin || url.pathname !== want.pathname) {
+		return { problem: `That address is not this sign-in's redirect: it must start with ${expected.redirectUri}.` };
+	}
+	if (url.searchParams.get("state") !== expected.state) {
+		return {
+			problem: "That address belongs to another sign-in (its state does not match). Use the link printed above.",
+		};
+	}
+	const error = url.searchParams.get("error");
+	if (error !== null)
+		return { refused: new GoogleOAuthError(error, url.searchParams.get("error_description") ?? "", 400) };
+	const code = url.searchParams.get("code");
+	if (code === null || code === "") return { problem: "That address has no code in it. Copy the whole address." };
+	return { code };
+}
+
+/** Ask for a pasted redirect until one is usable; rejects when `signal` aborts (the listener got the redirect first). */
+async function codeFromPaste(
+	ask: (question: string, signal: AbortSignal) => Promise<string>,
+	expected: { state: string; redirectUri: string },
+	signal: AbortSignal,
+): Promise<{ code: string }> {
+	let question = "Paste the redirect address here (or wait if the browser is on this computer):\n> ";
+	for (;;) {
+		const outcome = codeFromPastedRedirect(await ask(question, signal), expected);
+		if ("code" in outcome) return outcome;
+		if ("refused" in outcome) throw outcome.refused;
+		question = `${outcome.problem}\n> `;
+	}
+}
+
+async function raceWithPaste(
+	loopback: Loopback,
+	ask: (question: string, signal: AbortSignal) => Promise<string>,
+	expected: { state: string; redirectUri: string },
+): Promise<{ code: string }> {
+	const controller = new AbortController();
+	const pasted = codeFromPaste(ask, expected, controller.signal);
+	// The losing side rejects once it is cancelled; that rejection is expected and must not crash the process.
+	pasted.catch(() => {});
+	try {
+		return await Promise.race([loopback.result, pasted]);
+	} finally {
+		controller.abort();
+	}
+}
+
 export type TokenResponse = {
 	accessToken: string;
 	expiresInSec: number;
@@ -322,6 +388,11 @@ export async function connectAccount(options: {
 	client: GoogleClient;
 	/** Called once the listener is ready, with the address to open in a browser. */
 	onConsentUrl: (url: string, port: number) => void;
+	/**
+	 * Asks the person at the keyboard for the redirect address, for a browser on another machine. Raced against the
+	 * listener: whichever gets the code first wins and the other is cancelled through `signal`.
+	 */
+	ask?: (question: string, signal: AbortSignal) => Promise<string>;
 	port?: number;
 	loginHint?: string;
 	timeoutMs?: number;
@@ -347,7 +418,9 @@ export async function connectAccount(options: {
 			}),
 			loopback.port,
 		);
-		const { code } = await loopback.result;
+		const { code } = await (options.ask === undefined
+			? loopback.result
+			: raceWithPaste(loopback, options.ask, { state, redirectUri: loopback.redirectUri }));
 		const tokens = await exchangeCode({
 			client: options.client,
 			code,

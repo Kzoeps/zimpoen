@@ -10,6 +10,8 @@ export type ConnectOptions = {
 	argv: readonly string[];
 	env: Env;
 	print: (line: string) => void;
+	/** Asks the person at the keyboard (for a pasted redirect address); rejects when `signal` aborts. */
+	ask?: (question: string, signal: AbortSignal) => Promise<string>;
 	/** Replaces `fetch` and the endpoints for a test that plays Google's token endpoint. */
 	fetch?: typeof fetch;
 	endpoints?: OAuthEndpoints;
@@ -21,7 +23,10 @@ const USAGE = `Connect a Google account to the assistant (read-only: Gmail and C
   pnpm connect:google                     connect an account (run it once per Gmail account)
   pnpm connect:google --list              show the connected accounts and their status
   pnpm connect:google --login-hint a@b.c  preselect an account in the browser
-  pnpm connect:google --port 8765         listen on this port (to forward it over SSH)
+  pnpm connect:google --port 8765         listen on this port (to forward it over SSH instead of pasting)
+
+On a machine without a browser (a cloud server), open the link anywhere, approve, then copy the address the browser
+ends on (it fails to load) and paste it into the terminal.
 
 It saves the sign-in in <data>/secrets/google-accounts.json. Set up the Google Cloud project first: docs/setup-google.md.`;
 
@@ -87,13 +92,21 @@ export async function runConnectGoogle(options: ConnectOptions): Promise<number>
 			timeoutMs: minutes * 60_000,
 			...(options.fetch === undefined ? {} : { fetch: options.fetch }),
 			...(options.endpoints === undefined ? {} : { endpoints: options.endpoints }),
+			...(options.ask === undefined ? {} : { ask: options.ask }),
 			onConsentUrl: (url, listening) => {
-				print('1. Open this link in a browser on THIS computer (over SSH: docs/setup-google.md, "No browser here"):\n');
+				print("1. Open this link in a browser:\n");
 				print(`   ${url}\n`);
 				print("2. Sign in with the Gmail account to connect and approve the two read-only permissions.");
 				print(
-					`   (Waiting on http://127.0.0.1:${listening}/ for up to ${minutes} minutes. Ctrl-C cancels; nothing is saved.)`,
+					`   Browser on this computer: the command finishes by itself (waiting on http://127.0.0.1:${listening}/).`,
 				);
+				if (options.ask !== undefined) {
+					print(
+						"   Browser on another machine: its last page will not load. Copy that page's whole address\n" +
+							`   (it starts with http://127.0.0.1:${listening}/) and paste it below.`,
+					);
+				}
+				print(`   (Up to ${minutes} minutes. Ctrl-C cancels; nothing is saved.)\n`);
 			},
 		});
 		await store.save({

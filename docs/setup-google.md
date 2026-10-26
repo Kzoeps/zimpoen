@@ -12,8 +12,8 @@ the permissions asked for are fixed in the code (`apps/server/src/google/oauth.t
 
 - A Google account to own the Cloud project (any; it can be one of the Gmail accounts you will connect).
 - The assistant installed on the machine that runs it, with `pnpm install` done.
-- A web browser **on that machine** for the one approval step per account (no browser there: see "No browser on the
-  machine" below).
+- A web browser for the one approval step per account, on that machine or any other (see "No browser on the machine"
+  below).
 
 ## 1. Create the OAuth client (once)
 
@@ -74,8 +74,12 @@ Options: `--login-hint you@gmail.com` preselects an account, `--port 8765` fixes
 
 ### No browser on the machine
 
-The approval has to reach the machine by `http://127.0.0.1:<port>/`. Over SSH, forward that port and open the link in the
-browser of the computer you are sitting at:
+Open the link in a browser anywhere and approve. Google then sends that browser to `http://127.0.0.1:<port>/?code=...`,
+which fails to load because nothing listens there on your computer. That is fine: copy the whole address from the address
+bar, paste it into the terminal where `pnpm connect:google` is waiting, and press Enter. An address from another run or
+another sign-in is refused and it asks again.
+
+Alternatively, over SSH, forward the port so the redirect reaches the machine by itself:
 
 ```bash
 ssh -L 8765:127.0.0.1:8765 you@the-machine      # from your own computer
