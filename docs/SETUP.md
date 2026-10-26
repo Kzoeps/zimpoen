@@ -153,7 +153,10 @@ PDFs are read with poppler and Office documents (Word, Excel, PowerPoint, OpenDo
 sudo apt install poppler-utils libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui
 ```
 
-Web search works without a key (DuckDuckGo). To use Brave Search instead:
+Web access is [pi-web-access](https://github.com/nicobailon/pi-web-access), run by the server as a child process. Search
+works without a key (Exa's free endpoint, then DuckDuckGo). A key puts a provider first; any of pi-web-access's
+`*_API_KEY` variables work (`BRAVE_API_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY`, `PERPLEXITY_API_KEY`, `KAGI_API_KEY` are
+tried first):
 
 ```bash
 read -rsp 'Brave Search API key: ' KEY; echo
@@ -161,8 +164,8 @@ read -rsp 'Brave Search API key: ' KEY; echo
 sudo systemctl restart assistant-server
 ```
 
-**Verify:** the log says `[web] web search through Brave` (or `DuckDuckGo`), and attaching a PDF to the Assistant and
-asking what it says gets its contents.
+**Verify:** the log says `[web] web tools through pi-web-access; search tries ...`, and attaching a PDF to the Assistant
+and asking what it says gets its contents.
 
 ## 12. Invoice template (optional)
 

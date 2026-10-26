@@ -31,7 +31,7 @@ import { createNotifier } from "./push/notifier.ts";
 import { createWebPushSender, type PushSender } from "./push/sender.ts";
 import { loadOrCreateVapidKeys } from "./push/vapid.ts";
 import { openRuntime, type Runtime } from "./runtime.ts";
-import { createWebSetup } from "./web.ts";
+import { createWebSetup, type WebService } from "./web.ts";
 
 export type ServerLogger = Pick<Console, "info" | "warn" | "error">;
 
@@ -60,7 +60,7 @@ export type StartServerOptions = {
 	/** Replaces `fetch` for Google in `real` mode, and for Jev: a test plays the servers. Only their own hosts are reachable. */
 	google?: { fetch?: typeof fetch; allowHosts?: readonly string[] };
 	jevFetch?: typeof fetch;
-	/** The web tools' search and HTTP client. Default: the real ones (`<data>/secrets/search.json` picks Brave). Tests play them. */
+	/** The web tools. Default: pi-web-access as a child process (keys from `<data>/secrets/search.json`). Tests play it. */
 	web?: WebDeps;
 	/** How the Inbox sync runs (the interval is `ASSISTANT_INBOX_SYNC_MINUTES` unless this says otherwise). Tests shorten it. */
 	inboxSync?: Partial<SyncSettings>;
@@ -133,6 +133,13 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			logger,
 			...(options.jevFetch === undefined ? {} : { fetch: options.jevFetch }),
 		});
+		// The web tools' child process is ours to stop: on a failed start (undo) and on close (below).
+		let webService: WebService | undefined;
+		const startWeb = async () => {
+			webService = await createWebSetup({ dir: config.paths.web, keysPath: config.paths.search, logger });
+			undo.push(() => webService?.close());
+			return webService;
+		};
 		const domain = createDomain({
 			db,
 			timezone: config.profile.timezone,
@@ -150,7 +157,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 				sync: { intervalMs: config.google.syncMinutes * 60_000, ...options.inboxSync },
 			},
 			...(options.delegate === undefined ? {} : { delegate: options.delegate }),
-			web: options.web ?? (await createWebSetup(config.paths.search, logger)),
+			web: options.web ?? (await startWeb()),
 			warn: (message) => logger.warn(message),
 		});
 		undo.push(() => domain.close());
@@ -247,7 +254,12 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			domain,
 			close: () => {
 				stopMaintenance();
-				closing ??= shutdown(server, runtime, db, lock, logger, domain);
+				closing ??= (async () => {
+					await webService
+						?.close()
+						.catch((error: unknown) => logger.warn("[web] could not stop the web tools:", error));
+					await shutdown(server, runtime, db, lock, logger, domain);
+				})();
 				return closing;
 			},
 		};

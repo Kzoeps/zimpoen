@@ -79,8 +79,10 @@ export type Config = {
 		googleAccounts: string;
 		/** The TypeSafe Jev key, `{ "JEV_API_KEY": "..." }`. Optional: without it mail is classified by local rules. Inside `secrets`. */
 		jev: string;
-		/** A Brave Search key, `{ "BRAVE_API_KEY": "..." }`. Optional: without it web searches go to DuckDuckGo. Inside `secrets`. */
+		/** Search provider keys for the web tools, `{ "BRAVE_API_KEY": "..." }`. Optional: without them search is keyless (Exa, then DuckDuckGo). Inside `secrets`. */
 		search: string;
+		/** The web tools' own directory: pi-web-access's config and home. Not readable by any agent. */
+		web: string;
 	};
 	/** Absolute directories agents may read: `ASSISTANT_READ_PATHS` (or its defaults) plus `<data>/files`. */
 	readPaths: readonly string[];
@@ -164,6 +166,7 @@ export function resolveDataPaths(
 			googleAccounts: join(dataDir, "secrets", "google-accounts.json"),
 			jev: join(dataDir, "secrets", "jev.json"),
 			search: join(dataDir, "secrets", "search.json"),
+			web: join(dataDir, "web"),
 		},
 	};
 }
@@ -269,6 +272,7 @@ export async function canonicalizeDataPaths(config: Config): Promise<Config> {
 		googleAccounts: join(secrets, "google-accounts.json"),
 		jev: join(secrets, "jev.json"),
 		search: join(secrets, "search.json"),
+		web: join(dataDir, "web"),
 	};
 	return { ...config, dataDir, paths, writePath: workspace };
 }

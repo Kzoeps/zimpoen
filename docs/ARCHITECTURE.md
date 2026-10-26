@@ -42,10 +42,11 @@ subscription OAuth is not used: its consumer terms don't allow it.
 9. **Secrets** (`credentials.json`, `vapid.json`, `google-oauth.json`, `google-accounts.json`, `jev.json`, `search.json`) live in
    `<data>/secrets/` (0700, files 0600) and are never readable by an agent.
 10. **Server and web bind to `127.0.0.1` only.** Tailscale Serve is the only way in.
-11. **The web is read, public only.** The PA and the Accountant have `web_search` and `fetch_page` (GET only). Every
-    connection, redirects included, is checked at the socket's DNS lookup: loopback, private ranges, link-local and the
-    tailnet (`100.64.0.0/10`, `fd7a::/16`, `*.ts.net`) are refused. Web text is untrusted, like email. The Inbox has no web
-    tools.
+11. **The web is read, public only.** The PA and the Accountant have `web_search`, `fetch_content`,
+    `get_search_content` and `source_check` from [pi-web-access](https://github.com/nicobailon/pi-web-access), run as an
+    MCP child process with a clean environment and its own config in `<data>/web`. Its SSRF guard refuses loopback,
+    private ranges, link-local and the tailnet; browser cookies, proxies and provider choice are not offered to agents.
+    Web text is untrusted, like email. The Inbox has no web tools.
 
 ## 3. Topology
 
@@ -68,7 +69,7 @@ flowchart LR
     api -- "read-only GET" --> google["Gmail / Calendar"]
     api -- "triage (optional)" --> jev["TypeSafe Jev"]
     api -- "content-free push" --> push["FCM / Apple Push"]
-    harness -- "web_search · fetch_page (PA, Accountant)" --> web["Public web<br/>DuckDuckGo or Brave"]
+    harness -- "pi-web-access child (PA, Accountant)" --> web["Public web<br/>Exa · DuckDuckGo · keyed providers"]
 ```
 
 Outbound traffic is to those four services, plus public web pages and the search provider when the PA or the

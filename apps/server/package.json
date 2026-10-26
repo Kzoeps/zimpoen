@@ -22,9 +22,11 @@
 		"@earendil-works/pi-codemode": "1.4.0",
 		"@earendil-works/pi-durable": "1.4.0",
 		"@hono/node-server": "2.1.5",
+		"@modelcontextprotocol/sdk": "1.32.1",
 		"hono": "4.13.13",
 		"mustache": "4.2.0",
 		"pdfkit": "0.20.2",
+		"pi-web-access": "0.38.0",
 		"web-push": "3.6.7"
 	},
 	"devDependencies": {
