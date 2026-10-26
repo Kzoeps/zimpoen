@@ -269,8 +269,20 @@ function fakeJev(handler: (seen: Seen, index: number) => Response | Promise<Resp
 	return { seen, fetch: send };
 }
 
-const answer = (answers: unknown): Response => Response.json({ answers });
-const GOOD = { category: "needs_reply", urgency: 4, needs_human: true };
+type Triple = { category: string; urgency: number; needs_human: boolean };
+
+/** Jev's documented answer for a category, an urgency from 1 to 5 (a score from 0 to 4) and a yes or no (a probability). */
+const jevBody = ({ category, urgency, needs_human }: Triple) => ({
+	model: "jev-1.14.0",
+	answers: {
+		category: { type: "choice", choice: category, confidence: 1, probabilities: { [category]: 1 } },
+		urgency: { type: "score", score: urgency - 1, confidence: 1 },
+		needs_human: { type: "noul", noul: needs_human ? 0.97 : 0.03 },
+	},
+	usage: { input_tokens: 400, output_tokens: 20 },
+});
+const answer = (triple: Triple): Response => Response.json(jevBody(triple));
+const GOOD: Triple = { category: "needs_reply", urgency: 4, needs_human: true };
 const bodyOf = (call: Seen | undefined) => JSON.parse(String(call?.init.body)) as Record<string, unknown>;
 
 describe("what is sent to Jev", () => {
@@ -300,23 +312,22 @@ describe("what is sent to Jev", () => {
 		expect(call?.url).not.toContain("jev-secret-key");
 	});
 
-	it("asks the model jev-1.14.0 three typed questions: a choice among the nine categories, a score from 1 to 5, and a yes or no", async () => {
+	it("asks the model jev-1.14.0 three documented questions keyed by id: a choice among the nine categories, a five-level score and a noul", async () => {
 		const jev = fakeJev(() => answer(GOOD));
 		await createJevTriage({ apiKey: "k", fetch: jev.fetch, retryDelaysMs: [] }).classify(input());
 
-		const body = bodyOf(jev.seen[0]) as { model: string; questions: Array<Record<string, unknown>> };
+		const body = bodyOf(jev.seen[0]) as { model: string; questions: Record<string, Record<string, unknown>> };
 		expect(body.model).toBe(JEV_MODEL);
 		expect(JEV_MODEL).toBe("jev-1.14.0");
-		expect(body.questions.map((question) => [question.id, question.type])).toStrictEqual([
+		expect(Object.entries(body.questions).map(([id, question]) => [id, question.type])).toStrictEqual([
 			["category", "choice"],
 			["urgency", "score"],
-			["needs_human", "bool"],
+			["needs_human", "noul"],
 		]);
-		const [category, urgency] = body.questions;
-		expect(((category?.choices ?? []) as Array<{ value: string }>).map((choice) => choice.value)).toStrictEqual([
-			...TRIAGE_CATEGORIES,
-		]);
-		expect([urgency?.min, urgency?.max]).toStrictEqual([1, 5]);
+		for (const question of Object.values(body.questions)) expect(typeof question.instructions).toBe("string");
+		const { category, urgency } = body.questions;
+		expect(Object.keys(category?.criteria as object)).toStrictEqual([...TRIAGE_CATEGORIES]);
+		expect(urgency?.criteria).toHaveLength(5);
 		expect(jevRequest(input())).toStrictEqual(body);
 	});
 
@@ -374,40 +385,23 @@ describe("what Jev answers", () => {
 		});
 	});
 
-	it("reads them as a list of id and value, as an object of { value } and with strings for numbers and booleans", () => {
-		expect(
+	it("turns the score's position into urgency 1 to 5, whole and in range, and a noul of 0.5 or more into yes", () => {
+		const read = (urgency: unknown, noul: unknown) =>
 			parseJevResponse({
-				answers: [
-					{ id: "category", value: "promo" },
-					{ id: "urgency", value: "2" },
-					{ id: "needs_human", value: "no" },
-				],
-			}),
-		).toStrictEqual({ category: "promo", urgency: 2, needsHuman: false });
-		expect(
-			parseJevResponse({
-				answers: { category: { value: "finance" }, urgency: { value: 3 }, needs_human: { value: true } },
-			}),
-		).toStrictEqual({ category: "finance", urgency: 3, needsHuman: true });
-		expect(parseJevResponse({ result: { category: "Needs Reply", urgency: 5, needsHuman: "YES" } })).toStrictEqual({
-			category: "needs_reply",
-			urgency: 5,
-			needsHuman: true,
-		});
-	});
+				answers: { category: { choice: "promo" }, urgency: { score: urgency }, needs_human: { noul } },
+			});
 
-	it("keeps the score between 1 and 5 and whole", () => {
-		const urgency = (value: number) => parseJevResponse({ answers: { ...GOOD, urgency: value } }).urgency;
-
-		expect([urgency(9), urgency(0), urgency(-3), urgency(2.6)]).toStrictEqual([5, 1, 1, 3]);
+		expect([0, 1.6, 4, 9, -3].map((score) => read(score, 0).urgency)).toStrictEqual([1, 3, 5, 5, 1]);
+		expect([0.5, 0.49, 1].map((noul) => read(0, noul).needsHuman)).toStrictEqual([true, false, true]);
 	});
 
 	it.each([
 		["an answer that is not an object", "just text"],
-		["a category it does not know", { answers: { ...GOOD, category: "spam" } }],
-		["no category", { answers: { urgency: 3, needs_human: true } }],
-		["a score that is not a number", { answers: { ...GOOD, urgency: "very" } }],
-		["no yes or no", { answers: { category: "promo", urgency: 1 } }],
+		["a category it does not know", { answers: { ...jevBody(GOOD).answers, category: { choice: "spam" } } }],
+		["no category", { answers: { ...jevBody(GOOD).answers, category: undefined } }],
+		["a score that is not a number", { answers: { ...jevBody(GOOD).answers, urgency: { score: "very" } } }],
+		["no yes or no", { answers: { ...jevBody(GOOD).answers, needs_human: undefined } }],
+		["the undocumented flat shape", { answers: GOOD }],
 	])("is a contract error for %s, and the error does not repeat what Jev said", (_name, body) => {
 		const failure = (() => {
 			try {
@@ -626,7 +620,7 @@ afterEach(async () => {
  * (and Jev's circuit breaker's), `onAsk` runs for every request (a test makes Jev slow by moving the clock there).
  */
 async function openWithJev(
-	answerFor: (state: string) => unknown = () => GOOD,
+	answerFor: (state: string) => Triple = () => GOOD,
 	options: {
 		clock?: { now: number };
 		onAsk?: () => void;

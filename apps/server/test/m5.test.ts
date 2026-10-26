@@ -582,7 +582,13 @@ describe("real mode, with the sign-in that pnpm connect:google saved", () => {
 		const urls: string[] = [];
 		const jevFetch = (async (url: Parameters<typeof fetch>[0]) => {
 			urls.push(String(url));
-			return Response.json({ answers: { category: "important", urgency: 5, needs_human: true } });
+			return Response.json({
+				answers: {
+					category: { type: "choice", choice: "important" },
+					urgency: { type: "score", score: 4 },
+					needs_human: { type: "noul", noul: 0.9 },
+				},
+			});
 		}) as typeof fetch;
 		const { server } = await realServer({ jev: { JEV_API_KEY: "jev-key-1" }, jevFetch });
 

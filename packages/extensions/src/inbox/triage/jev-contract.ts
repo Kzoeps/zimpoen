@@ -6,12 +6,10 @@ import type { TriageInput } from "../types.ts";
  * Everything this program assumes about Jev's API, in one file: where the request goes, how it is written and how the answer
  * is read. Nothing else in the code knows the shape.
  *
- * TODO(verify): this was written from the plan (TypeSafe's `systemone` endpoint takes a state and typed questions: a choice, a
- * score and a yes/no) and NOT from https://docs.typesafe.ai, which could not be read offline. Before the first real key is
- * used, check against the documentation: the endpoint path and model name, the authorization header, the field names of a
- * question (`id`, `type`, `prompt`, `choices`, `min`, `max`) and of the answer (`answers`). A shape that does not match is
- * reported as a {@link JevContractError} (what Settings shows as "Jev answered in a shape this program does not know"), and
- * mail is classified by the local rules meanwhile, so a wrong guess costs triage quality, not mail. The fake server of
+ * Written against https://docs.typesafe.ai (quick start, Choice, Score, Noul and Models pages). A request names its questions
+ * in an object keyed by question id; each question has a `type` (`choice`, `score` or `noul`), `instructions` and, for choice
+ * and score, `criteria`. The answer comes back under the same ids in `answers`. A shape that does not match is reported as a
+ * {@link JevContractError}, and mail is classified by the local rules meanwhile. The fake server of
  * `test/inbox-triage.test.ts` pins the shape written here: change both together.
  */
 
@@ -31,7 +29,7 @@ export class JevContractError extends Error {
 	}
 }
 
-/** TODO(verify): the header that carries the key. */
+/** The key goes in a bearer authorization header. */
 export function jevHeaders(apiKey: string): Record<string, string> {
 	return { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${apiKey}` };
 }
@@ -61,31 +59,39 @@ const CATEGORY_HELP: Record<TriageCategory, string> = {
 	other: "none of the above",
 };
 
-/** TODO(verify): the request body. */
+/**
+ * The urgency levels, lowest first. Jev scores a mail as a position from 0 to 4 on these; the owner's urgency is that
+ * position plus one, so the levels must stay in step with {@link URGENCY_RANGE}.
+ */
+const URGENCY_LEVELS = [
+	"Can wait indefinitely or never needs attention",
+	"Worth a look this week",
+	"Should be dealt with in the next day or two",
+	"Should be dealt with today",
+	"Needs attention right now",
+] as const;
+
+/** The request body: the mail as `state` and three questions keyed by id. */
 export function jevRequest(input: TriageInput): unknown {
 	return {
 		model: JEV_MODEL,
 		state: jevState(input),
-		questions: [
-			{
-				id: "category",
+		questions: {
+			category: {
 				type: "choice",
-				prompt: "What kind of email is this for its owner?",
-				choices: TRIAGE_CATEGORIES.map((category) => ({ value: category, description: CATEGORY_HELP[category] })),
+				instructions: "What kind of email is this for its owner?",
+				criteria: CATEGORY_HELP,
 			},
-			{
-				id: "urgency",
+			urgency: {
 				type: "score",
-				prompt: "How urgent is it for the owner to deal with this email? 1 can wait, 5 needs attention now.",
-				min: URGENCY_RANGE.min,
-				max: URGENCY_RANGE.max,
+				instructions: "How urgent is it for the owner to deal with this email?",
+				criteria: URGENCY_LEVELS,
 			},
-			{
-				id: "needs_human",
-				type: "bool",
-				prompt: "Does the owner personally have to read or answer this email (not just an automatic notice)?",
+			needs_human: {
+				type: "noul",
+				instructions: "The owner personally has to read or answer this email; it is not just an automatic notice.",
 			},
-		],
+		},
 	};
 }
 
@@ -94,57 +100,40 @@ export type JevAnswer = { category: TriageCategory; urgency: number; needsHuman:
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
 	typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 
-/** The answers as `{ question id: value }`, from an object (`answers: { category: "..." }`) or a list (`answers: [{ id, value }]`). */
-function answersOf(body: unknown): Record<string, unknown> | undefined {
-	const root = asRecord(body);
-	if (root === undefined) return undefined;
-	const inner = root.answers ?? root.result ?? root.output ?? root;
-	const direct = asRecord(inner);
-	if (direct !== undefined) {
-		return Object.fromEntries(Object.entries(direct).map(([key, value]) => [key, asRecord(value)?.value ?? value]));
-	}
-	if (Array.isArray(inner)) {
-		const entries: Array<[string, unknown]> = [];
-		for (const item of inner) {
-			const answer = asRecord(item);
-			const id = answer?.id ?? answer?.question ?? answer?.key;
-			if (typeof id === "string") entries.push([id, answer?.value ?? answer?.answer]);
-		}
-		return Object.fromEntries(entries);
-	}
-	return undefined;
-}
+/** Jev's yes/no answers are probabilities; at least this much counts as yes. */
+const NEEDS_HUMAN_THRESHOLD = 0.5;
 
-/** TODO(verify): the answer. Throws {@link JevContractError} naming what was missing; never echoes what the answer said. */
+/**
+ * Read `answers.category.choice`, `answers.urgency.score` (0 to 4) and `answers.needs_human.noul` (0 to 1). Throws
+ * {@link JevContractError} naming what was missing; never echoes what the answer said.
+ */
 export function parseJevResponse(body: unknown): JevAnswer {
-	const answers = answersOf(body);
+	const answers = asRecord(asRecord(body)?.answers);
 	if (answers === undefined) {
 		throw new JevContractError(
 			"Jev answered, but not in the shape this program expects (no `answers`). Check docs.typesafe.ai against jev-contract.ts.",
 		);
 	}
-	const category =
-		typeof answers.category === "string" ? answers.category.trim().toLowerCase().replaceAll(" ", "_") : "";
+	const choice = asRecord(answers.category)?.choice;
+	const category = typeof choice === "string" ? choice : "";
 	if (!(TRIAGE_CATEGORIES as readonly string[]).includes(category)) {
 		throw new JevContractError(
-			"Jev's answer has no category this program knows. Check the choices of the `category` question in jev-contract.ts.",
+			"Jev's answer has no category this program knows. Check the criteria of the `category` question in jev-contract.ts.",
 		);
 	}
-	const urgency = typeof answers.urgency === "string" ? Number(answers.urgency) : answers.urgency;
-	if (typeof urgency !== "number" || !Number.isFinite(urgency)) {
+	const score = asRecord(answers.urgency)?.score;
+	if (typeof score !== "number" || !Number.isFinite(score)) {
 		throw new JevContractError("Jev's answer has no urgency score. Check the `urgency` question in jev-contract.ts.");
 	}
-	const human = answers.needs_human ?? answers.needsHuman;
-	const needsHuman =
-		typeof human === "boolean" ? human : typeof human === "string" ? /^(true|yes)$/i.test(human.trim()) : undefined;
-	if (needsHuman === undefined) {
+	const noul = asRecord(answers.needs_human)?.noul;
+	if (typeof noul !== "number" || !Number.isFinite(noul)) {
 		throw new JevContractError(
-			"Jev's answer has no needs_human yes/no. Check the `needs_human` question in jev-contract.ts.",
+			"Jev's answer has no needs_human probability. Check the `needs_human` question in jev-contract.ts.",
 		);
 	}
 	return {
 		category: category as TriageCategory,
-		urgency: Math.min(URGENCY_RANGE.max, Math.max(URGENCY_RANGE.min, Math.round(urgency))),
-		needsHuman,
+		urgency: Math.min(URGENCY_RANGE.max, Math.max(URGENCY_RANGE.min, Math.round(score) + URGENCY_RANGE.min)),
+		needsHuman: noul >= NEEDS_HUMAN_THRESHOLD,
 	};
 }

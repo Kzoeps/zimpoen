@@ -41,22 +41,20 @@ spends at most 90 s waiting on Jev. Restarting the server clears the pause.
 |---|---|
 | `Jev refused the key (HTTP 401/403)` | The key is wrong or revoked. Fix `jev.json` and restart |
 | `HTTP 429/5xx` or `could not be reached` | Jev or the network is down. It's retried automatically |
-| `…not in the shape this program expects` / `HTTP 400/404` | The API contract doesn't match (see below) |
+| `…not in the shape this program expects` / `HTTP 400/404/422` | The API contract doesn't match (see below) |
 | `…is not valid JSON` / `has no JEV_API_KEY` | Fix `jev.json` |
 
 Your sender rules always apply first. A rule for every future mail from a sender is created only when you tap **Approve**
 on the card. A typed YES doesn't count.
 
-## Unverified API contract
+## API contract
 
-The request and response shape was written without Jev's documentation. It all lives in
-`packages/extensions/src/inbox/triage/jev-contract.ts` (`TODO(verify)`). Before relying on Jev, check these against the
-docs:
+The request and response shape follows [docs.typesafe.ai](https://docs.typesafe.ai) and lives in
+`packages/extensions/src/inbox/triage/jev-contract.ts`:
 
-- the endpoint path
-- the model name (`jev-1.14.0`)
-- the auth header
-- the question and answer fields
+- `category`: a Choice among the nine categories
+- `urgency`: a five-level Score; its position (0–4) becomes urgency 1–5
+- `needs_human`: a Noul; a probability of 0.5 or more counts as yes
 
-A mismatch costs triage quality, not mail. To fix one, update `jev-contract.ts` together with the fake server in
-`packages/extensions/test/inbox-triage.test.ts`.
+If Jev changes its API, Settings shows `HTTP 422` or `…not in the shape this program expects`. Update
+`jev-contract.ts` together with the fake server in `packages/extensions/test/inbox-triage.test.ts`.
