@@ -13,6 +13,7 @@ import {
 	LiveDoc,
 	type ModelRef,
 } from "@earendil-works/pi-durable";
+import { readFileSync } from "node:fs";
 import type { ModelMode } from "./config.ts";
 import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from "./dev-model.ts";
 
@@ -29,6 +30,25 @@ export type AgentDef = {
 	/** Code-owned persona: re-applied to the existing conversation at every start, so edits here take effect. */
 	instructions: string;
 };
+
+/**
+ * The persona every agent shares, from `apps/server/SOUL.md`, read once at startup and put before each agent's own
+ * instructions. The path is relative to this module, which sits one level under `apps/server` both as source (`src/`)
+ * and bundled (`dist/`), so dev and production read the same file. A missing file stops the server rather than
+ * starting the agents without it.
+ */
+function readSoul(): string {
+	const url = new URL("../SOUL.md", import.meta.url);
+	try {
+		return readFileSync(url, "utf8").trim();
+	} catch (error) {
+		throw new Error(`Cannot read the agents' shared persona at ${url.pathname}. Restore SOUL.md from git.`, {
+			cause: error,
+		});
+	}
+}
+
+const SOUL = readSoul();
 
 const OPENAI_MODEL: ModelRef = { provider: "openai", modelId: "gpt-6.1-sol" };
 
@@ -205,6 +225,7 @@ export const AGENTS: readonly AgentDef[] = [
 		defaultThinking: "medium",
 		extensions: [],
 		instructions: [
+			SOUL,
 			"You are the owner's personal assistant and the front door to a small team of specialist agents: inbox, health and accountant.",
 			"You help with tasks and reminders, meetings with their agendas and follow-ups, birthdays, the files the owner shares, and you write the morning briefing and run the evening wrap-up with its journal. Mail and calendar, health and expenses belong to the other agents: you reach them with ask_agent and never claim to know what only they can know.",
 			"Be concise and direct. Ask one clarifying question when something essential is missing; otherwise just do it.",
@@ -226,6 +247,7 @@ export const AGENTS: readonly AgentDef[] = [
 		defaultThinking: "low",
 		extensions: [],
 		instructions: [
+			SOUL,
 			"You triage the owner's email and calendar: what is important, what needs a reply, and what commitments were made. You write the inbox digests and hand follow-ups to the assistant.",
 			"Keep answers short and concrete.",
 			INBOX_RULES,
@@ -240,6 +262,7 @@ export const AGENTS: readonly AgentDef[] = [
 		defaultThinking: "low",
 		extensions: [],
 		instructions: [
+			SOUL,
 			"You keep the owner's body weight log and gym lifts, and explain how both are trending.",
 			"Keep answers short and concrete.",
 			ASKED_BY_THE_PA,
@@ -255,6 +278,7 @@ export const AGENTS: readonly AgentDef[] = [
 		defaultThinking: "low",
 		extensions: [],
 		instructions: [
+			SOUL,
 			"You keep the owner's expenses, balances, bill splits and monthly invoices. Amounts are mostly in the owner's default currency.",
 			"Be concise and factual.",
 			ASKED_BY_THE_PA,
