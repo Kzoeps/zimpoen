@@ -8,6 +8,7 @@ import { type DailyFactsProvider, sectionOf } from "./facts.ts";
 import { DAILY_JOBS, type DailyJob } from "./jobs.ts";
 import { dailyMigrations } from "./migrations.ts";
 import { buildPlan, dateText, deliver, endsWithDailyRequest, withBudget } from "./run.ts";
+import { createScheduleAction, createScheduleTools } from "./schedule-tools.ts";
 import { createDailyScheduler } from "./scheduler.ts";
 import { createDailyService, type DailyService } from "./service.ts";
 import * as store from "./store.ts";
@@ -171,6 +172,7 @@ export const dailyModule: DailyModule = {
 	scheduler: (deps) => piecesFor(deps).scheduler,
 	dailyTask: (deps) => piecesFor(deps).task,
 	service: (deps) => piecesFor(deps).service,
+	actions: (deps) => [createScheduleAction(() => piecesFor(deps).service)],
 	start: async (deps) => {
 		const created = piecesFor(deps).service.ensureRows();
 		return { ...(await recoverRuns(deps)), created };
@@ -179,7 +181,7 @@ export const dailyModule: DailyModule = {
 		const { task } = piecesFor(deps);
 		return defineExtension({
 			name: DAILY_EXTENSION_NAME,
-			tools: createJournalTools(deps),
+			tools: [...createJournalTools(deps), ...createScheduleTools(deps, () => piecesFor(deps).service)],
 			sections: [section("journal", () => renderJournalSection(deps))],
 			tasks: [task],
 			hooks: [

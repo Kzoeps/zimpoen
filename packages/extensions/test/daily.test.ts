@@ -641,6 +641,64 @@ describe("the settings of the jobs", () => {
 	});
 });
 
+describe("changing the schedule from chat", () => {
+	const actionIdOf = (result: Awaited<ReturnType<Fixture["callTool"]>>) =>
+		(result.details as unknown as { actionId: string }).actionId;
+
+	it("moves the midday digest only after the owner approves, and switches the evening one off", async () => {
+		const f = await open({ inbox: {} });
+		await startDaily(f);
+
+		const move = await f.callTool("propose_daily_schedule", { job: "digest_midday", local_time: "10:30" }, "p1");
+		expect(textOf(move)).toMatch(/Move the Inbox digest \(midday\) from 12:30 to 10:30.*Nothing is changed yet/s);
+		expect(schedule(f, "digest_midday").localTime).toBe("12:30");
+
+		const approved = await f.deps.approvals.decide(actionIdOf(move), "approve", "button");
+		expect(approved).toMatchObject({ status: "executed" });
+		expect(schedule(f, "digest_midday")).toMatchObject({ localTime: "10:30", enabled: true });
+
+		const off = await f.callTool("propose_daily_schedule", { job: "digest_evening", enabled: false }, "p2");
+		await f.deps.approvals.decide(actionIdOf(off), "approve", "button");
+		expect(schedule(f, "digest_evening").enabled).toBe(false);
+	});
+
+	it("changes nothing when the owner denies", async () => {
+		const f = await open();
+		await startDaily(f);
+		const move = await f.callTool("propose_daily_schedule", { job: "briefing", local_time: "06:00" }, "p1");
+
+		await f.deps.approvals.decide(actionIdOf(move), "deny", "button");
+
+		expect(schedule(f, "briefing").localTime).toBe("07:30");
+	});
+
+	it("blocks set_daily_schedule when the model calls it without approval", async () => {
+		const f = await open();
+		await startDaily(f);
+		f.faux.setResponses([
+			toolCall("set_daily_schedule", { job: "briefing", local_time: "06:00" }, "sneaky"),
+			say("I will ask first."),
+		]);
+
+		await f.say("move my briefing to 6");
+
+		expect(schedule(f, "briefing").localTime).toBe("07:30");
+	});
+
+	it("asks for nothing when the job is already set that way, and says what to fix for a bad time", async () => {
+		const f = await open();
+		await startDaily(f);
+
+		const same = await f.callTool("propose_daily_schedule", { job: "wrapup", local_time: "21:00" }, "p1");
+		expect(textOf(same)).toMatch(/Nothing to change: the Evening wrap-up runs at 21:00/);
+		expect(same.details).toBeUndefined();
+		await expect(f.callTool("propose_daily_schedule", { job: "wrapup", local_time: "9pm" }, "p2")).rejects.toThrow(
+			/24-hour HH:MM/,
+		);
+		await expect(f.callTool("propose_daily_schedule", { job: "wrapup" }, "p3")).rejects.toThrow(/nothing to change/);
+	});
+});
+
 describe("across a change of the clock", () => {
 	it("fires at 07:30 on the wall clock on the day the clocks go back, an hour later by the instant", async () => {
 		const start = local("2026-10-31", "20:00", "America/New_York");

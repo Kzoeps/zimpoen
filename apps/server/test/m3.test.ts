@@ -302,6 +302,7 @@ describe("the PA's tools", () => {
 			"current_time",
 			"describe_file",
 			"list_tasks",
+			"propose_daily_schedule",
 			"read_file",
 			"recall",
 			"record_outcome",
