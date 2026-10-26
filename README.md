@@ -1,4 +1,4 @@
-# Assistant
+# Zimpoen
 
 A personal assistant that runs on one always-on Linux machine and is reached privately, over Tailscale, from a
 ChatGPT-style web chat. Several themed agents (`pa`, `inbox`, `health`, `accountant`) each keep one endless,
