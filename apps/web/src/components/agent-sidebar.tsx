@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { BotAvatar } from "./bot-avatar.tsx";
 import { useChat } from "./chat-context.tsx";
 
 /** The owner's own pages, under the agents: what the assistant knows about them, did, and spent. */
@@ -28,8 +29,8 @@ export function AgentSidebar() {
 								className={`agent${active ? " agent--active" : ""}`}
 								aria-current={active ? "page" : undefined}
 							>
-								<span className="agent__avatar" aria-hidden="true">
-									{agent.avatar}
+								<span className="agent__avatar">
+									<BotAvatar id={agent.id} size={26} working={agent.busy} />
 								</span>
 								<span className="agent__name">{agent.name}</span>
 								{agent.busy ? (

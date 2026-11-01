@@ -20,6 +20,7 @@ import { convertMessage } from "../lib/convert-message.ts";
 import type { Notice } from "../lib/thread-state.ts";
 import { threadFor } from "../lib/thread-store.ts";
 import { toUiMessages, type UiAttachment, type UiCard, type UiMessage } from "../lib/ui-messages.ts";
+import { agentStyle, BotAvatar } from "./bot-avatar.tsx";
 import { CardView, FileChip } from "./cards.tsx";
 import { useChat } from "./chat-context.tsx";
 import { AttachButton, type AttachmentsState, AttachmentTray, useAttachments } from "./composer-attachments.tsx";
@@ -30,12 +31,9 @@ export function ThreadView({ agent }: { agent: AgentSummary }) {
 
 	return (
 		<AssistantRuntimeProvider runtime={runtime}>
-			<ThreadPrimitive.Root className="thread">
+			<ThreadPrimitive.Root className="thread" style={agentStyle(agent.id)}>
 				<header className="thread__header">
-					<span className="thread__avatar" aria-hidden="true">
-						{agent.avatar}
-					</span>
-					<h1 className="thread__title">{agent.name}</h1>
+					<HeaderBot agent={agent} />
 					{thread !== undefined && thread.connection !== "live" ? (
 						<span className="thread__connection" role="status">
 							{thread.ready ? "Reconnecting…" : "Connecting…"}
@@ -147,8 +145,8 @@ function EmptyThread({ agent }: { agent: AgentSummary }) {
 	if (loading) return <p className="empty">Loading…</p>;
 	return (
 		<div className="empty">
-			<div className="empty__avatar" aria-hidden="true">
-				{agent.avatar}
+			<div className="empty__avatar">
+				<BotAvatar id={agent.id} size={88} />
 			</div>
 			<p>This is the start of your conversation with {agent.name}.</p>
 		</div>
@@ -201,13 +199,10 @@ function AssistantMessage({ agent }: { agent: AgentSummary }) {
 	);
 	return (
 		<MessagePrimitive.Root className="msg msg--assistant">
-			<span className="msg__avatar" aria-hidden="true">
-				{agent.avatar}
-			</span>
 			<div className="msg__body">
 				{typeof chip === "string" ? <span className="chip">{chip}</span> : null}
 				<MessagePrimitive.Parts components={{ Text: MarkdownText, Reasoning }} />
-				{status?.type === "running" && noTextYet ? <Dots /> : null}
+				{status?.type === "running" && noTextYet ? <Working agent={agent} /> : null}
 				<StatusLine status={status} />
 			</div>
 		</MessagePrimitive.Root>
@@ -270,24 +265,33 @@ function WaitingForAnswer({ agent }: { agent: AgentSummary }) {
 	});
 	if (!waiting) return null;
 	return (
-		<div className="msg msg--assistant" role="status" aria-label={`${agent.name} is thinking`}>
-			<span className="msg__avatar" aria-hidden="true">
-				{agent.avatar}
-			</span>
-			<div className="msg__body">
-				<Dots />
-			</div>
+		<div className="msg" role="status" aria-label={`${agent.name} is thinking`}>
+			<Working agent={agent} />
 		</div>
 	);
 }
 
-function Dots() {
+/** The agent's avatar at work, in place of typing dots. */
+function Working({ agent }: { agent: AgentSummary }) {
 	return (
-		<span className="dots" aria-hidden="true">
-			<i />
-			<i />
-			<i />
+		<span className="working">
+			<BotAvatar id={agent.id} size={30} working />
+			<span className="shimmer">Thinking…</span>
 		</span>
+	);
+}
+
+/** The agent's face at the top of the thread, with its name and whether it is working. */
+function HeaderBot({ agent }: { agent: AgentSummary }) {
+	const running = useAuiState((state) => state.thread.isRunning);
+	return (
+		<div className="thread__who">
+			<BotAvatar id={agent.id} size={56} working={running} />
+			<div className="thread__names">
+				<h1 className="thread__title">{agent.name}</h1>
+				<span className={`thread__state${running ? " shimmer" : ""}`}>{running ? "Thinking…" : "Online"}</span>
+			</div>
+		</div>
 	);
 }
 

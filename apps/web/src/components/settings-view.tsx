@@ -13,6 +13,7 @@ import {
 	type SettingsDraft,
 	withModel,
 } from "../lib/settings-form.ts";
+import { BotAvatar } from "./bot-avatar.tsx";
 import { GoogleCard } from "./google-card.tsx";
 import { NotificationsCard } from "./notifications-card.tsx";
 import { ScheduleCard } from "./schedule-card.tsx";
@@ -109,7 +110,7 @@ function AgentSettingsCard({
 			}}
 		>
 			<h2 className="settings-card__title">
-				<span aria-hidden="true">{settings.avatar}</span> {settings.name}
+				<BotAvatar id={settings.id} size={22} /> {settings.name}
 			</h2>
 			{!settings.modelAvailable ? (
 				<p className="notice notice--error" role="alert">

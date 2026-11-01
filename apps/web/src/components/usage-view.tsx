@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { ApiRequestError, fetchUsage, updateBudget } from "../lib/api.ts";
 import { cacheShare, formatCost, formatTokens, parseTokenLimit, percentOf } from "../lib/owner-pages.ts";
+import { BotAvatar } from "./bot-avatar.tsx";
 
 const messageOf = (error: unknown, fallback: string): string =>
 	error instanceof ApiRequestError ? error.message : fallback;
@@ -74,7 +75,7 @@ function AgentCard({ agent, onChange }: { agent: AgentUsage; onChange: (data: Us
 	return (
 		<section className="settings-card" aria-label={`${agent.name} usage`}>
 			<h2 className="settings-card__title">
-				<span aria-hidden="true">{agent.avatar}</span> {agent.name}
+				<BotAvatar id={agent.id} size={22} /> {agent.name}
 			</h2>
 			<p className="usage-figure" data-testid={`week-${agent.id}`}>
 				<strong>{formatTokens(agent.week.tokens)}</strong> tokens this week

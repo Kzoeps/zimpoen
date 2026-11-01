@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, fetchActivity } from "../lib/api.ts";
 import type { ActivityQuery } from "../lib/owner-pages.ts";
+import { BotAvatar } from "./bot-avatar.tsx";
 import { useChat } from "./chat-context.tsx";
 
 const messageOf = (error: unknown, fallback: string): string =>
@@ -106,7 +107,7 @@ export function ActivityView() {
 							<p className="owner-row__meta">
 								<span>{item.atText}</span>
 								<span>
-									{named(item.agent)?.avatar} {named(item.agent)?.name ?? item.agent}
+									<BotAvatar id={item.agent} size={18} /> {named(item.agent)?.name ?? item.agent}
 								</span>
 								<span className="chip">{item.name}</span>
 								{item.failed === true ? <span className="chip chip--late">failed</span> : null}
