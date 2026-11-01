@@ -509,7 +509,7 @@ describe("usage and the weekly limit through the whole server", () => {
 		const limited = await call<UsageResponse>(server, "PUT", "/api/settings/budget/pa", { weeklyTokens: 1 });
 		expect(limited.body.agents.find((agent) => agent.id === "pa")).toMatchObject({ limit: 1, over: true });
 		const banner = (await call<AgentsResponse>(server, "GET", "/api/agents")).body.budget;
-		expect(banner.over).toMatchObject([{ agent: "pa", name: "Assistant", limit: 1 }]);
+		expect(banner.over).toMatchObject([{ agent: "pa", name: "Zimpoen", limit: 1 }]);
 
 		const lifted = await call<UsageResponse>(server, "PUT", "/api/settings/budget/pa", { weeklyTokens: null });
 		expect(lifted.body.agents.find((agent) => agent.id === "pa")?.limit).toBeUndefined();

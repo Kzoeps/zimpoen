@@ -43,7 +43,7 @@ self.addEventListener("push", (event) => {
 	const text = (value, fallback) => (typeof value === "string" && value !== "" ? value : fallback);
 	// A browser requires every push to show something, so a malformed one still gets a notification.
 	event.waitUntil(
-		self.registration.showNotification(text(payload.title, "Assistant"), {
+		self.registration.showNotification(text(payload.title, "Zimpoen"), {
 			body: text(payload.body, ""),
 			tag: text(payload.tag, "assistant"),
 			// One tag, so a second reminder replaces the first in the tray; without this it would replace it silently.

@@ -43,7 +43,7 @@ export function memoryQueryString(query: MemoryQuery): string {
 /** Tabs of the memory editor, in the order shown. */
 export const MEMORY_TABS: ReadonlyArray<{ scope: MemoryScope; label: string }> = [
 	{ scope: "shared", label: "Shared" },
-	{ scope: "pa", label: "Assistant" },
+	{ scope: "pa", label: "Zimpoen" },
 	{ scope: "inbox", label: "Inbox" },
 	{ scope: "health", label: "Health" },
 	{ scope: "accountant", label: "Accountant" },

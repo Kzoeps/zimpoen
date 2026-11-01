@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BotAvatar } from "./bot-avatar.tsx";
 import { useChat } from "./chat-context.tsx";
+import { PageIcon } from "./page-icon.tsx";
 
 /** The owner's own pages, under the agents: what the assistant knows about them, did, and spent. */
 const OWNER_PAGES = [
-	{ href: "/profile", label: "Profile", icon: "👤" },
-	{ href: "/activity", label: "Activity", icon: "📋" },
-	{ href: "/usage", label: "Usage", icon: "📊" },
+	{ href: "/profile", label: "Profile", icon: "profile" },
+	{ href: "/activity", label: "Activity", icon: "activity" },
+	{ href: "/usage", label: "Usage", icon: "usage" },
 ] as const;
 
 export function AgentSidebar() {
@@ -18,7 +19,7 @@ export function AgentSidebar() {
 
 	return (
 		<nav className="sidebar" aria-label="Agents">
-			<div className="sidebar__brand">Assistant</div>
+			<div className="sidebar__brand">Zimpoen</div>
 			<ul className="sidebar__list">
 				{agents?.map((agent) => {
 					const active = pathname === `/chat/${agent.id}`;
@@ -48,8 +49,8 @@ export function AgentSidebar() {
 					className={`agent${pathname === page.href ? " agent--active" : ""}`}
 					aria-current={pathname === page.href ? "page" : undefined}
 				>
-					<span className="agent__avatar" aria-hidden="true">
-						{page.icon}
+					<span className="agent__avatar">
+						<PageIcon name={page.icon} />
 					</span>
 					<span className="agent__name">{page.label}</span>
 				</Link>
@@ -59,8 +60,8 @@ export function AgentSidebar() {
 				className={`agent agent--settings${pathname === "/settings" ? " agent--active" : ""}`}
 				aria-current={pathname === "/settings" ? "page" : undefined}
 			>
-				<span className="agent__avatar" aria-hidden="true">
-					⚙️
+				<span className="agent__avatar">
+					<PageIcon name="settings" />
 				</span>
 				<span className="agent__name">Settings</span>
 			</Link>

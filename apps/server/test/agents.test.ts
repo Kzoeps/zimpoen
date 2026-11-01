@@ -173,7 +173,7 @@ describe("listAgentSummaries", () => {
 		const summaries = await listAgentSummaries(runtime.harness, db);
 
 		expect(summaries.map((summary) => [summary.id, summary.name, summary.avatar, summary.busy])).toStrictEqual([
-			["pa", "Assistant", "🧭", false],
+			["pa", "Zimpoen", "🧭", false],
 			["inbox", "Inbox", "📥", false],
 			["health", "Health", "💪", false],
 			["accountant", "Accountant", "🧾", false],

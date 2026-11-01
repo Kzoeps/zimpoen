@@ -230,7 +230,7 @@ const ASKED_BY_THE_PA =
 export const AGENTS: readonly AgentDef[] = [
 	{
 		id: "pa",
-		name: "Assistant",
+		name: "Zimpoen",
 		avatar: "🧭",
 		defaultModel: OPENAI_MODEL,
 		defaultThinking: "medium",

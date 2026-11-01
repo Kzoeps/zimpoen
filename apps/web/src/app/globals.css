@@ -475,6 +475,16 @@ button {
 	color: var(--danger);
 }
 
+.page-icon__spin {
+	transform-box: fill-box;
+	transform-origin: 50% 50%;
+	transition: transform 0.6s ease;
+}
+
+.agent:hover .page-icon__spin {
+	transform: rotate(180deg);
+}
+
 /* Bot avatars: they bounce and blink while their agent works. */
 .bot {
 	flex: none;

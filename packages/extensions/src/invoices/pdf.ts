@@ -816,7 +816,7 @@ export function renderPdf(template: ParsedTemplate, options: PdfOptions): Promis
 		info: {
 			Title: toWinAnsi(options.title ?? template.title ?? "Invoice"),
 			...(options.author === undefined ? {} : { Author: toWinAnsi(options.author) }),
-			Creator: "Assistant",
+			Creator: "Zimpoen",
 		},
 	});
 	const chunks: Buffer[] = [];

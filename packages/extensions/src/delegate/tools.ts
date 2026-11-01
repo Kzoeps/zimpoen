@@ -97,7 +97,7 @@ export function createDelegateService(deps: Deps): DelegateService {
 					requestId: `agent-answer:${row.id}`,
 				});
 				await deps.notify({
-					title: "Assistant",
+					title: "Zimpoen",
 					body: "An agent answered your question",
 					url: "/chat/pa",
 					tag: "agent-answer",

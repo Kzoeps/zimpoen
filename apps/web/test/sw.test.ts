@@ -116,7 +116,7 @@ describe("service worker: push", () => {
 		await sw.push(data);
 
 		expect(sw.shown).toHaveLength(1);
-		expect(sw.shown[0]?.title).toBe("Assistant");
+		expect(sw.shown[0]?.title).toBe("Zimpoen");
 	});
 
 	it("shows a notification for a body that is JSON null, which would make reading its fields throw", async () => {
@@ -124,7 +124,7 @@ describe("service worker: push", () => {
 
 		await sw.push(null);
 
-		expect(sw.shown.map((item) => item.title)).toStrictEqual(["Assistant"]);
+		expect(sw.shown.map((item) => item.title)).toStrictEqual(["Zimpoen"]);
 	});
 
 	it("survives a body that is not JSON", async () => {
@@ -132,7 +132,7 @@ describe("service worker: push", () => {
 
 		await sw.pushWithBadJson();
 
-		expect(sw.shown[0]?.title).toBe("Assistant");
+		expect(sw.shown[0]?.title).toBe("Zimpoen");
 	});
 
 	// The browser parses these as `https://evil.example/...`: `\` counts as `/`, and tabs and newlines are dropped.
