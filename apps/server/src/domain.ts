@@ -17,10 +17,12 @@ import {
 	DEFAULT_CODEMODE_LIMITS,
 	type DelegateDeps,
 	type DelegateService,
+	type DocumentsDeps,
 	type DomainDeps,
 	type DomainModule,
 	dailyModule,
 	delegateModule,
+	documentsModule,
 	type FilesDeps,
 	filesModule,
 	followupsModule,
@@ -29,7 +31,6 @@ import {
 	type InboxDeps,
 	type InboxStart,
 	inboxModule,
-	invoicesModule,
 	ledgerModule,
 	memoryModule,
 	peopleModule,
@@ -70,7 +71,7 @@ export type Domain = {
 	 */
 	healthExtensions: Extension[];
 	/**
-	 * What the Accountant agent selects: the ledger, splits and invoices, the file tools it reads receipts and statements
+	 * What the Accountant agent selects: the ledger, splits and documents, the file tools it reads receipts and statements
 	 * with, the approval hook, `tool_search` for its rarely used tools, and code mode, where it writes a script over the
 	 * ledger's query tools instead of adding up in its head. The PA and the Health agent do not get them.
 	 */
@@ -147,8 +148,10 @@ export type DomainOptions = {
 	files?: FilesDeps;
 	/** What the Health module is told about the owner: their height, for BMI. */
 	health?: HealthDeps;
-	/** What the Accountant's modules are told: the owner's currency and name, and where invoices are made. */
+	/** What the Accountant's modules are told: the owner's currency and name. */
 	accountant?: AccountantDeps;
+	/** Where PDFs are made and with what. Omitted: make_pdf says documents are not set up. */
+	documents?: DocumentsDeps;
 	/** How long a code mode script may run. Default: {@link DEFAULT_CODEMODE_LIMITS}; tests shorten it. */
 	codemodeLimits?: Partial<CodemodeLimits>;
 	/** What the Inbox module reads Google through and how it classifies mail. */
@@ -179,7 +182,7 @@ export const MODULES: readonly DomainModule[] = [
 	healthModule,
 	ledgerModule,
 	splitsModule,
-	invoicesModule,
+	documentsModule,
 	inboxModule,
 	delegateModule,
 	memoryModule,
@@ -215,6 +218,7 @@ export function createDomain(options: DomainOptions): Domain {
 		...(options.web === undefined ? {} : { web: options.web }),
 		...(options.health === undefined ? {} : { health: options.health }),
 		...(options.accountant === undefined ? {} : { accountant: options.accountant }),
+		...(options.documents === undefined ? {} : { documents: options.documents }),
 		...(options.inbox === undefined ? {} : { inbox: options.inbox }),
 		...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 		...(options.warn === undefined ? {} : { warn: options.warn }),
@@ -232,7 +236,7 @@ export function createDomain(options: DomainOptions): Domain {
 	const health = healthModule.extension(deps);
 	const ledger = ledgerModule.extension(deps);
 	const splits = splitsModule.extension(deps);
-	const invoices = invoicesModule.extension(deps);
+	const documents = documentsModule.extension(deps);
 	const inbox = inboxModule.extension(deps);
 	const delegate = delegateModule.extension(deps);
 	// The PA and the Accountant read the public web; the Inbox never does: it reads untrusted mail, and a page fetch is a
@@ -272,7 +276,7 @@ export function createDomain(options: DomainOptions): Domain {
 			health,
 			ledger,
 			splits,
-			invoices,
+			documents,
 			inbox,
 			delegate,
 			web,
@@ -282,9 +286,9 @@ export function createDomain(options: DomainOptions): Domain {
 			toolSearch,
 			codemode,
 		],
-		paExtensions: [tasks, followups, people, daily, files, web, delegate, guard, toolSearch, memory],
+		paExtensions: [tasks, followups, people, daily, files, documents, web, delegate, guard, toolSearch, memory],
 		healthExtensions: [health, guard, toolSearch, memory],
-		accountantExtensions: [ledger, splits, invoices, files, web, guard, toolSearch, codemode, memory],
+		accountantExtensions: [ledger, splits, documents, files, web, guard, toolSearch, codemode, memory],
 		inboxExtensions: [inbox, memoryRead],
 		usage,
 		inbox: {

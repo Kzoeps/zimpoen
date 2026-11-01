@@ -5,6 +5,7 @@ import type { ConversationId, Extension, Harness } from "@earendil-works/pi-dura
 import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import type { ApprovalAction, ApprovalService } from "./approvals/service.ts";
 import type { DailyFactsProvider } from "./daily/facts.ts";
+import type { PdfRenderer } from "./documents/render.ts";
 import type { InboxDeps } from "./inbox/types.ts";
 import type { ScheduleSettings } from "./schedule.ts";
 import type { WebDeps } from "./web/index.ts";
@@ -48,10 +49,12 @@ export type DomainDeps = {
 	web?: WebDeps;
 	/** What the Health module needs of the owner's profile. Omitted: nothing that depends on it (BMI) is shown. */
 	health?: HealthDeps;
-	/** What the Accountant's modules need: the owner's currency and name, and where invoices are made. Omitted: the Ngultrum, no name, no invoices. */
+	/** What the Accountant's modules need: the owner's currency and name. Omitted: the Ngultrum, no name. */
 	accountant?: AccountantDeps;
 	/** What the Inbox module reads Google through, and how it classifies mail. Omitted: its tools say that Google is not set up, and nothing syncs. */
 	inbox?: InboxDeps;
+	/** Where PDFs are made and with what. Omitted: make_pdf says that documents are not set up. */
+	documents?: DocumentsDeps;
 	/** How the PA's `ask_agent` waits. Omitted: {@link DEFAULT_ASK_TIMEOUT_MS}. */
 	delegate?: DelegateDeps;
 	/** The weekly token limits (M8). Omitted: no agent has one, and every daily job asks the model as it always did. */
@@ -89,19 +92,18 @@ export type DelegateDeps = {
 export const DEFAULT_ASK_TIMEOUT_MS = 90_000;
 
 export type AccountantDeps = {
-	/** ISO 4217 code of the owner's currency (`ASSISTANT_CURRENCY`, BTN by default): what an account, an entry or an invoice is in unless said otherwise. */
+	/** ISO 4217 code of the owner's currency (`ASSISTANT_CURRENCY`, BTN by default): what an account, an entry or a document is in unless said otherwise. */
 	currency: string;
-	/** The owner's name as bills and invoices should say it. Absent when the owner never configured one. */
+	/** The owner's name as bills and documents should say it. Absent when the owner never configured one. */
 	ownerName?: string;
-	/** Where invoices are made. Absent: the invoice tools say that invoices are not set up. */
-	invoices?: InvoiceDeps;
 };
 
-export type InvoiceDeps = {
-	/** `<data>/workspace/invoices`: where the PDFs are written. Absolute, links resolved. */
+export type DocumentsDeps = {
+	/** `<data>/workspace/documents`: where the PDFs are written. Absolute, links resolved. */
 	outDir: string;
-	/** `<data>/templates`: where `invoice.html` and the images it uses live. Absolute, links resolved. */
+	/** `<data>/templates`: the saved templates and the images documents use. Absolute, links resolved. */
 	templatesDir: string;
+	renderer: PdfRenderer;
 };
 
 export type HealthDeps = {

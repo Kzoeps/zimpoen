@@ -119,8 +119,8 @@ Not automated. With the server stopped, back these up together:
 - `app.sqlite` and `durable.sqlite` (with `-wal`). They reference each other.
 - `files/`
 - `secrets/`. Losing `vapid.json` means every device has to re-enable notifications.
-- `templates/`: your invoice template. The server never overwrites it.
-- `workspace/invoices/`. An invoice can't be regenerated under the same number. `previews/` can be deleted.
+- `templates/`: saved document templates (`<name>.html`) and their images.
+- `workspace/documents/` (and `workspace/invoices/` from the old invoice module). A numbered document can't be regenerated under the same number.
 
 ## Admin API from a shell
 

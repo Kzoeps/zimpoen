@@ -14,7 +14,7 @@ start picks up from where it stopped.
 | `pa` | Tasks and reminders, meeting follow-ups and agendas, birthdays, the morning briefing and evening wrap-up, file attachments |
 | `inbox` | Reads Gmail and Google Calendar (read-only), sorts the mail and sends a digest twice a day, suggests follow-ups |
 | `health` | Weight and gym logs, trends, estimated 1RM, personal records, charts |
-| `accountant` | Expenses and income (from chat, receipts or bank CSVs), balances, bill splitting, monthly invoice PDFs |
+| `accountant` | Expenses and income (from chat, receipts or bank CSVs), balances, bill splitting, invoices |
 
 Shared across agents:
 
@@ -70,7 +70,7 @@ apps/
 packages/
   shared/       API contracts and event types
   db/           SQLite wrapper and migrations
-  extensions/   Domain modules: tasks, followups, people, daily, files, health, ledger, splits, invoices, inbox, memory, usage, ...
+  extensions/   Domain modules: tasks, followups, people, daily, files, health, ledger, splits, documents, inbox, memory, usage, ...
 ops/            systemd units, Tailscale Serve and health-check scripts, env example
 docs/           Design, setup and operations guides
 ```
@@ -115,8 +115,8 @@ data/
   app.sqlite       domain tables
   durable.sqlite   conversations and durable tasks
   files/           uploads
-  workspace/       generated files (invoices); the only place agents can write
-  templates/       your invoice template; agents can't read it
+  workspace/       generated files (PDFs); the only place agents can write
+  templates/       saved document templates and their images
   secrets/         credentials and keys (0700); agents can't read it
 ```
 
@@ -140,7 +140,7 @@ Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §2 and [`docs/design-no
 - [`docs/SETUP.md`](docs/SETUP.md): install checklist (systemd, Tailscale Serve, OpenAI sign-in)
 - [`docs/OPS.md`](docs/OPS.md): running and troubleshooting
 - [`docs/setup-google.md`](docs/setup-google.md), [`docs/setup-jev.md`](docs/setup-jev.md),
-  [`docs/setup-invoice.md`](docs/setup-invoice.md): optional integrations
+  [`docs/setup-documents.md`](docs/setup-documents.md): optional integrations
 
 After deploying, run `ops/check.sh` to verify the setup.
 

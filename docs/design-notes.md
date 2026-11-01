@@ -216,7 +216,7 @@ The `health` module belongs to the Health agent only.
 
 ## Accountant
 
-The `ledger`, `splits` and `invoices` modules belong to the Accountant only. Rule 7 is the point: **every number comes
+The `ledger` and `splits` modules belong to the Accountant only. Rule 7 is the point: **every number comes
 from code.**
 
 - **Money is integer minor units.** `toMinor` reads the digits of the number (`19.99` → 1999, never `19.99 * 100`) and
@@ -247,12 +247,11 @@ from code.**
   misread lines. A settlement naming only part of a known friend's name ("Pema" for "Pema Dorji") is refused and asks
   which person you mean.
 - **Debts are netted per pair and currency. Splits don't write ledger entries.**
-- **Invoice numbers are taken with the row.** The PDF is rendered first, so a failing template uses no number. Then one
-  transaction bumps the counter (checking it hasn't moved) and inserts the invoice. `preview_invoice` renders with a
-  PREVIEW watermark and takes no number.
-- **Templates are Mustache plus a small HTML layout engine over pdfkit.** Unknown fields are errors, not blanks.
-  Chromium wasn't used because it isn't reliably installed and is heavy for one page. The standard fonts can't draw
-  non-Latin scripts. The default template is written at start with `wx`, so it never overwrites yours.
+- **Documents are general.** The fixed invoice module (one profile, one line, one template, a pdfkit layout engine) was
+  replaced by `documents`: the model writes HTML or fills any saved Mustache template, and headless Chromium prints it,
+  with scripts and the network off. What an invoice must say lives in the agents' instructions. **Numbers are still
+  code:** `next_number` takes one per series in a transaction, and a replayed call gets the same number back. Line
+  totals come from code mode or the owner, never the model's head.
 - **Generated files are served only from the workspace and uploads only from the files folder.** The path is re-resolved
   on every request.
 

@@ -171,12 +171,12 @@ sudo systemctl restart assistant-server
 **Verify:** the log says `[web] web tools through pi-web-access; search tries ...`, and attaching a PDF to the Assistant
 and asking what it says gets its contents.
 
-## 12. Invoice template (optional)
+## 12. Documents and invoices
 
-See [setup-invoice.md](setup-invoice.md). Use a test numbering pattern while you experiment, because invoice numbers are
-never reused.
+Install Chromium (or set `ASSISTANT_CHROMIUM_PATH`): see [setup-documents.md](setup-documents.md). Numbers from
+`next_number` are never reused, so ask for drafts while you experiment.
 
-**Verify:** asking the Accountant for a preview returns a PDF marked PREVIEW.
+**Verify:** asking the Accountant for a draft invoice returns a PDF in the chat.
 
 ## 13. Final check
 
@@ -195,7 +195,7 @@ Backups aren't automated. With the server stopped, copy these together:
 - `app.sqlite` and `durable.sqlite`, with their `-wal` files
 - `secrets/`
 - `templates/`
-- `workspace/invoices/`
+- `workspace/documents/` and `workspace/invoices/`
 
 To test a backup, restore it into an empty folder and start a server with `ASSISTANT_DATA_DIR` pointing there. See
 [OPS.md](OPS.md#backups).

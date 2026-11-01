@@ -1,4 +1,3 @@
-import { mkdir, realpath } from "node:fs/promises";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -7,10 +6,10 @@ import type { WebDeps } from "@assistant/extensions";
 import {
 	type AccountantDeps,
 	type DelegateDeps,
+	type DocumentsDeps,
 	type FakeGoogle,
 	inboxStore,
 	type SyncSettings,
-	seedInvoiceTemplate,
 } from "@assistant/extensions";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Harness, HarnessOptions, ReportInfo } from "@earendil-works/pi-durable";
@@ -20,6 +19,7 @@ import { serve } from "@hono/node-server";
 import { buildAgents, countParkedTasks, type EnsureAgentsResult, ensureAgents, listUnrunnableTasks } from "./agents.ts";
 import { type Config, DEFAULT_OWNER_NAME } from "./config.ts";
 import type { DevProviderOptions } from "./dev-model.ts";
+import { documentsDeps } from "./documents.ts";
 import { createDomain, type Domain, type DomainOptions, type RepairReport, type SweepReport } from "./domain.ts";
 import { acquireFileLock, type FileLock, LockHeldError } from "./file-lock.ts";
 import { createGoogleSetup, createTriageSetup } from "./google/setup.ts";
@@ -66,6 +66,8 @@ export type StartServerOptions = {
 	inboxSync?: Partial<SyncSettings>;
 	/** How long `ask_agent` waits for an answer. Tests shorten it. */
 	delegate?: DelegateDeps;
+	/** Replaces the Chromium PDF setup, so tests can render without a browser. */
+	documents?: DocumentsDeps;
 };
 
 /** How often sleeping tasks that came due are woken. A reminder is at most this late after a suspend or a clock step. */
@@ -149,7 +151,8 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			// The uploads folder is how files reach the PA, so it is named by `read_file`'s ids rather than as a place to look.
 			files: { readPaths: config.readPaths.filter((path) => path !== config.paths.files), images },
 			health: config.health,
-			accountant: await accountantDeps(config, logger),
+			accountant: accountantDeps(config),
+			...(await documentsFor(config, logger, options.documents)),
 			...(options.codemodeLimits === undefined ? {} : { codemodeLimits: options.codemodeLimits }),
 			inbox: {
 				google: google.gateway,
@@ -270,27 +273,21 @@ export async function startServer(config: Config, options: StartServerOptions = 
 	}
 }
 
-/**
- * What the Accountant's modules are told: the owner's currency and name, and where invoices are made. Invoices go to
- * `<workspace>/invoices` and come from `<data>/templates/invoice.html`, which is written with a default the first time
- * (the owner's own is never overwritten).
- */
-async function accountantDeps(config: Config, logger: ServerLogger): Promise<AccountantDeps> {
-	const folder = join(config.paths.workspace, "invoices");
-	await mkdir(folder, { recursive: true, mode: 0o700 });
-	// The path of an invoice's file is stored with its links resolved, as every path the file policy compares is.
-	const outDir = await realpath(folder);
-	const template = await seedInvoiceTemplate(config.paths.templates);
-	if (template.created) {
-		logger.info(
-			`[invoices] wrote the default invoice template to ${template.path}. Replace it with yours (docs/setup-invoice.md).`,
-		);
-	}
+/** What the Accountant's modules are told: the owner's currency and name. */
+function accountantDeps(config: Config): AccountantDeps {
 	return {
 		currency: config.profile.currency,
 		...(config.profile.ownerName === DEFAULT_OWNER_NAME ? {} : { ownerName: config.profile.ownerName }),
-		invoices: { outDir, templatesDir: config.paths.templates },
 	};
+}
+
+async function documentsFor(
+	config: Config,
+	logger: ServerLogger,
+	given: DocumentsDeps | undefined,
+): Promise<{ documents?: DocumentsDeps }> {
+	const documents = given ?? (await documentsDeps(config, (message) => logger.warn(message)));
+	return documents === undefined ? {} : { documents };
 }
 
 /** Make the credential file private again if it was copied in loosely, and drop temp files a crashed write left. */

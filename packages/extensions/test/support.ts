@@ -40,9 +40,11 @@ import {
 	createRulesTriage,
 	type DailyFactsProvider,
 	type DelegateDeps,
+	type DocumentsDeps,
 	type DomainDeps,
 	dailyModule,
 	delegateModule,
+	documentsModule,
 	type EntryPoster,
 	type FakeGoogle,
 	type FilesDeps,
@@ -53,7 +55,6 @@ import {
 	type InboxDeps,
 	type InputSubmitter,
 	inboxModule,
-	invoicesModule,
 	ledgerModule,
 	memoryModule,
 	type PostedEntry,
@@ -138,8 +139,10 @@ export type FixtureOptions = {
 	providers?: readonly DailyFactsProvider[];
 	/** What the Health module is told about the owner (their height, for BMI). Default: nothing. */
 	health?: HealthDeps;
-	/** What the Accountant's modules are told: the owner's currency and name, where invoices go. Default: the Ngultrum, nothing else. */
+	/** What the Accountant's modules are told: the owner's currency and name. Default: the Ngultrum, nothing else. */
 	accountant?: AccountantDeps;
+	/** Where PDFs are made and with what renderer. Default: none, and make_pdf says documents are not set up. */
+	documents?: DocumentsDeps;
 	/** More extensions for the registry and the conversation's agent, such as code mode, whose tools reach the modules'. */
 	extraExtensions?: readonly Extension[];
 	/**
@@ -218,7 +221,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		healthModule,
 		ledgerModule,
 		splitsModule,
-		invoicesModule,
+		documentsModule,
 		inboxModule,
 		delegateModule,
 		memoryModule,
@@ -281,6 +284,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		...(options.files === undefined ? {} : { files: options.files }),
 		...(options.health === undefined ? {} : { health: options.health }),
 		...(options.accountant === undefined ? {} : { accountant: options.accountant }),
+		...(options.documents === undefined ? {} : { documents: options.documents }),
 		...(inboxDeps === undefined ? {} : { inbox: inboxDeps }),
 		...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 		...(options.budget === undefined ? {} : { budget: options.budget }),

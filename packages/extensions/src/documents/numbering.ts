@@ -1,6 +1,6 @@
 /**
- * Invoice numbers. The pattern is a string such as `INV-{YYYY}-{seq:03}`: `{YYYY}`, `{YY}` and `{MM}` come from the issue
- * date, `{seq}` is the running number (`{seq:03}` pads it with zeros to three digits, `{seq:5}` to five). Everything else must be a letter,
+ * Document numbers (invoices, quotes, receipts...). The pattern is a string such as `INV-{YYYY}-{seq:03}`: `{YYYY}`, `{YY}`
+ * and `{MM}` come from the date the number is taken, `{seq}` is the running number (`{seq:03}` pads it with zeros to three digits, `{seq:5}` to five). Everything else must be a letter,
  * a digit or one of `. _ # -`, because the number is also the file's name.
  */
 
@@ -15,10 +15,10 @@ export function patternProblem(pattern: string): string | undefined {
 	const literals = pattern.replace(TOKEN, "");
 	if (!LITERAL.test(literals)) {
 		const bad = [...literals].find((char) => !/[A-Za-z0-9._#-]/.test(char)) ?? "{";
-		return `'${bad}' cannot be in an invoice number pattern: use letters, digits, . _ # - and the fields {YYYY} {YY} {MM} {seq} {seq:03}.`;
+		return `'${bad}' cannot be in a number pattern: use letters, digits, . _ # - and the fields {YYYY} {YY} {MM} {seq} {seq:03}.`;
 	}
 	if (![...pattern.matchAll(TOKEN)].some((match) => match[1] === "seq")) {
-		return "The pattern needs {seq} (or {seq:03}), the running number, or every invoice would get the same number.";
+		return "The pattern needs {seq} (or {seq:03}), the running number, or every document would get the same number.";
 	}
 	if ([...pattern.matchAll(TOKEN)].filter((match) => match[1] === "seq").length > 1) return "{seq} can appear once.";
 	return undefined;

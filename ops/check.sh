@@ -98,7 +98,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
 	echo "Dry run: nothing is read or contacted. These would be checked:"
 	echo "WOULD CHECK  files:     the data directory and <data>/secrets are private (0700); every secret file is 0600"
 	echo "WOULD CHECK  files:     the OpenAI sign-in is saved (credentials.json), the push keys exist (vapid.json)"
-	echo "WOULD CHECK  files:     Google accounts and whether any needs to be connected again; Jev key or rules mode; the invoice template"
+	echo "WOULD CHECK  files:     Google accounts and whether any needs to be connected again; Jev key or rules mode; Chromium for documents"
 	echo "WOULD CHECK  lock:      <data>/server.lock names a running process"
 	echo "WOULD CHECK  host:      ASSISTANT_OWNER_LOGIN and ASSISTANT_PUBLIC_HOST are set"
 	echo "WOULD CHECK  ports:     the API (${API_PORT}) and the web app (${WEB_PORT}) listen on 127.0.0.1 and nowhere else"
@@ -198,7 +198,7 @@ check_files() {
 			warn "$program is not installed: PDFs or Office documents cannot be read (docs/SETUP.md, Documents and web search)"
 		fi
 	done
-	if [ -e "$DATA_DIR/templates/invoice.html" ]; then pass "an invoice template is in place (templates/invoice.html)"; else warn "no invoice template yet: the server writes a default at its first start (docs/setup-invoice.md)"; fi
+	if [ -n "${ASSISTANT_CHROMIUM_PATH:-}" ] || command -v chromium > /dev/null 2>&1 || command -v chromium-browser > /dev/null 2>&1 || command -v google-chrome > /dev/null 2>&1; then pass "Chrome or Chromium is installed (PDFs can be made)"; else warn "no Chrome or Chromium: documents cannot be made (docs/setup-documents.md)"; fi
 }
 
 check_lock() {

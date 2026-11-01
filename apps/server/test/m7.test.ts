@@ -1,9 +1,9 @@
-import { mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileStore, ledgerStore, splitsStore } from "@assistant/extensions";
+import { type DocumentsDeps, fileStore, ledgerStore, splitsStore } from "@assistant/extensions";
 import {
 	type ApprovalCard,
-	type InvoiceCard,
+	type FileCard,
 	type MessagesPage,
 	NOTICE_ENTRY_KIND,
 	type SendMessageResponse,
@@ -88,17 +88,16 @@ const EVERYDAY = [
 	"current_time",
 	"describe_file",
 	"fetch_content",
-	"generate_invoice",
 	"get_search_content",
 	"import_csv",
 	"list_txns",
-	"preview_invoice",
+	"make_pdf",
+	"next_number",
 	"read_file",
 	"recall",
 	"record_settlement",
 	"remember",
 	"set_balance",
-	"set_invoice_profile",
 	"spending_summary",
 	"split_bill",
 	"tool_search",
@@ -119,6 +118,7 @@ describe("the Accountant agent through the whole server", () => {
 				"ledger/004_undo",
 				"splits/001_bills",
 				"invoices/001_invoices",
+				"documents/001_number_series",
 				"files/002_generated_source",
 			]),
 		);
@@ -127,7 +127,7 @@ describe("the Accountant agent through the whole server", () => {
 			"profile",
 			"ledger",
 			"splits",
-			"invoices",
+			"documents",
 			"files",
 			"web",
 			"approvals",
@@ -140,7 +140,6 @@ describe("the Accountant agent through the whole server", () => {
 			const tools = await offered(server, agent);
 			expect(tools, agent).not.toContain("add_expense");
 			expect(tools, agent).not.toContain("split_bill");
-			expect(tools, agent).not.toContain("generate_invoice");
 			expect(tools, agent).not.toContain("codemode");
 		}
 	});
@@ -280,74 +279,70 @@ describe("the Accountant agent through the whole server", () => {
 	});
 });
 
-describe("the monthly invoice through the whole server", () => {
-	it("writes the default template once, makes a PDF in the workspace and serves it as a download", async () => {
-		const { h, server } = await start();
-		const { templates, workspace } = h.fixture.config.paths;
-		const template = join(templates, "invoice.html");
-		expect(await readFile(template, "utf8")).toContain("{{invoice.number}}");
-		expect((await stat(template)).mode & 0o777).toBe(0o600);
-		expect(h.logs.some((line) => line.includes("[invoices] wrote the default invoice template"))).toBe(true);
+/** A renderer that records what it was given and returns a tiny PDF: the server tests need no browser. */
+async function fakeDocuments(h: Harness) {
+	const rendered: string[] = [];
+	const folder = join(h.fixture.config.paths.workspace, "documents");
+	await mkdir(folder, { recursive: true });
+	const documents: DocumentsDeps = {
+		outDir: await realpath(folder),
+		templatesDir: h.fixture.config.paths.templates,
+		renderer: {
+			render: async (html) => {
+				rendered.push(html);
+				return Buffer.from(`%PDF-1.4 fake ${html.length}`);
+			},
+		},
+	};
+	return { documents, rendered };
+}
+
+describe("documents through the whole server", () => {
+	it("makes a PDF from the model's HTML in the workspace and serves it as a download", async () => {
+		const h = await setup({});
+		harnesses.push(h);
+		const { documents, rendered } = await fakeDocuments(h);
+		const server = await h.start(undefined, { documents });
+
+		const html =
+			"<html><body><h1>Invoice INV-2026-001</h1><table><tr><td>Design</td><td>Nu. 500</td></tr></table></body></html>";
+		await sayTo(server, "accountant", `/tool make_pdf ${JSON.stringify({ filename: "INV-2026-001", html })}`);
+
+		expect(rendered).toStrictEqual([html]);
+		const card = (await cardsOf(server, "accountant")).at(-1) as FileCard;
+		expect(card).toMatchObject({ type: "file", file: { name: "INV-2026-001.pdf", mime: "application/pdf" } });
+		expect(fileStore.getFile(server.db, card.file.id)).toMatchObject({
+			source: "generated",
+			kind: "pdf",
+			path: join(documents.outDir, "INV-2026-001.pdf"),
+		});
+		const response = await fetch(`${base(server)}/api/files/${card.file.id}`);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("content-disposition")).toBe("attachment; filename*=UTF-8''INV-2026-001.pdf");
+		expect((await response.text()).startsWith("%PDF-")).toBe(true);
+	});
+
+	it("explains a template field the data lacks, and writes no file", async () => {
+		const h = await setup({});
+		harnesses.push(h);
+		const { documents, rendered } = await fakeDocuments(h);
+		const server = await h.start(undefined, { documents });
+		await sayTo(server, "accountant", `/tool tool_search ${JSON.stringify({ query: "save a template" })}`);
+		await sayTo(
+			server,
+			"accountant",
+			`/tool save_template ${JSON.stringify({ name: "quote", html: "<p>{{client.name}} {{total}}</p>" })}`,
+		);
 
 		await sayTo(
 			server,
 			"accountant",
-			'/tool set_invoice_profile {"client_name":"Acme Pte Ltd","client_address":"12 Main Street","sender_name":"Dorje","amount":50000}',
+			`/tool make_pdf ${JSON.stringify({ filename: "q", template: "quote", data: { client: { name: "Acme" } } })}`,
 		);
-		await sayTo(server, "accountant", "/tool generate_invoice");
 
-		const card = (await cardsOf(server, "accountant")).at(-1) as InvoiceCard;
-		expect(card).toMatchObject({ type: "invoice", event: "created", invoice: { number: "INV-2026-001" } });
-		const file = card.invoice.file;
-		expect(file).toMatchObject({ name: "INV-2026-001.pdf", mime: "application/pdf" });
-		const row = fileStore.getFile(server.db, file?.id ?? "");
-		expect(row).toMatchObject({
-			source: "generated",
-			kind: "pdf",
-			path: join(workspace, "invoices", "INV-2026-001.pdf"),
-		});
-
-		const response = await fetch(`${base(server)}/api/files/${file?.id}`);
-		expect(response.status).toBe(200);
-		expect(response.headers.get("content-type")).toBe("application/pdf");
-		expect(response.headers.get("content-disposition")).toBe("attachment; filename*=UTF-8''INV-2026-001.pdf");
-		expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-		expect(response.headers.get("content-security-policy")).toContain("sandbox");
-		const bytes = Buffer.from(await response.arrayBuffer());
-		expect(bytes.subarray(0, 5).toString("latin1")).toBe("%PDF-");
-		expect(bytes.length).toBe(file?.size);
-	});
-
-	it("keeps the owner's template across restarts and uses it for the next invoice", async () => {
-		const { h, server } = await start();
-		const template = join(h.fixture.config.paths.templates, "invoice.html");
-		await writeFile(template, "<h1>MY TEMPLATE {{invoice.number}}</h1>");
-		await server.close();
-		h.servers.splice(0);
-
-		const again = await h.start();
-		expect(await readFile(template, "utf8")).toBe("<h1>MY TEMPLATE {{invoice.number}}</h1>");
-		await sayTo(again, "accountant", '/tool set_invoice_profile {"client_name":"Acme","amount":100}');
-		await sayTo(again, "accountant", "/tool generate_invoice");
-		const card = (await cardsOf(again, "accountant")).at(-1) as InvoiceCard;
-		expect(card.invoice.number).toBe("INV-2026-001");
-		const pdf = await readFile(join(h.fixture.config.paths.workspace, "invoices", "INV-2026-001.pdf"));
-		expect(pdf.toString("latin1")).toContain("/Type /Page");
-	});
-
-	it("explains a template mistake instead of making an invoice, and uses no number", async () => {
-		const { h, server } = await start();
-		await writeFile(join(h.fixture.config.paths.templates, "invoice.html"), "<p>{{invoice.numer}}</p>");
-		await sayTo(server, "accountant", '/tool set_invoice_profile {"client_name":"Acme","amount":100}');
-
-		await sayTo(server, "accountant", "/tool generate_invoice");
-
-		expect((await toolResults(server, "accountant")).at(-1)).toMatchObject({
-			toolName: "generate_invoice",
-			isError: true,
-		});
-		expect(await lastText(server, "accountant")).toContain("{{invoice.numer}}, which is not a field");
-		expect(server.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM invoice_issued")?.n).toBe(0);
+		expect((await toolResults(server, "accountant")).at(-1)).toMatchObject({ toolName: "make_pdf", isError: true });
+		expect(await lastText(server, "accountant")).toContain("uses total, which the data does not have");
+		expect(rendered).toStrictEqual([]);
 	});
 });
 

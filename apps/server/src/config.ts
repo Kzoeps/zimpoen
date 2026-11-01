@@ -62,8 +62,8 @@ export type Config = {
 		/** Generated files (invoice PDFs, notes). The only place agents may write. */
 		workspace: string;
 		/**
-		 * The owner's document templates (`invoice.html` and the images it uses). Never readable or writable by agents: the
-		 * template is the owner's, and a model that could write it could change what an invoice says.
+		 * Saved document templates (`<name>.html`) and the images documents use. Reached only through the documents tools,
+		 * never through the file environment.
 		 */
 		templates: string;
 		/** Credentials and keys. Never readable by agents. Mode 0700. */
@@ -107,6 +107,8 @@ export type Config = {
 	 * reach the server through Tailscale Serve (`ASSISTANT_PUBLIC_HOST`); the API refuses every other `Host` header.
 	 */
 	http: { host: "127.0.0.1"; port: number; publicHosts: readonly string[] };
+	/** `ASSISTANT_CHROMIUM_PATH`: the Chrome or Chromium that makes PDFs. Absent: the usual install paths are tried. */
+	chromiumPath?: string;
 };
 
 export type ConfigProblem = { setting: string; message: string };
@@ -206,6 +208,9 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 			port: parsePort(env.ASSISTANT_PORT, problem),
 			publicHosts: parsePublicHosts(env.ASSISTANT_PUBLIC_HOST, problem),
 		},
+		...(nonEmpty(env.ASSISTANT_CHROMIUM_PATH) === undefined
+			? {}
+			: { chromiumPath: nonEmpty(env.ASSISTANT_CHROMIUM_PATH) }),
 	};
 
 	if (problems.length > 0) throw new ConfigError(problems);

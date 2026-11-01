@@ -14,7 +14,7 @@ Android PWA). Each agent is one long-running Durable conversation:
 | `pa` | Front door: tasks, reminders, follow-ups, meeting agendas, birthdays, daily briefing and wrap-up, files. Can ask other agents. |
 | `inbox` | Gmail (several accounts) and Google Calendar, read-only. Triage, digests, follow-up suggestions to the PA. |
 | `health` | Weight, gym lifts, trends. |
-| `accountant` | Expenses and income, balances, bill splits, monthly invoice PDFs. |
+| `accountant` | Expenses and income, balances, bill splits, invoices and other PDFs. |
 
 Model and thinking level are per-agent settings, editable at runtime (stored in Durable via `configure()`). The model is
 OpenAI through a ChatGPT subscription sign-in (pi-ai's "Sign in with ChatGPT"); tokens stay on the machine. Anthropic
@@ -36,7 +36,7 @@ subscription OAuth is not used: its consumer terms don't allow it.
 6. **The Inbox agent has no file tools,** because it handles untrusted email. Its only tools are `search_mail`,
    `read_mail`, `list_events`, `mark_triage`, `propose_sender_rule`, `suggest_followup`, `recall` and `current_time`. No
    `tool_search`, no approval hook, no `ask_agent`. Email text is treated as data everywhere.
-7. **Arithmetic is code, never the model:** splits, balances, totals, invoice numbers.
+7. **Arithmetic is code, never the model:** splits, balances, totals, document numbers.
 8. **Every tool write to `app.sqlite` is idempotent by tool call id** (`source_call_id UNIQUE`, or a per-module `*_call`
    table), because Durable may replay a tool after a crash.
 9. **Secrets** (`credentials.json`, `vapid.json`, `google-oauth.json`, `google-accounts.json`, `jev.json`, `search.json`) live in
@@ -135,10 +135,10 @@ display-only card. Specialists can't reach each other. The Inbox reaches the PA 
 
 | Agent | Extensions |
 |---|---|
-| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `delegate`, `memory`, `tool_search` |
+| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `memory`, `tool_search` |
 | `inbox` | `inbox`, `memory-read` |
 | `health` | `health`, `approvals`, `memory`, `tool_search` |
-| `accountant` | `ledger`, `splits`, `invoices`, `files`, `approvals`, `memory`, `tool_search`, code mode |
+| `accountant` | `ledger`, `splits`, `documents`, `files`, `approvals`, `memory`, `tool_search`, code mode |
 
 Code mode runs scripts in a QuickJS sandbox with no network, no files and no model calls. Each script has a time limit
 (30 s by default, 2 minutes at most).
@@ -315,7 +315,7 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 | health | `health_weight` (one per day), `health_exercise`, `health_session`, `health_set`, `health_call` |
 | ledger | `ledger_account`, `ledger_category`, `ledger_txn`, `ledger_balance_snapshot`, `ledger_fx`, `ledger_import`, `ledger_recategorization*`, `ledger_call` |
 | splits | `splits_bill`, `splits_item`, `splits_share`, `splits_settlement` |
-| invoices | `invoice_profile`, `invoice_issued`, `invoices_call` |
+| documents | `document_series`, `document_numbers`, `documents_made`; the retired invoice module's `invoice_profile`, `invoice_issued`, `invoices_call` are kept |
 | inbox | `inbox_account`, `inbox_message` + FTS5, `inbox_event`, `inbox_rule`, `inbox_suggestion`, `inbox_digest`, `inbox_read_failure`, `inbox_state`, `inbox_call` |
 | delegate | `delegate_ask` |
 
@@ -345,9 +345,8 @@ Conventions:
 - A page fetched from the web can carry instructions aimed at the model. They are marked untrusted and destructive tools
   need approval, but a page could still nudge an agent into an unapproved write (a task, a memory fact), or into putting
   something it knows in a URL it fetches.
-- Invoice PDFs use standard fonts, so non-Latin text (Dzongkha) prints as `?`. Embedding a font is the fix.
-- An issued invoice keeps no snapshot of its address or payment details, so a lost PDF can't be regenerated under the
-  same number. Back up `workspace/invoices/`.
+- A numbered document keeps no copy of its HTML, so a lost PDF can't be regenerated under the same number. Back up
+  `workspace/documents/`.
 - `record_settlement` doesn't write a ledger entry for your side of a payment.
 - An upload interrupted between file rename and row insert leaves an orphan file; nothing sweeps them.
 - A replayed `remember` after you deleted its line recreates it (needs a crash and a delete in the same window).

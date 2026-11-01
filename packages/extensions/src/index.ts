@@ -67,6 +67,23 @@ export {
 	MAX_ANSWER_CHARS,
 } from "./delegate/index.ts";
 export {
+	checkPattern,
+	createChromiumRenderer,
+	DEFAULT_NUMBER_PATTERN,
+	DOCUMENTS_EXTENSION_NAME,
+	DocumentError,
+	documentsModule,
+	documentsStore,
+	fillTemplate,
+	formatNumber,
+	inlineLocalImages,
+	listTemplates,
+	type PdfRenderer,
+	patternProblem,
+	renderDocumentsSection,
+	saveTemplate,
+} from "./documents/index.ts";
+export {
 	type Detected,
 	detectBinary,
 	FILES_EXTENSION_NAME,
@@ -187,26 +204,6 @@ export {
 	type TriageInput,
 } from "./inbox/index.ts";
 export {
-	checkPattern,
-	DEFAULT_INVOICE_TEMPLATE,
-	DEFAULT_NUMBER_PATTERN,
-	escapeHtml,
-	formatNumber,
-	INVOICES_EXTENSION_NAME,
-	invoicesModule,
-	invoicesStore,
-	longDate,
-	parseHtml,
-	patternProblem,
-	renderInvoicePdf,
-	renderInvoicesSection,
-	seedInvoiceTemplate,
-	TEMPLATE_FILE,
-	TemplateError,
-	templateFields,
-	toWinAnsi,
-} from "./invoices/index.ts";
-export {
 	decodeCsv,
 	detectDelimiter,
 	fingerprints,
@@ -248,13 +245,13 @@ export {
 	conversationIdOf,
 	DEFAULT_ASK_TIMEOUT_MS,
 	type DelegateDeps,
+	type DocumentsDeps,
 	type DomainDeps,
 	type DomainModule,
 	type EntryPoster,
 	type FilesDeps,
 	type HealthDeps,
 	type InputSubmitter,
-	type InvoiceDeps,
 	type PostedEntry,
 } from "./module.ts";
 export {
