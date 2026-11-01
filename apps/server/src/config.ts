@@ -83,6 +83,8 @@ export type Config = {
 		search: string;
 		/** The web tools' own directory: pi-web-access's config and home. Not readable by any agent. */
 		web: string;
+		/** Newer OpenAI models than pi-ai ships, written by `pnpm models:update`. Optional. */
+		modelCatalog: string;
 	};
 	/** Absolute directories agents may read: `ASSISTANT_READ_PATHS` (or its defaults) plus `<data>/files`. */
 	readPaths: readonly string[];
@@ -167,6 +169,7 @@ export function resolveDataPaths(
 			jev: join(dataDir, "secrets", "jev.json"),
 			search: join(dataDir, "secrets", "search.json"),
 			web: join(dataDir, "web"),
+			modelCatalog: join(dataDir, "model-catalog.json"),
 		},
 	};
 }
@@ -273,6 +276,7 @@ export async function canonicalizeDataPaths(config: Config): Promise<Config> {
 		jev: join(secrets, "jev.json"),
 		search: join(secrets, "search.json"),
 		web: join(dataDir, "web"),
+		modelCatalog: join(dataDir, "model-catalog.json"),
 	};
 	return { ...config, dataDir, paths, writePath: workspace };
 }

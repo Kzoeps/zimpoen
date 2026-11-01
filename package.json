@@ -16,7 +16,8 @@
 		"lint": "biome check .",
 		"connect:google": "pnpm --filter @assistant/server connect:google",
 		"login:openai": "pnpm --filter @assistant/server login:openai",
-		"logout:openai": "pnpm --filter @assistant/server logout:openai"
+		"logout:openai": "pnpm --filter @assistant/server logout:openai",
+		"models:update": "pnpm --filter @assistant/server models:update"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.3",

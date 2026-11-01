@@ -37,6 +37,7 @@ describe("parseConfig", () => {
 			jev: "/work/assistant/state/secrets/jev.json",
 			search: "/work/assistant/state/secrets/search.json",
 			web: "/work/assistant/state/web",
+			modelCatalog: "/work/assistant/state/model-catalog.json",
 		});
 		expect(config.writePath).toBe("/work/assistant/state/workspace");
 	});

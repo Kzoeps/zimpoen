@@ -58,6 +58,7 @@ ASSISTANT_READ_PATHS=/some/folder pnpm dev
 | `pnpm typecheck` | `tsc --noEmit` in every package |
 | `pnpm lint` | Biome lint and format check |
 | `pnpm login:openai` / `logout:openai` | Sign in to OpenAI with a ChatGPT subscription |
+| `pnpm models:update` | Download OpenAI models newer than pi-ai ships (restart to use) |
 | `pnpm connect:google` | Connect a Gmail account (read-only) |
 
 ## Layout

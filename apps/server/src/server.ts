@@ -198,6 +198,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 		});
 		logAgents(logger, agents);
 		await warnIfNoOpenAiLogin(logger, config, runtime);
+		logModelCatalog(logger, config, runtime);
 		await warnAboutParkedTasks(logger, harness);
 		await warnAboutUnrunnableTasks(logger, harness);
 		const repairLog = createRepairLogger(logger, config.paths.appDb);
@@ -725,6 +726,22 @@ function logAgents(logger: ServerLogger, result: EnsureAgentsResult): void {
 			`[agents] '${agentId}' is set to ${model.provider}/${model.modelId}, which this server cannot serve in its current ` +
 				"model mode, so its messages will fail. Choose another model in the web app's Settings (or PUT /api/settings/agents/:id), " +
 				"or switch ASSISTANT_MODEL_MODE.",
+		);
+	}
+}
+
+function logModelCatalog(logger: ServerLogger, config: Config, runtime: Runtime): void {
+	const status = runtime.catalog;
+	const path = config.paths.modelCatalog;
+	if (status.kind === "applied" && status.added.length > 0) {
+		logger.info(`[models] ${path} added: ${status.added.join(", ")}.`);
+	} else if (status.kind === "older") {
+		logger.info(
+			`[models] ${path} is older than the models pi-ai ships, so it is ignored. Run pnpm models:update for a newer one.`,
+		);
+	} else if (status.kind === "invalid") {
+		logger.warn(
+			`[models] ignored ${path} (${status.message}); using the bundled models. Run pnpm models:update to rewrite it.`,
 		);
 	}
 }

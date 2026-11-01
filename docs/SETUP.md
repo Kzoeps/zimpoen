@@ -75,6 +75,10 @@ browser, then paste the final `http://127.0.0.1:1455/auth/callback…` address b
 to `<data>/secrets/credentials.json`. Use a separate sign-in from other tools if you can: two programs sharing one refresh
 token can log each other out. `pnpm logout:openai` removes the sign-in.
 
+The model list comes bundled with pi-ai. To get OpenAI models released since then (the ones `pi update --models` shows),
+run `pnpm models:update` and restart the server. It downloads pi.dev's OpenAI catalog once to `<data>/model-catalog.json`;
+the server reads that file at startup and never fetches it itself. Run it again whenever you want newer models.
+
 **Verify:** `ops/check.sh --env-file /etc/assistant/assistant.env --only files` shows `PASS the OpenAI sign-in is saved`.
 
 ## 6. Tailscale Serve

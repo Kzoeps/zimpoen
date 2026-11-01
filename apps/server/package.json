@@ -11,7 +11,8 @@
 		"typecheck": "tsc --noEmit",
 		"connect:google": "cd ../.. && env NODE_ENV=production node apps/server/src/connect-google.ts",
 		"login:openai": "cd ../.. && env NODE_ENV=production node apps/server/src/login-openai.ts",
-		"logout:openai": "cd ../.. && env NODE_ENV=production node apps/server/src/logout-openai.ts"
+		"logout:openai": "cd ../.. && env NODE_ENV=production node apps/server/src/logout-openai.ts",
+		"models:update": "cd ../.. && env NODE_ENV=production node apps/server/src/update-models.ts"
 	},
 	"dependencies": {
 		"@assistant/db": "workspace:*",

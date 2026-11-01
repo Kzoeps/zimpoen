@@ -8,12 +8,15 @@ import type { Config } from "./config.ts";
 import { FileCredentialStore } from "./credentials.ts";
 import { createDevProvider, type DevProviderOptions } from "./dev-model.ts";
 import { scopedEnvFor } from "./env/scoped-env.ts";
+import { type ModelCatalogStatus, withCatalogFile } from "./model-catalog.ts";
 import { createUnansweredReader, type UnansweredReader } from "./unanswered.ts";
 
 export type Runtime = {
 	harness: Harness;
 	models: MutableModels;
 	credentials: FileCredentialStore;
+	/** Whether `<data>/model-catalog.json` added models (`openai` mode; `missing` in `faux` mode). */
+	catalog: ModelCatalogStatus;
 	/** Extensions every agent gets. */
 	shared: readonly Extension[];
 	/** Messages of a conversation that got no answer, with Durable's reason: read from the stored submission records. */
@@ -50,7 +53,14 @@ export type RuntimeOptions = {
 export async function openRuntime(config: Config, options: RuntimeOptions = {}): Promise<Runtime> {
 	const credentials = new FileCredentialStore(config.paths.credentials);
 	const models = createModels({ credentials });
-	models.setProvider(config.modelMode === "faux" ? createDevProvider(options.devModel).provider : openaiProvider());
+	let catalog: ModelCatalogStatus = { kind: "missing" };
+	if (config.modelMode === "faux") {
+		models.setProvider(createDevProvider(options.devModel).provider);
+	} else {
+		const openai = await withCatalogFile(openaiProvider(), config.paths.modelCatalog);
+		models.setProvider(openai.provider);
+		catalog = openai.status;
+	}
 
 	const profile = createProfileExtension(config.profile);
 	const registry = createRegistry();
@@ -82,6 +92,7 @@ export async function openRuntime(config: Config, options: RuntimeOptions = {}):
 		harness,
 		models,
 		credentials,
+		catalog,
 		shared: [profile],
 		unanswered: createUnansweredReader(storage),
 		close: () => harness.close(BACKGROUND_CONTEXT),
