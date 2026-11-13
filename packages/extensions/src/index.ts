@@ -282,7 +282,32 @@ export {
 } from "./people/index.ts";
 export { closingYesWindow, closingYesWindowOnAsk, createEntryPoster, createInputSubmitter } from "./post.ts";
 export { createProfileExtension, PROFILE_EXTENSION_NAME, type ProfileFacts, renderProfile } from "./profile.ts";
+export {
+	decideSlot as decideRoutineSlot,
+	describeRoutine,
+	describeSchedule as describeRoutineSchedule,
+	LATE_LIMIT_MS as ROUTINE_LATE_LIMIT_MS,
+	latestSlotAtOrBefore as latestRoutineSlot,
+	MAX_ACTIVE_ROUTINES,
+	nextSlotAfter as nextRoutineSlot,
+	parseDays as parseRoutineDays,
+	ROUTINE_TASK_NAME,
+	ROUTINES_EXTENSION_NAME,
+	type RoutineInput,
+	type RoutineSchedule,
+	type RoutinesModule,
+	routineContent,
+	routineRequestId,
+	routineStore,
+	routinesModule,
+} from "./routines/index.ts";
 export { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings, scheduleOf } from "./schedule.ts";
+export {
+	isScheduledRequestId,
+	isScheduledRun,
+	ROUTINE_REQUEST_PREFIX,
+	SCHEDULED_RUN_REFUSAL,
+} from "./scheduled-run.ts";
 export {
 	type BillExtra,
 	type BillItem,
