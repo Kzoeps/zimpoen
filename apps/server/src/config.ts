@@ -2,7 +2,7 @@ import { access, chmod, constants, mkdir, realpath, stat } from "node:fs/promise
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings } from "@assistant/extensions/schedule";
-import { isTrustLevel, type TrustLevel } from "@assistant/extensions/trust";
+import { DEFAULT_TRUST_LEVEL, isTrustLevel, type TrustLevel } from "@assistant/extensions/trust";
 import type { GoogleMode } from "@assistant/shared";
 import { isInside } from "./paths.ts";
 
@@ -127,7 +127,23 @@ export type Config = {
 	chromiumPath?: string;
 	/** `ZIMPOEN_PA_TRUST`: whether the PA asks before creating or deleting a bot (PLAN upgrade §3). Absent: normal (asks). */
 	paTrust?: TrustLevel;
+	/** The CTO agent (`ZIMPOEN_CTO`, default off: no agent, no tool). PLAN upgrade §7. */
+	cto: CtoConfig;
 };
+
+export type CtoConfig =
+	| { mode: "off" }
+	| {
+			mode: "on";
+			/** `ZIMPOEN_CTO_BOARD_BIN`, default `hc-board` (looked up on PATH). */
+			boardBin: string;
+			/** `ZIMPOEN_CTO_HC_BIN`, default `hc`. */
+			hcBin: string;
+			/** `ZIMPOEN_CTO_REPOS`, comma-separated: the only repos `delegate_coding` accepts. Required. */
+			repos: readonly string[];
+			/** `ZIMPOEN_CTO_TRUST`, default normal. */
+			trust: TrustLevel;
+	  };
 
 export type CredBrokerConfig =
 	| { mode: "off" }
@@ -237,6 +253,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 			? {}
 			: { chromiumPath: nonEmpty(env.ASSISTANT_CHROMIUM_PATH) }),
 		...parsePaTrust(env.ZIMPOEN_PA_TRUST, problem),
+		cto: parseCto(env, problem),
 	};
 
 	if (problems.length > 0) throw new ConfigError(problems);
@@ -736,4 +753,66 @@ function parsePaTrust(raw: string | undefined, problem: ReportProblem): { paTrus
 		`'${value}' is not valid. Use 'normal' (default: the PA asks before creating or deleting a bot), 'strict' (the same as normal for bots today; it matters once actions can be denied), or 'open' (it never asks; every use is logged).`,
 	);
 	return {};
+}
+
+/** A repo name for `ZIMPOEN_CTO_REPOS`: `name` or `owner/name`, no leading dash, no `..`. */
+const CTO_REPO_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,49}(\/[A-Za-z0-9][A-Za-z0-9._-]{0,49})?$/;
+/** A binary for the CTO: a bare name looked up on PATH, or an absolute path. Never an option. */
+const CTO_BIN_PATTERN = /^(\/[^\0]+|[A-Za-z0-9][A-Za-z0-9._-]*)$/;
+
+/** `ZIMPOEN_CTO=off|on` (default off) and, when on, its binaries, repos and trust level. */
+function parseCto(env: Env, problem: ReportProblem): CtoConfig {
+	const mode = nonEmpty(env.ZIMPOEN_CTO) ?? "off";
+	if (mode === "off") return { mode: "off" };
+	if (mode !== "on") {
+		problem("ZIMPOEN_CTO", `'${mode}' is not valid. Use 'off' (default: no CTO agent) or 'on'.`);
+		return { mode: "off" };
+	}
+	const bin = (setting: string, fallback: string): string => {
+		const value = nonEmpty(env[setting]) ?? fallback;
+		if (!CTO_BIN_PATTERN.test(value) || value.includes("..")) {
+			problem(
+				setting,
+				`'${value}' is not valid. Give a program name on PATH (like '${fallback}') or an absolute path.`,
+			);
+		}
+		return value;
+	};
+	const repos = dedupe(
+		(nonEmpty(env.ZIMPOEN_CTO_REPOS) ?? "")
+			.split(",")
+			.map((repo) => repo.trim())
+			.filter((repo) => repo !== ""),
+	);
+	if (repos.length === 0) {
+		problem(
+			"ZIMPOEN_CTO_REPOS",
+			"is required with ZIMPOEN_CTO=on: a comma-separated list of repos (like 'org/app') the CTO may hand work on.",
+		);
+	}
+	for (const repo of repos) {
+		if (!CTO_REPO_PATTERN.test(repo) || repo.includes("..")) {
+			problem(
+				"ZIMPOEN_CTO_REPOS",
+				`'${repo}' is not a repo name. Use 'name' or 'owner/name' (letters, digits, '.', '_', '-').`,
+			);
+		}
+	}
+	const trustRaw = nonEmpty(env.ZIMPOEN_CTO_TRUST);
+	let trust: TrustLevel = DEFAULT_TRUST_LEVEL;
+	if (trustRaw !== undefined) {
+		if (isTrustLevel(trustRaw)) trust = trustRaw;
+		else
+			problem(
+				"ZIMPOEN_CTO_TRUST",
+				`'${trustRaw}' is not valid. Use 'normal' (default), 'strict', or 'open' (the CTO may also hand work over during scheduled runs).`,
+			);
+	}
+	return {
+		mode: "on",
+		boardBin: bin("ZIMPOEN_CTO_BOARD_BIN", "hc-board"),
+		hcBin: bin("ZIMPOEN_CTO_HC_BIN", "hc"),
+		repos,
+		trust,
+	};
 }

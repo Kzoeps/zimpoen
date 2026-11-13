@@ -21,6 +21,7 @@ import { buildAgents, countParkedTasks, type EnsureAgentsResult, ensureAgents, l
 import { type BotRuntime, createBotRuntime } from "./bots.ts";
 import { loadCredBroker } from "./broker.ts";
 import { type Config, DEFAULT_OWNER_NAME } from "./config.ts";
+import { type CtoExec, ctoFor } from "./cto.ts";
 import type { DevProviderOptions } from "./dev-model.ts";
 import { documentsDeps } from "./documents.ts";
 import { createDomain, type Domain, type DomainOptions, type RepairReport, type SweepReport } from "./domain.ts";
@@ -74,6 +75,8 @@ export type StartServerOptions = {
 	documents?: DocumentsDeps;
 	/** Telegram's Bot API and the ffmpeg/whisper runner, played by tests. */
 	telegram?: Pick<TelegramSetupOptions, "fetch" | "base" | "run" | "pollSeconds">;
+	/** Replaces how the CTO runs `hc-board` and `hc` (`ZIMPOEN_CTO=on`): tests play the board. */
+	ctoExec?: CtoExec;
 };
 
 /** How often sleeping tasks that came due are woken. A reminder is at most this late after a suspend or a clock step. */
@@ -181,6 +184,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 			web: options.web ?? (await startWeb()),
 			...(await brokerFor(config, now, (message) => logger.warn(message))),
+			...ctoOption(config, options.ctoExec),
 			warn: (message) => logger.warn(message),
 		});
 		undo.push(() => domain.close());
@@ -212,6 +216,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			health: domain.healthExtensions,
 			accountant: domain.accountantExtensions,
 			inbox: domain.inboxExtensions,
+			...(domain.ctoExtensions === undefined ? {} : { cto: domain.ctoExtensions }),
 		});
 		const ensureOptions = {
 			shared: runtime.shared,
@@ -227,6 +232,13 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			logger.info(`[bots] archived the conversations of deleted bots: ${bots.archived.join(", ")}`);
 		if (config.paTrust === "open")
 			logger.warn("[bots] ZIMPOEN_PA_TRUST=open: the PA creates and deletes bots without asking.");
+		if (config.cto.mode === "on") {
+			logger.info(
+				`[cto] on: repos ${config.cto.repos.join(", ")}, trust ${config.cto.trust}, board ${config.cto.boardBin}`,
+			);
+			if (config.cto.trust === "open")
+				logger.warn("[cto] ZIMPOEN_CTO_TRUST=open: the CTO hands work over during scheduled runs too.");
+		}
 		await warnIfNoOpenAiLogin(logger, config, runtime);
 		logModelCatalog(logger, config, runtime);
 		await warnAboutParkedTasks(logger, harness);
@@ -790,6 +802,12 @@ async function warnIfNoOpenAiLogin(logger: ServerLogger, config: Config, runtime
 				"every message will fail until you sign in.",
 		);
 	}
+}
+
+/** The CTO's coding lead when `ZIMPOEN_CTO=on`, nothing otherwise. */
+function ctoOption(config: Config, exec: CtoExec | undefined) {
+	const cto = ctoFor(config.cto, exec);
+	return cto === undefined ? {} : { cto };
 }
 
 /** The credential broker when `ZIMPOEN_CRED_BROKER=on` (a bad policy stops the start), nothing otherwise. */

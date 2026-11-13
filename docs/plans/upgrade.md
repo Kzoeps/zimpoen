@@ -15,7 +15,7 @@ Sources: `/tmp/zimpoen-vs-durable-bots.md`, `/tmp/zimpoen-cred-vault.md`, `/tmp/
 | 1c | Agent-created recurring routines (slot-keyed, at most once) | built |
 | 1d | Credential broker + per-project trust levels | built, `ZIMPOEN_CRED_BROKER=off` by default |
 | 2 | Dedicated coding VM running herdr-lead; PA hands coding work to it | design (§6) |
-| 3 | CTO bot that drives herdr-lead; push/merge/deploy follow the project's trust level | design (§7) |
+| 3 | CTO bot that drives herdr-lead; push/merge/deploy follow the project's trust level | built (§7), `ZIMPOEN_CTO=off` by default; board create command unverified |
 | 4 | Sandboxed shell (gVisor container per agent, egress rules) | design sketch (§8) |
 | 5 | Computer-use VMs | design sketch (§8) |
 
@@ -132,6 +132,29 @@ interface CredBroker {
 - Push, merge and deploy are broker actions with sensitivity `merge_main` / `deploy_prod`; the project trust level
   decides allow/ask. Branch pushes are `routine`.
 - Never from a scheduled run without the trust level being Open.
+
+**Built (phase 3, branch `zimpoen/p2-cto`):**
+
+- `ZIMPOEN_CTO=off|on` (default off: no agent, no tool). On needs `ZIMPOEN_CTO_REPOS` (comma list, `name` or
+  `owner/name`); optional `ZIMPOEN_CTO_TRUST` (default normal), `ZIMPOEN_CTO_BOARD_BIN` (default `hc-board`),
+  `ZIMPOEN_CTO_HC_BIN` (default `hc`).
+- Agent `cto` (`CTO_AGENT` in `apps/server/src/agents.ts`), added by `buildAgents` only when on. Extensions: `cto`
+  (`delegate_coding`, `board_status`), `broker` when `ZIMPOEN_CRED_BROKER=on`, `approvals`, `tool_search`. No `ask_agent`,
+  memory, files or web. The PA reaches it with `ask_agent cto` (refused while off).
+- The board sits behind `CodingLead { createCard, notifyLead, readCard }` (`packages/extensions/src/cto/lead.ts`); the
+  server implements it in `apps/server/src/cto.ts` with `execFile` (no shell, env = `PATH`, `HOME`, `LANG`,
+  `HC_BOARD_LIVE=1`). Argv: `hc-board create --key <call id> --repo --goal --done-when --out-of-scope` (card id on the last
+  line), `hc send lead "New coding card <id> …"`, `hc-board show <id>`. **`hc-board create` does not exist yet** in
+  herdr-lead (cards are made by the lead's extension); the contract above must be added there or the adapter changed.
+- `delegate_coding` validates: repo in the allowlist, goal ≤ 2000, doneWhen/outOfScope ≤ 1000 chars, no leading `-`, no
+  control characters. Rule 8: `cto_card` keyed by call id; a replay resumes (same key → same card; the lead is told at
+  most once after success). Sensitivity `routine` through `decide()`.
+- Rule 13: refused in a scheduled run unless `ZIMPOEN_CTO_TRUST=open`. `isScheduledRequest` now also treats an
+  `ask:<call id>` input (the question in the asked agent's thread) as scheduled when the PA asked from a scheduled run,
+  or when its `delegate_ask` row is missing. This also applies to bots.
+- `board_status` reads only cards the CTO opened; board text is clipped and labelled as information.
+- Push/merge/deploy stay `cred_run` broker actions (unchanged): `merge_main`/`deploy_prod` ask under Normal. The approval
+  card lands in the CTO's thread; the PA is told to relay it.
 
 ## 8. Phases 4–5 (sketch)
 
