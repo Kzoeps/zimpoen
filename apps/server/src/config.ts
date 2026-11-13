@@ -1,6 +1,7 @@
 import { access, chmod, constants, mkdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { ShellHostConfig } from "@assistant/extensions";
 import { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings } from "@assistant/extensions/schedule";
 import { isTrustLevel, type TrustLevel } from "@assistant/extensions/trust";
 import type { GoogleMode } from "@assistant/shared";
@@ -123,6 +124,12 @@ export type Config = {
 	 * and the append-only audit log (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`).
 	 */
 	credBroker: CredBrokerConfig;
+	/**
+	 * The sandboxed shell (`ZIMPOEN_SHELL`, default `off`: no tool, nothing checked). When on: the engine
+	 * (`ZIMPOEN_SHELL_ENGINE`, docker or podman) and its CLI (`ZIMPOEN_SHELL_BIN`), the image (`ZIMPOEN_SHELL_IMAGE`), the
+	 * network (`ZIMPOEN_SHELL_NETWORK`, default `none`) and the egress marker (`ZIMPOEN_SHELL_EGRESS_MARKER`).
+	 */
+	shell: ShellConfig;
 	/** `ASSISTANT_CHROMIUM_PATH`: the Chrome or Chromium that makes PDFs. Absent: the usual install paths are tried. */
 	chromiumPath?: string;
 	/** `ZIMPOEN_PA_TRUST`: whether the PA asks before creating or deleting a bot (PLAN upgrade §3). Absent: normal (asks). */
@@ -132,6 +139,12 @@ export type Config = {
 export type CredBrokerConfig =
 	| { mode: "off" }
 	| { mode: "on"; policyPath: string; secretsDir: string; auditPath: string };
+
+export type ShellConfig = { mode: "off" } | ({ mode: "on" } & ShellHostConfig);
+
+/** Default image: small, has /bin/sh and chown. Pull it before starting (runs never pull). */
+export const DEFAULT_SHELL_IMAGE = "docker.io/library/debian:stable-slim";
+export const DEFAULT_SHELL_EGRESS_MARKER = "/run/zimpoen-shell/egress.ok";
 
 export type ConfigProblem = { setting: string; message: string };
 
@@ -233,6 +246,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 			publicHosts: parsePublicHosts(env.ASSISTANT_PUBLIC_HOST, problem),
 		},
 		credBroker: parseCredBroker(env, dataDir, problem),
+		shell: parseShell(env, problem),
 		...(nonEmpty(env.ASSISTANT_CHROMIUM_PATH) === undefined
 			? {}
 			: { chromiumPath: nonEmpty(env.ASSISTANT_CHROMIUM_PATH) }),
@@ -711,6 +725,42 @@ function parseCredBroker(env: Env, dataDir: string, problem: ReportProblem): Cre
 		secretsDir: join(dataDir, "secrets", "broker", "creds"),
 		auditPath: pathOf("ZIMPOEN_CRED_AUDIT", join(dataDir, "broker-audit.jsonl")),
 	};
+}
+
+/** `ZIMPOEN_SHELL=off|on` and its settings. Off by default: no tool, no container engine is touched. */
+function parseShell(env: Env, problem: ReportProblem): ShellConfig {
+	const mode = nonEmpty(env.ZIMPOEN_SHELL) ?? "off";
+	if (mode === "off") return { mode: "off" };
+	if (mode !== "on") {
+		problem("ZIMPOEN_SHELL", `'${mode}' is not valid. Use 'off' (default: no shell tool) or 'on'.`);
+		return { mode: "off" };
+	}
+	const engine = nonEmpty(env.ZIMPOEN_SHELL_ENGINE) ?? "docker";
+	if (engine !== "docker" && engine !== "podman") {
+		problem("ZIMPOEN_SHELL_ENGINE", `'${engine}' is not valid. Use 'docker' (default) or 'podman'.`);
+		return { mode: "off" };
+	}
+	const bin = nonEmpty(env.ZIMPOEN_SHELL_BIN) ?? `/usr/bin/${engine}`;
+	if (!isAbsolute(bin)) problem("ZIMPOEN_SHELL_BIN", `'${bin}' is not an absolute path.`);
+	const image = nonEmpty(env.ZIMPOEN_SHELL_IMAGE) ?? DEFAULT_SHELL_IMAGE;
+	if (!/^[a-z0-9][a-z0-9._/:@-]{0,254}$/.test(image)) {
+		problem("ZIMPOEN_SHELL_IMAGE", `'${image}' is not an image reference such as ${DEFAULT_SHELL_IMAGE}.`);
+	}
+	const network = nonEmpty(env.ZIMPOEN_SHELL_NETWORK) ?? "none";
+	if (
+		network === "host" ||
+		network === "bridge" ||
+		network.startsWith("container:") ||
+		!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(network)
+	) {
+		problem(
+			"ZIMPOEN_SHELL_NETWORK",
+			`'${network}' is not allowed. Use 'none' (default: no network) or the dedicated network ops/shell-egress.sh filters (zimpoen-shell); never host or the default bridge.`,
+		);
+	}
+	const egressMarker = nonEmpty(env.ZIMPOEN_SHELL_EGRESS_MARKER) ?? DEFAULT_SHELL_EGRESS_MARKER;
+	if (!isAbsolute(egressMarker)) problem("ZIMPOEN_SHELL_EGRESS_MARKER", `'${egressMarker}' is not an absolute path.`);
+	return { mode: "on", engine, bin, image, network, egressMarker };
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

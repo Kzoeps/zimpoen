@@ -6,8 +6,10 @@ import { BOT_SLUG_PATTERN } from "@assistant/shared";
  * bot also gets the approval hook and `tool_search`, so a preset's guarded deletes stay guarded. No preset writes the
  * owner's domain data (tasks are read-only; health, ledger and splits are not offered), which is what makes a bot with `web`
  * acceptable: what a page talks it into can reach only its own memory scope and the PDFs and numbers `documents` makes.
+ * `shell` is the bot's own gVisor sandbox (upgrade §8): nothing of the owner's is in it, and with `ZIMPOEN_SHELL=off` it
+ * gives no tool. A bot has it only when the PA picked it.
  */
-export const BOT_PRESETS = ["tasks-read", "documents", "web", "memory", "codemode"] as const;
+export const BOT_PRESETS = ["tasks-read", "documents", "web", "memory", "codemode", "shell"] as const;
 
 export type BotPreset = (typeof BOT_PRESETS)[number];
 

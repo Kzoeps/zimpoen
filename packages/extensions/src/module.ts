@@ -10,6 +10,7 @@ import type { DailyFactsProvider } from "./daily/facts.ts";
 import type { PdfRenderer } from "./documents/render.ts";
 import type { InboxDeps } from "./inbox/types.ts";
 import type { ScheduleSettings } from "./schedule.ts";
+import type { ShellDeps } from "./shell/tools.ts";
 import type { WebDeps } from "./web/index.ts";
 
 /** What a domain module may ask of the server it runs in. Built once by the server and shared by every module. */
@@ -65,6 +66,8 @@ export type DomainDeps = {
 	bots?: BotsDeps;
 	/** The credential broker (`ZIMPOEN_CRED_BROKER=on`). Omitted: no `cred_run` tool and no broker approval action. */
 	broker?: BrokerDeps;
+	/** The sandboxed shell (`ZIMPOEN_SHELL=on`, upgrade §8). Omitted: no `shell_run` tool. */
+	shell?: ShellDeps;
 	/**
 	 * The request ids of the inputs placed in a conversation's current run, for rule 13. Omitted: read from the Harness
 	 * ({@link currentRunRequestIds}). Tests replace it to run a tool as if inside an owner's message.

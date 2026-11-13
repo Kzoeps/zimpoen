@@ -16,6 +16,7 @@ import {
 	createBoundedCodemodeExtension,
 	createEntryPoster,
 	createInputSubmitter,
+	createShellExtension,
 	type DailyFactsProvider,
 	type DailyService,
 	type DailyStart,
@@ -44,6 +45,7 @@ import {
 	type RefreshReport,
 	routinesModule,
 	type ScheduleSettings,
+	type ShellDeps,
 	splitsModule,
 	tasksModule,
 	type UsageService,
@@ -179,6 +181,8 @@ export type DomainOptions = {
 	bots?: BotsDeps;
 	/** The credential broker (`ZIMPOEN_CRED_BROKER=on`). Omitted: no `cred_run` tool. */
 	broker?: BrokerDeps;
+	/** The sandboxed shell (`ZIMPOEN_SHELL=on`). Omitted: no `shell_run` tool for anyone. */
+	shell?: ShellDeps;
 	/** Where a failure the work goes on without is said (the server's log). */
 	warn?: (message: string) => void;
 };
@@ -246,6 +250,7 @@ export function createDomain(options: DomainOptions): Domain {
 		...(options.warn === undefined ? {} : { warn: options.warn }),
 		...(options.bots === undefined ? {} : { bots: options.bots }),
 		...(options.broker === undefined ? {} : { broker: options.broker }),
+		...(options.shell === undefined ? {} : { shell: options.shell }),
 		// The daily jobs ask this before they spend tokens; the module is built from `deps`, so it is looked up when asked.
 		budget: { check: (agent) => usageModule.service(deps).check(agent) },
 	};
@@ -269,6 +274,9 @@ export function createDomain(options: DomainOptions): Domain {
 	const web = webModule.extension(deps);
 	// Only the PA, and only with ZIMPOEN_CRED_BROKER=on: off, nothing of the broker is installed.
 	const broker = options.broker === undefined ? [] : [brokerModule.extension(deps)];
+	// The sandboxed shell (upgrade §8): the PA, and bots whose preset has it; only with ZIMPOEN_SHELL=on. Never the Inbox.
+	const shellExtension = createShellExtension(deps);
+	const shell = options.shell === undefined ? [] : [shellExtension];
 	// Every agent is told what is remembered; all but the Inbox may also remember and (with approval) forget. The Inbox reads
 	// untrusted email text, and a line it wrote would be in a prompt for good, so it only reads (PLAN rule 6).
 	const memory = memoryModule.extension(deps);
@@ -311,6 +319,7 @@ export function createDomain(options: DomainOptions): Domain {
 			routines,
 			web,
 			...broker,
+			shellExtension,
 			memory,
 			memoryRead,
 			guard,
@@ -330,6 +339,7 @@ export function createDomain(options: DomainOptions): Domain {
 			delegate,
 			routines,
 			...broker,
+			...shell,
 			guard,
 			toolSearch,
 			memory,
@@ -345,6 +355,7 @@ export function createDomain(options: DomainOptions): Domain {
 				web,
 				memory,
 				codemode,
+				shell: shellExtension,
 			};
 			return [...tools.map((preset) => byPreset[preset]), guard, toolSearch];
 		},

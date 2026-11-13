@@ -56,7 +56,6 @@ export {
 	type SecretStore,
 	scrub,
 } from "./broker/index.ts";
-
 export {
 	boundCodemodeSource,
 	type CodemodeLimits,
@@ -357,6 +356,7 @@ export {
 	SCHEDULED_RUN_REFUSAL,
 	type ScheduledRequest,
 } from "./scheduled-run.ts";
+export * from "./shell/index.ts";
 export {
 	type BillExtra,
 	type BillItem,
