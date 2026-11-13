@@ -4,12 +4,12 @@
 #   provision.sh --config /root/vm.env            provision (idempotent: running it again converges)
 #   provision.sh --config /root/vm.env --dry-run  validate the settings and print what would be done; change nothing
 #
-# What it does: installs git, nftables and Node; installs pi from npm and herdr, hc, hc-board and herdr-lead from pinned
-# release files (sha256 checked); creates the unprivileged user that runs the lead; loads the egress firewall
+# What it does: installs git, nftables and Node; installs pi from npm and herdr, hc, hc-board and herdr-lead from a folder
+# the host filled with copy-tools.sh (ZCV_TOOLS_DIR); creates the unprivileged user that runs the lead; loads the egress firewall
 # (egress.sh) and a unit that reloads it at boot; installs herdr-lead's unit, which refuses to start without those rules;
 # copies the TEST VALUES file (never real secrets) into the user's config; makes git refuse to push from the VM.
 #
-# It never receives a credential. Pushes happen on the zimpoen host (host-push.sh) with a broker-minted token. See
+# It never receives a credential. Pushes happen on the zimpoen host (host-push.sh) with the project's long-lived token. See
 # docs/coding-vm.md and ops/coding-vm/vm.env.example for every setting.
 set -euo pipefail
 
@@ -66,15 +66,14 @@ refuse_secrets "$CONFIG"
 . "$CONFIG"
 
 # Required settings.
-for v in ZCV_USER ZCV_RELAY ZCV_HOST_ADDRS ZCV_NODE_VERSION ZCV_NODE_SHA256 ZCV_PI_VERSION ZCV_TOOLS_URL ZCV_TOOLS_SHA256 ZCV_TEST_VALUES_FILE; do
+for v in ZCV_USER ZCV_RELAY ZCV_HOST_ADDRS ZCV_NODE_VERSION ZCV_NODE_SHA256 ZCV_PI_VERSION ZCV_TOOLS_DIR ZCV_TEST_VALUES_FILE; do
 	[ -n "${!v:-}" ] || die "$v is not set in $CONFIG (see ops/coding-vm/vm.env.example)."
 done
 [[ "$ZCV_USER" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || die "ZCV_USER '$ZCV_USER' is not a plain user name."
 [[ "$ZCV_NODE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "ZCV_NODE_VERSION must look like v24.11.0."
 [[ "$ZCV_NODE_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "ZCV_NODE_SHA256 must be 64 hex characters."
-[[ "$ZCV_TOOLS_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "ZCV_TOOLS_SHA256 must be 64 hex characters."
 [[ "$ZCV_PI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "ZCV_PI_VERSION must be an exact version (no ranges)."
-case "$ZCV_TOOLS_URL" in https://*) ;; *) die "ZCV_TOOLS_URL must be https://." ;; esac
+[[ "$ZCV_TOOLS_DIR" =~ ^/[A-Za-z0-9._/-]+$ && "$ZCV_TOOLS_DIR" != *..* ]] || die "ZCV_TOOLS_DIR must be an absolute path without '..'."
 [ -r "$ZCV_TEST_VALUES_FILE" ] || die "cannot read ZCV_TEST_VALUES_FILE '$ZCV_TEST_VALUES_FILE'."
 refuse_secrets "$ZCV_TEST_VALUES_FILE"
 grep -q '^ZIMPOEN_VM_TEST_VALUES_ONLY=1$' "$ZCV_TEST_VALUES_FILE" ||
@@ -86,6 +85,12 @@ ZCV_RELAY="$ZCV_RELAY" ZCV_HOST_ADDRS="$ZCV_HOST_ADDRS" ZCV_DNS="${ZCV_DNS:-}" Z
 
 # Everything above only read and checked; from here on it changes the machine.
 [ "$DRY_RUN" -eq 1 ] || [ "$(id -u)" -eq 0 ] || die "run as root (or use --dry-run)."
+# The tools are copied from the host by copy-tools.sh, so a dry run on a VM they have not reached yet still shows the plan.
+if [ "$DRY_RUN" -eq 0 ]; then
+	for tool in herdr hc hc-board herdr-lead; do
+		[ -f "$ZCV_TOOLS_DIR/$tool" ] || die "$ZCV_TOOLS_DIR/$tool is missing. On the zimpoen host run: ops/coding-vm/copy-tools.sh --vm <user>@<this VM> --dest $ZCV_TOOLS_DIR"
+	done
+fi
 
 LIB=/usr/local/lib/zimpoen-vm
 ETC=/etc/zimpoen-vm
@@ -135,9 +140,11 @@ run tar -xJf "$TMP/$NODE_TGZ" -C /usr/local --strip-components=1
 echo "== pi $ZCV_PI_VERSION"
 run /usr/local/bin/npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@$ZCV_PI_VERSION"
 
-echo "== herdr, hc, hc-board, herdr-lead"
-fetch "$ZCV_TOOLS_URL" "$ZCV_TOOLS_SHA256" "$TMP/tools.tar.gz"
-run tar -xzf "$TMP/tools.tar.gz" -C /usr/local/bin herdr hc hc-board herdr-lead
+echo "== herdr, hc, hc-board, herdr-lead (from $ZCV_TOOLS_DIR)"
+# Copied from the host by copy-tools.sh: the owner's own builds, trusted as far as the ssh connection that brought them.
+for tool in herdr hc hc-board herdr-lead; do
+	run install -m 0755 -o root -g root "$ZCV_TOOLS_DIR/$tool" "/usr/local/bin/$tool"
+done
 
 echo "== user $ZCV_USER (no sudo, no credentials)"
 if ! id "$ZCV_USER" >/dev/null 2>&1; then

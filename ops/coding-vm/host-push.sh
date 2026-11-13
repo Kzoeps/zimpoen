@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# ops/coding-vm/host-push.sh — push a branch the coding VM made, from the zimpoen HOST, with a short-lived token the
-# broker minted (upgrade plan §6). The token never enters the VM: the commits are copied out as a git bundle, checked here,
+# ops/coding-vm/host-push.sh — push a branch the coding VM made, from the zimpoen HOST, with the project's long-lived
+# token (upgrade plan §6). The token never enters the VM: the commits are copied out as a git bundle, checked here,
 # and pushed from a throwaway clone.
 #
 #   host-push.sh --vm coder@coding-vm --repo-dir work/myrepo --branch zimpoen/fix-x \
 #                --remote https://github.com/owner/repo.git  < token-on-stdin
 #
-# Meant to be the argv of a broker action (docs/coding-vm.md, "Push"): the broker mints a repo-scoped token valid for
-# minutes and hands it on stdin (inject {"type":"stdin"}); this script reads one line and never prints, logs or puts it
+# Meant to be the argv of a broker action (docs/coding-vm.md, "Push"): the broker injects the project's stored,
+# repo-scoped token on stdin (inject {"type":"stdin"}); this script reads one line and never prints, logs or puts it
 # in a URL or argv. It refuses:
 #   - main, master and HEAD (merging to main is a separate merge_main action, never a push from the VM)
 #   - a branch name that is not [A-Za-z0-9._/-] or starts with '-'
@@ -63,7 +63,7 @@ esac
 # The token: one line on stdin. A plain (unexported) shell variable: ssh and the bundle steps never see it; only the
 # final push gets it, in its own environment, for GIT_ASKPASS.
 IFS= read -r TOKEN || true
-[ -n "${TOKEN:-}" ] || die "no token on stdin. The broker passes the minted token on stdin."
+[ -n "${TOKEN:-}" ] || die "no token on stdin. The broker passes the project's token on stdin."
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

@@ -13,12 +13,26 @@ const SCRIPTS = [
 	"coding-vm/egress.sh",
 	"coding-vm/provision.sh",
 	"coding-vm/host-push.sh",
+	"coding-vm/copy-tools.sh",
 	"computer-use/run-desktop.sh",
 	"computer-use/entrypoint.sh",
 ];
 const read = (rel: string) => readFileSync(join(OPS, rel), "utf8");
 
-const STUBBED = ["nft", "ssh", "docker", "podman", "apt-get", "systemctl", "curl", "useradd", "npm", "git", "tar"];
+const STUBBED = [
+	"nft",
+	"ssh",
+	"docker",
+	"podman",
+	"apt-get",
+	"systemctl",
+	"curl",
+	"useradd",
+	"npm",
+	"git",
+	"tar",
+	"scp",
+];
 const sandbox = mkdtempSync(join(tmpdir(), "zimpoen-ops-test-"));
 const stubDir = join(sandbox, "bin");
 const callLog = join(sandbox, "calls.log");
@@ -203,13 +217,67 @@ describe("coding VM provisioning (static, and refusals that stop before any chan
 		);
 	});
 
-	it("installs the pinned tools, checks checksums, and loads egress before installing them", () => {
+	it("installs the tools the host copied, checks Node's checksum, and loads egress before installing them", () => {
 		for (const tool of ["git", "nftables"])
 			expect(provision).toMatch(new RegExp(`apt-get install[^\\n]*\\b${tool}\\b`));
 		expect(provision).toMatch(/herdr hc hc-board herdr-lead/);
+		expect(provision).toContain("$ZCV_TOOLS_DIR/$tool");
+		expect(provision).not.toMatch(/ZCV_TOOLS_(URL|SHA256)/);
 		expect(provision).toMatch(/pi-coding-agent@\$ZCV_PI_VERSION/);
 		expect(provision).toMatch(/sha256sum --check/);
 		expect(provision.indexOf("zimpoen-vm-egress.service")).toBeLessThan(provision.indexOf("== node"));
+	});
+
+	describe("copy-tools.sh", () => {
+		const toolDir = mkdtempSync(join(sandbox, "tools-"));
+		for (const tool of ["herdr", "hc", "hc-board", "herdr-lead"]) {
+			writeFileSync(join(toolDir, tool), "#!/bin/sh\n");
+			chmodSync(join(toolDir, tool), 0o755);
+		}
+		const withTools = `${toolDir}:${stubDir}:/usr/bin:/bin`;
+
+		it("a dry run names the four host programs and touches nothing", () => {
+			const r = run("coding-vm/copy-tools.sh", ["--vm", "coder@vm", "--dest", "/root/t", "--dry-run"], {
+				PATH: withTools,
+			});
+			expect(r.code).toBe(0);
+			for (const tool of ["herdr", "hc", "hc-board", "herdr-lead"]) expect(r.out).toContain(`${toolDir}/${tool}`);
+			expect(r.calls).toEqual([]);
+		});
+
+		it("copies each program under its own name with ssh and scp", () => {
+			const ok = fakeTool("ssh", "exit 0");
+			const scp = fakeTool("scp", "exit 0");
+			const r = run("coding-vm/copy-tools.sh", ["--vm", "coder@vm", "--dest", "/root/t"], {
+				PATH: `${ok}:${scp}:${withTools}`,
+			});
+			expect(r.code).toBe(0);
+			expect(r.calls.filter((call) => call.startsWith("scp ")).map((call) => call.split(" ").pop())).toEqual([
+				"coder@vm:/root/t/herdr",
+				"coder@vm:/root/t/hc",
+				"coder@vm:/root/t/hc-board",
+				"coder@vm:/root/t/herdr-lead",
+			]);
+		});
+
+		it("refuses a missing program, a bad --vm and a --dest with '..'", () => {
+			const missing = run("coding-vm/copy-tools.sh", ["--vm", "coder@vm", "--dest", "/root/t", "--dry-run"], {
+				PATH: `${stubDir}:/usr/bin:/bin`,
+			});
+			expect(missing.code).toBe(1);
+			expect(missing.err).toMatch(/'herdr' is not on this host's PATH/);
+			expect(run("coding-vm/copy-tools.sh", ["--vm", "x;rm", "--dest", "/root/t"]).code).toBe(1);
+			expect(run("coding-vm/copy-tools.sh", ["--vm", "coder@vm", "--dest", "/root/../etc"]).code).toBe(1);
+		});
+	});
+
+	it("stops before changing anything when the host has not copied the tools yet", () => {
+		const r = run("coding-vm/provision.sh", ["--config", config("", "ZIMPOEN_VM_TEST_VALUES_ONLY=1\n")], {
+			PATH: `${asRoot}:${stubDir}:/usr/bin:/bin`,
+		});
+		expect(r.code).toBe(1);
+		expect(r.err).toMatch(/herdr is missing\. On the zimpoen host run: ops\/coding-vm\/copy-tools\.sh/);
+		expect(r.calls.filter((call) => !call.startsWith("id "))).toEqual([]);
 	});
 
 	it("leaves git with no credential helper and pushes rewritten to fail", () => {
