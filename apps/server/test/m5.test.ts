@@ -146,6 +146,7 @@ describe("the Inbox through the whole server", () => {
 			"approvals",
 			"tool-search",
 			"memory",
+			"bots",
 		]);
 		expect(await extensionsOf("health")).toStrictEqual(["profile", "health", "approvals", "tool-search", "memory"]);
 

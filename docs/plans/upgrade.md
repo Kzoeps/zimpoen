@@ -70,6 +70,10 @@ function decide(level: TrustLevel, s: Sensitivity): "allow" | "ask" | "deny" {
   - Refused during scheduled runs (rule 13).
 - Hub and spoke: `ask_agent` accepts bot ids; bots get no `ask_agent`.
 - Deleting a bot archives its conversation (kept in durable.sqlite) and removes its row; nothing else references it.
+- Built: the trust level is `ZIMPOEN_PA_TRUST` (open / normal / strict, default normal). Durable gives a tool no request
+  id, so rule 13 is checked by reading the current run's inputs (`LiveDoc.run.inputs`) and their request ids; a run with
+  any input whose id starts `routine:`, `daily:`, `briefing:`, `wrapup:` or `digest_*:` counts as scheduled
+  (`packages/extensions/src/scheduled-run.ts`). Routines must keep the `routine:` prefix for this to hold.
 
 ## 5. Phase 1b–1d
 

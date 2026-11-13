@@ -2,6 +2,7 @@ import { access, chmod, constants, mkdir, realpath, stat } from "node:fs/promise
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings } from "@assistant/extensions/schedule";
+import { isTrustLevel, type TrustLevel } from "@assistant/extensions/trust";
 import type { GoogleMode } from "@assistant/shared";
 import { isInside } from "./paths.ts";
 
@@ -109,6 +110,8 @@ export type Config = {
 	http: { host: "127.0.0.1"; port: number; publicHosts: readonly string[] };
 	/** `ASSISTANT_CHROMIUM_PATH`: the Chrome or Chromium that makes PDFs. Absent: the usual install paths are tried. */
 	chromiumPath?: string;
+	/** `ZIMPOEN_PA_TRUST`: whether the PA asks before creating or deleting a bot (PLAN upgrade §3). Absent: normal (asks). */
+	paTrust?: TrustLevel;
 };
 
 export type ConfigProblem = { setting: string; message: string };
@@ -211,6 +214,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 		...(nonEmpty(env.ASSISTANT_CHROMIUM_PATH) === undefined
 			? {}
 			: { chromiumPath: nonEmpty(env.ASSISTANT_CHROMIUM_PATH) }),
+		...parsePaTrust(env.ZIMPOEN_PA_TRUST, problem),
 	};
 
 	if (problems.length > 0) throw new ConfigError(problems);
@@ -649,4 +653,16 @@ function dedupe<T>(values: readonly T[]): T[] {
 
 function reason(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/** `ZIMPOEN_PA_TRUST`: open, normal (default) or strict. */
+function parsePaTrust(raw: string | undefined, problem: ReportProblem): { paTrust?: TrustLevel } {
+	const value = nonEmpty(raw);
+	if (value === undefined) return {};
+	if (isTrustLevel(value)) return { paTrust: value };
+	problem(
+		"ZIMPOEN_PA_TRUST",
+		`'${value}' is not valid. Use 'normal' (default: the PA asks before creating or deleting a bot), 'strict', or 'open' (it never asks; every use is logged).`,
+	);
+	return {};
 }

@@ -173,6 +173,12 @@ describe("parseConfig", () => {
 		expect(problemsOf({ ...owner })).toStrictEqual([]);
 	});
 
+	it("reads the PA's trust level, which is normal when unset", () => {
+		const owner = { ASSISTANT_OWNER_LOGIN: "a@b.c" };
+		expect(parseConfig(owner, context).paTrust).toBeUndefined();
+		expect(parseConfig({ ...owner, ZIMPOEN_PA_TRUST: "open" }, context).paTrust).toBe("open");
+	});
+
 	it("requires an owner login while authentication is on, which is the default", () => {
 		expect(problemsOf({})).toStrictEqual(["ASSISTANT_OWNER_LOGIN"]);
 		expect(parseConfig({ ASSISTANT_OWNER_LOGIN: "a@b.c" }, context).auth).toStrictEqual({
@@ -185,6 +191,7 @@ describe("parseConfig", () => {
 		["ASSISTANT_AUTH", { ASSISTANT_AUTH: "maybe" }],
 		["ASSISTANT_MODEL_MODE", { ...auth, ASSISTANT_MODEL_MODE: "gpt" }],
 		["ASSISTANT_PUSH_MODE", { ...auth, ASSISTANT_PUSH_MODE: "fcm" }],
+		["ZIMPOEN_PA_TRUST", { ...auth, ZIMPOEN_PA_TRUST: "trusting" }],
 		["ASSISTANT_GOOGLE_MODE", { ...auth, ASSISTANT_GOOGLE_MODE: "gmail" }],
 		["ASSISTANT_PUSH_SUBJECT", { ...auth, ASSISTANT_PUSH_SUBJECT: "assistant@example.com" }],
 		["ASSISTANT_PUSH_SUBJECT", { ...auth, ASSISTANT_PUSH_SUBJECT: "http://example.com" }],

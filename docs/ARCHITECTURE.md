@@ -135,10 +135,21 @@ display-only card. Specialists can't reach each other. The Inbox reaches the PA 
 
 | Agent | Extensions |
 |---|---|
-| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `memory`, `tool_search` |
+| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `memory`, `tool_search`, `bots` |
 | `inbox` | `inbox`, `memory-read` |
 | `health` | `health`, `approvals`, `memory`, `tool_search` |
 | `accountant` | `ledger`, `splits`, `documents`, `files`, `approvals`, `memory`, `tool_search`, code mode |
+| `bot:<slug>` | the presets the PA chose (`tasks`, `health`, `ledger`, `splits`, `documents`, `web`, `memory`, `codemode`), `approvals`, `tool_search` |
+
+**Bots (upgrade §4).** The PA's `create_bot`, `delete_bot` and `list_bots` (deferred) manage up to 8 specialist bots. A
+`bots_bot` row is authoritative: at every start the server gives each row a conversation (agent id `bot:<slug>`, built
+by `botAgentDef` in `apps/server/src/agents.ts`) and archives the conversation of a bot whose row is gone (its agent key
+is rewritten so it is never adopted again; durable.sqlite keeps it). Creating or deleting follows the PA's trust level
+(`ZIMPOEN_PA_TRUST`, `decide()` in `packages/extensions/src/trust.ts`): `normal` (default) and `strict` ask through the
+approvals flow (actions `spawn_bot`, `retire_bot`), `open` runs and logs. Both tools refuse during a scheduled run (rule
+13): `isScheduledRun()` (`packages/extensions/src/scheduled-run.ts`) reads the run's inputs from `LiveDoc` and refuses
+when one has a scheduled request id (`routine:`, `daily:`, `briefing:`, `wrapup:`, `digest_*:`). `ask_agent` reaches bots
+by id; bots have no `ask_agent`.
 
 Code mode runs scripts in a QuickJS sandbox with no network, no files and no model calls. Each script has a time limit
 (30 s by default, 2 minutes at most).
@@ -318,6 +329,7 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 | documents | `document_series`, `document_numbers`, `documents_made`; the retired invoice module's `invoice_profile`, `invoice_issued`, `invoices_call` are kept |
 | inbox | `inbox_account`, `inbox_message` + FTS5, `inbox_event`, `inbox_rule`, `inbox_suggestion`, `inbox_digest`, `inbox_read_failure`, `inbox_state`, `inbox_call` |
 | delegate | `delegate_ask` |
+| bots | `bots_bot`, `bots_call` |
 
 Conventions:
 

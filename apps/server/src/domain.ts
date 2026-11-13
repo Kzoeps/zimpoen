@@ -3,6 +3,9 @@ import {
 	type AccountantDeps,
 	type ApprovalService,
 	approvalsModule,
+	type BotPreset,
+	type BotsDeps,
+	botsModule,
 	type CodemodeLimits,
 	closingYesWindow,
 	closingYesWindowOnAsk,
@@ -83,6 +86,11 @@ export type Domain = {
 	 * Approve): the suggestion queue is its only way to the PA, and server code owns that.
 	 */
 	inboxExtensions: Extension[];
+	/**
+	 * What a bot the PA created selects (PLAN upgrade §4): the extensions of its presets, the approval hook (a preset's
+	 * deletes stay guarded) and `tool_search`. Never `delegate`, `inbox`, `files`, `daily` or `bots`: the presets cannot name them.
+	 */
+	botExtensions(tools: readonly BotPreset[]): Extension[];
 	/** The Inbox's accounts, as Settings shows and changes them, and the owner's answers to what it suggests. */
 	inbox: InboxFacade;
 	/** What the agents spent, sampled from Durable into days and weeks, and the weekly token limits the daily jobs obey (M8). */
@@ -160,6 +168,8 @@ export type DomainOptions = {
 	delegate?: DelegateDeps;
 	/** Web search and page reading for the PA and the Accountant. Omitted: they have no web tools. */
 	web?: WebDeps;
+	/** How bots are made and retired, and the PA's trust level. Omitted: the bot tools say bots are not set up. */
+	bots?: BotsDeps;
 	/** Where a failure the work goes on without is said (the server's log). */
 	warn?: (message: string) => void;
 };
@@ -188,6 +198,7 @@ export const MODULES: readonly DomainModule[] = [
 	memoryModule,
 	usageModule,
 	webModule,
+	botsModule,
 ];
 
 export function createDomain(options: DomainOptions): Domain {
@@ -222,6 +233,7 @@ export function createDomain(options: DomainOptions): Domain {
 		...(options.inbox === undefined ? {} : { inbox: options.inbox }),
 		...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 		...(options.warn === undefined ? {} : { warn: options.warn }),
+		...(options.bots === undefined ? {} : { bots: options.bots }),
 		// The daily jobs ask this before they spend tokens; the module is built from `deps`, so it is looked up when asked.
 		budget: { check: (agent) => usageModule.service(deps).check(agent) },
 	};
@@ -247,6 +259,7 @@ export function createDomain(options: DomainOptions): Domain {
 	const memory = memoryModule.extension(deps);
 	const memoryRead = memoryModule.readOnlyExtension(deps);
 	const usage = usageModule.service(deps);
+	const bots = botsModule.extension(deps);
 	const guard = approvalsModule.extension(deps);
 	const toolSearch = createToolSearchExtension();
 	// `models: false` leaves out `models.classify()` and `models.generateImages()`: they are paid calls to a model provider,
@@ -285,11 +298,25 @@ export function createDomain(options: DomainOptions): Domain {
 			guard,
 			toolSearch,
 			codemode,
+			bots,
 		],
-		paExtensions: [tasks, followups, people, daily, files, documents, web, delegate, guard, toolSearch, memory],
+		paExtensions: [tasks, followups, people, daily, files, documents, web, delegate, guard, toolSearch, memory, bots],
 		healthExtensions: [health, guard, toolSearch, memory],
 		accountantExtensions: [ledger, splits, documents, files, web, guard, toolSearch, codemode, memory],
 		inboxExtensions: [inbox, memoryRead],
+		botExtensions: (tools) => {
+			const byPreset: Record<BotPreset, Extension> = {
+				tasks,
+				health,
+				ledger,
+				splits,
+				documents,
+				web,
+				memory,
+				codemode,
+			};
+			return [...tools.map((preset) => byPreset[preset]), guard, toolSearch];
+		},
 		usage,
 		inbox: {
 			settings: () => inboxModule.accounts(deps).settings(),
