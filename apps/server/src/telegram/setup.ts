@@ -49,7 +49,8 @@ export function createPaGateway(deps: { harness: Harness; db: AppDb; approvals: 
 		async send(content, requestId) {
 			const id = paConversation();
 			const approved = await deps.approvals.tryYes(id, content, requestId);
-			if (approved !== undefined) return { submissionId: approved.submissionId, approved: true };
+			if (approved !== undefined)
+				return { submissionId: approved.submissionId, approved: true, summary: approved.summary };
 			const conversation = await deps.harness.conversation(asConversationId(id), context);
 			if (conversation === undefined) throw new Error(`Conversation ${id} is missing from durable.sqlite.`);
 			const submission = await conversation.submit({ type: "input", content, requestId }, context);

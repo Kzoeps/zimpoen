@@ -46,7 +46,9 @@ function fakePa(answer = "Done.") {
 	const pa: PaGateway = {
 		async send(content, requestId) {
 			sends.push({ content, requestId });
-			return { submissionId: sends.length, approved: content === "YES" };
+			return content === "YES"
+				? { submissionId: sends.length, approved: true, summary: "Create the routine 'Tasks check'" }
+				: { submissionId: sends.length, approved: false };
 		},
 		reply: async () => answer,
 	};
@@ -122,7 +124,7 @@ describe("telegram messages", () => {
 		const { bridge, sent, sends, db } = await boundBridge();
 		await bridge.handle(message(11, OWNER, { text: "YES" }));
 		expect(sends[0]?.requestId).toBe("tg:11");
-		expect(sent).toEqual([{ chatId: OWNER, text: "Approved." }]);
+		expect(sent).toEqual([{ chatId: OWNER, text: "Approved: Create the routine 'Tasks check'" }]);
 		expect(db.get("SELECT * FROM telegram_reply")).toBeUndefined();
 	});
 

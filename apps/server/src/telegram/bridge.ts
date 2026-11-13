@@ -8,9 +8,9 @@ import { MAX_VOICE_BYTES, MAX_VOICE_SECONDS, TRANSCRIPT_LABEL, type Transcriber,
 export type PaGateway = {
 	/**
 	 * An owner message, once per `requestId`. A bare YES that answers the waiting approval is handled by the approval
-	 * service (`approved: true`) and starts no run.
+	 * service (`approved: true`, with the approved action's `summary`) and starts no run.
 	 */
-	send(content: string, requestId: string): Promise<{ submissionId: number; approved: boolean }>;
+	send(content: string, requestId: string): Promise<{ submissionId: number; approved: boolean; summary?: string }>;
 	/** The PA's final text for the run, or a short sentence saying why there is none. Waits for the run to end. */
 	reply(submissionId: number): Promise<string>;
 };
@@ -190,9 +190,10 @@ export function createTelegramBridge(options: TelegramBridgeOptions): TelegramBr
 
 		const content = await contentOf(message, bound);
 		if (content === undefined) return;
-		const { submissionId, approved } = await pa.send(content, `tg:${update.update_id}`);
+		const { submissionId, approved, summary } = await pa.send(content, `tg:${update.update_id}`);
 		if (approved) {
-			await say(bound, "Approved.");
+			// The owner may never have seen the card in Telegram: say what the YES approved.
+			await say(bound, summary === undefined ? "Approved." : `Approved: ${summary}`);
 			return;
 		}
 		const row = { updateId: update.update_id, chatId: bound, submissionId };
