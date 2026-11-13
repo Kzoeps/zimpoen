@@ -101,6 +101,36 @@ Stop the server before editing `app.sqlite` by hand.
 that defined it, or add a migration. **Retry** doesn't help here. See
 [design-notes](design-notes.md#changing-a-task-that-may-be-sleeping).
 
+## Broker
+
+`zimpoen-broker` (`apps/server/dist/broker.js`, unit `ops/systemd/zimpoen-broker.service`) runs credential-broker
+actions as its own user, with secrets from `systemd-creds`. The server talks to it over `/run/zimpoen-broker/broker.sock`
+when `ZIMPOEN_CRED_BROKER=socket`. In development use `ZIMPOEN_CRED_BROKER=inprocess` (or `on`) and no broker is needed.
+
+Who may connect: Node can't read `SO_PEERCRED`, so the socket's directory is the check. It is `0750`
+`zimpoen-broker:zimpoen-broker`, the socket `0660`, and the broker refuses to start if the directory is open to others.
+Only the broker's user and the members of its group (the server's user) get in.
+
+```sh
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin zimpoen-broker
+sudo usermod -aG zimpoen-broker <server user>          # then restart assistant-server
+sudo install -d -m 0750 -o root -g zimpoen-broker /etc/zimpoen-broker
+sudo install -m 0640 -o root -g zimpoen-broker policy.json /etc/zimpoen-broker/policy.json
+sudo install -d -m 0700 /etc/credstore.encrypted
+sudo systemd-creds encrypt --name=gh-token - /etc/credstore.encrypted/gh-token   # type the value, Ctrl-D
+# edit the CHANGE lines (WorkingDirectory, Node path, one LoadCredentialEncrypted= per secretRef), then:
+sudo install -m 0644 ops/systemd/zimpoen-broker.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now zimpoen-broker
+# /etc/assistant/assistant.env: ZIMPOEN_CRED_BROKER=socket
+sudo systemctl restart assistant-server
+```
+
+The server fetches the policy from the broker once at start: after editing the policy, restart `zimpoen-broker`, then
+`assistant-server`. Runs are logged in `/var/lib/zimpoen-broker/audit.jsonl`; the server's decisions stay in
+`<data>/broker-audit.jsonl`. Settings: `ZIMPOEN_BROKER_SOCKET`, `ZIMPOEN_CRED_POLICY`, `ZIMPOEN_BROKER_AUDIT`,
+`ZIMPOEN_BROKER_SECRETS` (`systemd-creds`, or `file:/abs/dir` for testing). Wire format: one line of JSON each way,
+requests up to 64 KiB, replies up to 8 MiB, a request must arrive within 5 s.
+
 ## Files
 
 Uploads are in `<data>/files/<yyyy-mm>/`, mode 0600, indexed by path in `files_index`. Nothing deletes them. A file

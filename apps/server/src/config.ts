@@ -118,9 +118,11 @@ export type Config = {
 	 */
 	http: { host: "127.0.0.1"; port: number; publicHosts: readonly string[] };
 	/**
-	 * The credential broker (`ZIMPOEN_CRED_BROKER`, default `off`: no tool, nothing read). When on: the owner-written policy
-	 * (`ZIMPOEN_CRED_POLICY`, default `<data>/secrets/broker/policy.json`), the secret files (`<data>/secrets/broker/creds`)
-	 * and the append-only audit log (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`).
+	 * The credential broker (`ZIMPOEN_CRED_BROKER=off|inprocess|socket`, `on` meaning `inprocess`; default `off`: no tool,
+	 * nothing read). In process: the owner-written policy (`ZIMPOEN_CRED_POLICY`, default
+	 * `<data>/secrets/broker/policy.json`) and the secret files (`<data>/secrets/broker/creds`). Socket: the separate
+	 * `zimpoen-broker` process at `ZIMPOEN_BROKER_SOCKET` (default `/run/zimpoen-broker/broker.sock`) holds both. Either
+	 * way the server appends its decisions to `ZIMPOEN_CRED_AUDIT` (default `<data>/broker-audit.jsonl`).
 	 */
 	credBroker: CredBrokerConfig;
 	/** `ASSISTANT_CHROMIUM_PATH`: the Chrome or Chromium that makes PDFs. Absent: the usual install paths are tried. */
@@ -131,7 +133,10 @@ export type Config = {
 
 export type CredBrokerConfig =
 	| { mode: "off" }
-	| { mode: "on"; policyPath: string; secretsDir: string; auditPath: string };
+	| { mode: "inprocess"; policyPath: string; secretsDir: string; auditPath: string }
+	| { mode: "socket"; socketPath: string; auditPath: string };
+
+export const DEFAULT_BROKER_SOCKET = "/run/zimpoen-broker/broker.sock";
 
 export type ConfigProblem = { setting: string; message: string };
 
@@ -691,12 +696,19 @@ function parseHeight(raw: string | undefined, problem: ReportProblem): { heightC
 	return { heightCm: height };
 }
 
-/** `ZIMPOEN_CRED_BROKER=off|on` and its paths. Off by default: nothing about the broker is read or registered. */
+/**
+ * `ZIMPOEN_CRED_BROKER=off|inprocess|socket` (`on` is kept as `inprocess`) and its paths. Off by default: nothing about
+ * the broker is read or registered.
+ */
 function parseCredBroker(env: Env, dataDir: string, problem: ReportProblem): CredBrokerConfig {
-	const mode = nonEmpty(env.ZIMPOEN_CRED_BROKER) ?? "off";
+	const raw = nonEmpty(env.ZIMPOEN_CRED_BROKER) ?? "off";
+	const mode = raw === "on" ? "inprocess" : raw;
 	if (mode === "off") return { mode: "off" };
-	if (mode !== "on") {
-		problem("ZIMPOEN_CRED_BROKER", `'${mode}' is not valid. Use 'off' (default: no broker) or 'on'.`);
+	if (mode !== "inprocess" && mode !== "socket") {
+		problem(
+			"ZIMPOEN_CRED_BROKER",
+			`'${raw}' is not valid. Use 'off' (default: no broker), 'inprocess' (development; 'on' means the same) or 'socket' (the zimpoen-broker service).`,
+		);
 		return { mode: "off" };
 	}
 	const pathOf = (setting: string, fallback: string): string => {
@@ -705,11 +717,15 @@ function parseCredBroker(env: Env, dataDir: string, problem: ReportProblem): Cre
 		if (!isAbsolute(raw)) problem(setting, `'${raw}' is not an absolute path.`);
 		return resolve(raw);
 	};
+	const auditPath = pathOf("ZIMPOEN_CRED_AUDIT", join(dataDir, "broker-audit.jsonl"));
+	if (mode === "socket") {
+		return { mode, socketPath: pathOf("ZIMPOEN_BROKER_SOCKET", DEFAULT_BROKER_SOCKET), auditPath };
+	}
 	return {
-		mode: "on",
+		mode,
 		policyPath: pathOf("ZIMPOEN_CRED_POLICY", join(dataDir, "secrets", "broker", "policy.json")),
 		secretsDir: join(dataDir, "secrets", "broker", "creds"),
-		auditPath: pathOf("ZIMPOEN_CRED_AUDIT", join(dataDir, "broker-audit.jsonl")),
+		auditPath,
 	};
 }
 
