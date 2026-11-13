@@ -37,6 +37,7 @@ import {
 	type ReconcileReport,
 	type RecoveryReport,
 	type RefreshReport,
+	routinesModule,
 	type ScheduleSettings,
 	splitsModule,
 	tasksModule,
@@ -123,6 +124,8 @@ export type RepairReport = {
 	inbox: { start: InboxStart; timers: ReconcileReport };
 	/** Answers that came while nobody waited for them, posted to the PA's thread. */
 	delegate: Awaited<ReturnType<DelegateService["recover"]>>;
+	/** Timers of the agent-created routines. */
+	routines: ReconcileReport;
 };
 
 export type SweepReport = {
@@ -134,6 +137,8 @@ export type SweepReport = {
 	daily: ReconcileReport;
 	inbox: { accounts: RefreshReport; timers: ReconcileReport; suggestions: number };
 	delegate: Awaited<ReturnType<DelegateService["recover"]>>;
+	/** Timers of the agent-created routines. */
+	routines: ReconcileReport;
 };
 
 export type DomainOptions = {
@@ -188,6 +193,7 @@ export const MODULES: readonly DomainModule[] = [
 	memoryModule,
 	usageModule,
 	webModule,
+	routinesModule,
 ];
 
 export function createDomain(options: DomainOptions): Domain {
@@ -239,6 +245,7 @@ export function createDomain(options: DomainOptions): Domain {
 	const documents = documentsModule.extension(deps);
 	const inbox = inboxModule.extension(deps);
 	const delegate = delegateModule.extension(deps);
+	const routines = routinesModule.extension(deps);
 	// The PA and the Accountant read the public web; the Inbox never does: it reads untrusted mail, and a page fetch is a
 	// way to send what it read somewhere.
 	const web = webModule.extension(deps);
@@ -279,6 +286,7 @@ export function createDomain(options: DomainOptions): Domain {
 			documents,
 			inbox,
 			delegate,
+			routines,
 			web,
 			memory,
 			memoryRead,
@@ -286,7 +294,20 @@ export function createDomain(options: DomainOptions): Domain {
 			toolSearch,
 			codemode,
 		],
-		paExtensions: [tasks, followups, people, daily, files, documents, web, delegate, guard, toolSearch, memory],
+		paExtensions: [
+			tasks,
+			followups,
+			people,
+			daily,
+			files,
+			documents,
+			web,
+			delegate,
+			routines,
+			guard,
+			toolSearch,
+			memory,
+		],
 		healthExtensions: [health, guard, toolSearch, memory],
 		accountantExtensions: [ledger, splits, documents, files, web, guard, toolSearch, codemode, memory],
 		inboxExtensions: [inbox, memoryRead],
@@ -319,6 +340,7 @@ export function createDomain(options: DomainOptions): Domain {
 				// The accounts first (a sign-in saved while the server was off), then their timers.
 				inbox: { start: await inboxModule.start(deps), timers: await inboxModule.scheduler(deps).reconcile() },
 				delegate: await delegateModule.service(deps).recover(),
+				routines: await routinesModule.scheduler(deps).reconcile(),
 			};
 			// Last, and before Durable runs anything: the first reading of an agent only copies its totals, so it must come
 			// before the first run that can spend. A reading that fails skips that agent and says nothing: usage is not worth a start.
@@ -334,6 +356,7 @@ export function createDomain(options: DomainOptions): Domain {
 				daily: await dailyModule.scheduler(deps).reconcile(),
 				inbox: await sweepInbox(),
 				delegate: await delegateModule.service(deps).recover(),
+				routines: await routinesModule.scheduler(deps).reconcile(),
 			};
 			// What was spent since the last reading is dated to the day it is read: every ten minutes keeps a day's edge sharp enough.
 			await usage.sample();

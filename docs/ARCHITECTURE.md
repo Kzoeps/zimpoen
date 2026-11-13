@@ -136,7 +136,7 @@ display-only card. Specialists can't reach each other. The Inbox reaches the PA 
 
 | Agent | Extensions |
 |---|---|
-| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `memory`, `tool_search` |
+| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `routines`, `memory`, `tool_search` |
 | `inbox` | `inbox`, `memory-read` |
 | `health` | `health`, `approvals`, `memory`, `tool_search` |
 | `accountant` | `ledger`, `splits`, `documents`, `files`, `approvals`, `memory`, `tool_search`, code mode |
@@ -213,11 +213,21 @@ timer.**
 | Birthday (yearly) | `app.birthday` | `remind_wait → remind → check_wait → check`, then next year's cycle |
 | Daily jobs | `app.daily` | `wait → run` |
 | Gmail sync (per account) | `app.inbox-sync` | `wait → run` |
+| Routine | `app.routine` | `wait → run` |
 
 **Daily jobs:** morning briefing (07:30), evening wrap-up (21:00), inbox digests (12:30, 19:00). Times are settings
 (`schedule_daily`). At run time, code gathers facts from every module's provider and sends them to the agent as one
 request. With nothing to report it posts a card and makes no model call. A briefing that missed its time while the server
 was down still runs until 11:00 (wrap-up until midnight, digests within 2 h). Each day runs at most once.
+
+**Routines:** agent-proposed, owner-approved (`propose_routine` → Approve/YES → the server creates it; `list_routines` and
+`cancel_routine` see only the calling conversation; PA only for now). Daily or weekly at HH:MM
+in the owner's zone, or every N ≥ 1 hours; at most 20 active. A run is an `ask` with request id `routine:<id>:<slot ISO>`,
+so a slot runs at most once. After downtime only the newest due slot runs; one more than 6 h late is skipped. A routine
+whose agent is over its weekly token limit skips the slot. Rule 13: `isScheduledRun(harness, conversationId)`
+(`packages/extensions/src/scheduled-run.ts`) is true while a `routine:` or daily-job input (parsed by `parseScheduledRequestId`) is placed in the
+conversation's run; propose/cancel routine tools refuse then, and other self-propagating tools (bots, broker) should
+call it too.
 
 **Gmail sync:** first read is the last 14 days (≤ 1,000 mails), then `history.list`. Failures back off exponentially
 (≤ 1 h). A refused token marks the account `needs_reconnect` and stops its timer.
@@ -338,6 +348,7 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 | inbox | `inbox_account`, `inbox_message` + FTS5, `inbox_event`, `inbox_rule`, `inbox_suggestion`, `inbox_digest`, `inbox_read_failure`, `inbox_state`, `inbox_call` |
 | delegate | `delegate_ask` |
 | telegram (server, not a module) | `telegram_state` (poll offset, bound chat, one-time start code), `telegram_reply` |
+| routines | `routines_routine`, `routines_call` |
 
 Conventions:
 

@@ -80,11 +80,12 @@ run `whisper-cli` (whisper.cpp) with fixed argv, put only the labelled transcrip
 Config: `ZIMPOEN_TELEGRAM=on`, token in `<data>/secrets/telegram.json`, `ZIMPOEN_WHISPER_BIN`, `ZIMPOEN_WHISPER_MODEL`.
 Off by default.
 
-**Routines (1c).** Tools `create_routine`, `list_routines`, `cancel_routine` (PA, and bots that have the preset).
+**Routines (1c).** Tools `propose_routine` (approval; the server then creates it), `list_routines`, `cancel_routine` (PA, and bots that have the preset).
 Schedule: daily at HH:MM, weekly on days at HH:MM, or every N hours (≥ 1 h). A run sends the routine's message as an
 `ask` with request id `routine:<id>:<slot>` so one slot runs at most once across restarts. After downtime only the newest
 due slot runs; a slot more than 6 h late is skipped. Same DB-authoritative timer pattern as §5.4 (gen + reconcile).
 During a routine run, routine/bot/broker tools refuse (rule 13). Cap 20 active routines.
+Creation goes through approval (`propose_routine`, Approve/YES), and a slot whose agent is over its weekly token limit is skipped.
 
 **Credential broker (1d).** `ZIMPOEN_CRED_BROKER=off|on`, default off: no tool registered, no socket. When on, phase 1
 runs the broker in-process behind an interface that a separate `zbroker` process implements later (§9):

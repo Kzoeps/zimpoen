@@ -89,6 +89,10 @@ export function renderSections(sections: readonly DailySection[]): string {
 /** The first words of each job's request. The hook that closes the YES window (see `daily/index.ts`) recognises a daily request by them. */
 export const REQUEST_HEADS: readonly string[] = [...new Set(DAILY_JOBS.map((job) => job.request.head))];
 
+/** The request id of a daily job's run on a local day: the question to the model, or (`empty`) the card that stands alone. */
+export const dailyRequestId = (job: string, date: string, empty = false): string =>
+	`${job}:${date}${empty ? ":empty" : ""}`;
+
 /** Whether the last message of a request to the model is a daily request: the first round of the run that a briefing or wrap-up starts. */
 export function endsWithDailyRequest(messages: readonly { role: string; content: unknown }[]): boolean {
 	const last = messages.at(-1);
@@ -159,7 +163,7 @@ export async function deliver(
 		await deps.post(target.conversationId, {
 			kind: DAILY_ENTRY_KIND,
 			data: data as unknown as JsonValue,
-			requestId: `${job.id}:${target.date}:empty`,
+			requestId: dailyRequestId(job.id, target.date, true),
 		});
 		// A wrap-up that could not be asked still has its journal day: the owner may answer it unasked, and the PA's prompt names it.
 		if (job.id === "wrapup" && plan.degraded !== undefined) {
@@ -172,7 +176,7 @@ export async function deliver(
 	if (job.id === "wrapup") store.recordWrapupAsked(db, target.date, renderSections(plan.sections), target.firedAt);
 	await deps.ask(target.conversationId, {
 		content,
-		requestId: `${job.id}:${target.date}`,
+		requestId: dailyRequestId(job.id, target.date),
 		entry: { kind: DAILY_ENTRY_KIND, data: data as unknown as JsonValue },
 	});
 	return { asked: true };
