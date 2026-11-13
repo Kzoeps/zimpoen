@@ -75,6 +75,7 @@ export const ASKED_AGENT_LABEL: Record<Exclude<AgentId, "pa">, string> = {
 	inbox: "the Inbox",
 	health: "the Health agent",
 	accountant: "the Accountant",
+	cto: "the CTO",
 };
 
 /** How a sentence names an agent that was asked: a built-in one by its label, a bot by its slug. */

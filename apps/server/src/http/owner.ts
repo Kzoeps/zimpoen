@@ -2,9 +2,7 @@ import type { AppDb } from "@assistant/db";
 import { birthdays, MemoryError, memoryStore, peopleStore, type UsageService } from "@assistant/extensions";
 import {
 	type ActivityResponse,
-	AGENT_IDS,
 	type AnyAgentId,
-	isAgentId,
 	isAnyAgentId,
 	type MemoryFactResponse,
 	type MemoryResponse,
@@ -103,8 +101,8 @@ export function createOwnerApp(deps: OwnerDeps): Hono {
 			total,
 			counts: memoryStore.countsByScope(db, [
 				"shared",
-				...AGENT_IDS,
-				...deps.agents.map((agent) => agent.id).filter((id) => !isAgentId(id)),
+				// The agents this server runs: a built-in that is off (the CTO) has no scope to count.
+				...deps.agents.map((agent) => agent.id),
 			] satisfies MemoryScope[]),
 		};
 		return c.json(body);
