@@ -14,6 +14,7 @@ Sources: `/tmp/zimpoen-vs-durable-bots.md`, `/tmp/zimpoen-cred-vault.md`, `/tmp/
 | 1b | Telegram bridge for the PA, voice notes via local whisper.cpp | built, off until configured |
 | 1c | Agent-created recurring routines (slot-keyed, at most once) | built |
 | 1d | Credential broker + per-project trust levels | built, `ZIMPOEN_CRED_BROKER=off` by default |
+| 2b | Broker split: `zimpoen-broker` process over a unix socket, systemd-creds | built (`ZIMPOEN_CRED_BROKER=socket`), not yet run on the host |
 | 2 | Dedicated coding VM running herdr-lead; PA hands coding work to it | design (§6) |
 | 3 | CTO bot that drives herdr-lead; push/merge/deploy follow the project's trust level | design (§7) |
 | 4 | Sandboxed shell (gVisor container per agent, egress rules) | design sketch (§8) |
@@ -97,8 +98,9 @@ due slot runs; a slot more than 6 h late is skipped. Same DB-authoritative timer
 During a routine run, routine/bot/broker tools refuse (rule 13). Cap 20 active routines.
 Creation goes through approval (`propose_routine`, Approve/YES), and a slot whose agent is over its weekly token limit is skipped.
 
-**Credential broker (1d).** `ZIMPOEN_CRED_BROKER=off|on`, default off: no tool registered, no socket. When on, phase 1
-runs the broker in-process behind an interface that a separate `zbroker` process implements later (§9):
+**Credential broker (1d).** `ZIMPOEN_CRED_BROKER=off|inprocess|socket` (`on` = `inprocess`), default off: no tool
+registered, no socket. `inprocess` runs the broker inside the server; `socket` uses the separate `zimpoen-broker` process
+(§9). Both implement:
 
 ```ts
 interface CredBroker {
@@ -141,7 +143,13 @@ interface CredBroker {
 
 ## 9. What is left after phase 1
 
-- Broker as a separate systemd unit under its own user with `systemd-creds` storage (phase 1 ships the interface and an
-  in-process implementation with a file-backed fake store for tests).
+- ~~Broker as a separate systemd unit~~ built: `apps/server/src/broker-main.ts` (`dist/broker.js`), unit
+  `ops/systemd/zimpoen-broker.service` (`User=zimpoen-broker`, `LoadCredentialEncrypted=`, hardening), protocol in
+  `packages/extensions/src/broker/socket.ts` (newline JSON, 64 KiB requests, 8 MiB replies, 5 s to send a request, 8
+  connections). Peer check: Node can't read `SO_PEERCRED`, so access is the socket directory (`/run/zimpoen-broker`,
+  0750, group = broker group, server user a member; startup refuses a world-accessible directory). A real peer-uid check
+  needs a native addon or a different language; open. The server still decides trust levels: the broker trusts any
+  connecting group member to have asked, so approval enforcement lives in the server only (open). Not yet run on a real
+  host with systemd-creds.
 - Web UI for bots (sidebar shows them via `/agents`; a settings page for trust levels is not built).
 - Real Telegram, real whisper.cpp model and real broker credentials were never used: tested against fakes.

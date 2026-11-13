@@ -792,7 +792,7 @@ async function warnIfNoOpenAiLogin(logger: ServerLogger, config: Config, runtime
 	}
 }
 
-/** The credential broker when `ZIMPOEN_CRED_BROKER=on` (a bad policy stops the start), nothing otherwise. */
+/** The credential broker unless `ZIMPOEN_CRED_BROKER=off` (a bad policy or an unreachable broker stops the start). */
 async function brokerFor(config: Config, now: () => number, warn: (message: string) => void) {
 	const broker = await loadCredBroker(config.credBroker, now, warn);
 	return broker === undefined ? {} : { broker };

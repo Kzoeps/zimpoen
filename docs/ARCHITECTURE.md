@@ -136,7 +136,7 @@ display-only card. Specialists can't reach each other. The Inbox reaches the PA 
 
 | Agent | Extensions |
 |---|---|
-| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `routines`, `memory`, `tool_search`, `bots`, `broker` (only with `ZIMPOEN_CRED_BROKER=on`) |
+| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `routines`, `memory`, `tool_search`, `bots`, `broker` (unless `ZIMPOEN_CRED_BROKER=off`) |
 | `inbox` | `inbox`, `memory-read` |
 | `health` | `health`, `approvals`, `memory`, `tool_search` |
 | `accountant` | `ledger`, `splits`, `documents`, `files`, `approvals`, `memory`, `tool_search`, code mode |
@@ -324,7 +324,12 @@ neither); only `[Voice note transcript] …` reaches the thread. No agent has a 
 
 ### 5.7 Credential broker (phase 1d)
 
-`ZIMPOEN_CRED_BROKER=off|on`, default `off`: no tool, no approval action, nothing read. When `on`, the PA gets
+`ZIMPOEN_CRED_BROKER=off|inprocess|socket` (`on` means `inprocess`), default `off`: no tool, no approval action,
+nothing read. `inprocess` runs the broker inside the server (development). `socket` uses the separate `zimpoen-broker`
+process (`apps/server/src/broker-main.ts`, unit `ops/systemd/zimpoen-broker.service`, own user, secrets from
+`systemd-creds`) through `createSocketBroker` (`packages/extensions/src/broker/socket.ts`): one line of JSON per request
+and reply, size and time capped; the server fetches the policy from the broker at start. Access to the socket is its
+0750 directory (Node has no SO_PEERCRED); see docs/OPS.md "Broker". Otherwise the PA gets
 `cred_run({ project, credId, action, params })` (module `packages/extensions/src/broker/`, server side
 `apps/server/src/broker.ts`). It runs a fixed action from an owner-written policy with a credential the agent never sees;
 there is no `get_secret`.
@@ -335,8 +340,9 @@ there is no `get_secret`.
   timeoutMs, strictDeny?, allowDashParams? }]`. `argv[0]` is absolute; `{name}` placeholders must be declared and match
   their regex in full. A value starting with `-` is refused unless `allowDashParams` (it would become an option). The env
   name may not be reserved (`PATH`, `LANG`, `HOME`, `LD_*`, `GIT_*`, ...).
-- **Secrets:** one file per `secretRef` in `<data>/secrets/broker/creds/` (dir 0700, files 0600, at least 8 characters;
-  refused otherwise).
+- **Secrets:** in process, one file per `secretRef` in `<data>/secrets/broker/creds/` (dir 0700, files 0600, at least 8
+  characters; refused otherwise). In the broker service, `$CREDENTIALS_DIRECTORY/<secretRef>` from
+  `LoadCredentialEncrypted=`.
 - **Decision:** `decide(trust, sensitivity)` in `packages/extensions/src/trust.ts` (plan §3). `allow` runs now; `ask`
   proposes an approval (`cred_exec` target) and the server runs it on Approve/YES, after checking the current policy
   again; `deny` refuses.
@@ -346,7 +352,8 @@ there is no `get_secret`.
 - **Rule 8:** `broker_call` keyed by tool call id. A replay returns the stored result; a run interrupted by a crash is
   reported as "may have run", never run again. Approved runs get the same row keyed `approval:<id>`, so startup recovery
   never repeats one either.
-- **Audit:** append-only JSONL (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`), decisions and runs, no secret values.
+- **Audit:** append-only JSONL (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`), decisions and runs, no secret
+  values. With `socket`, runs go to the broker's own log (`ZIMPOEN_BROKER_AUDIT`) and the server's file keeps decisions.
 - **Scheduled runs:** refused when the current run answers a `routine:`/`daily:` request (or a daily job's `<job>:<date>`),
   and when no current input can be found.
 
