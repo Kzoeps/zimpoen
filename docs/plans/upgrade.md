@@ -14,12 +14,13 @@ Sources: `/tmp/zimpoen-vs-durable-bots.md`, `/tmp/zimpoen-cred-vault.md`, `/tmp/
 | 1b | Telegram bridge for the PA, voice notes via local whisper.cpp | built, off until configured |
 | 1c | Agent-created recurring routines (slot-keyed, at most once) | built |
 | 1d | Credential broker + per-project trust levels | built, `ZIMPOEN_CRED_BROKER=off` by default |
+| 1e | Web UI: Bots page (list/create/delete) and Settings → Trust levels | built |
 | 2 | Dedicated coding VM running herdr-lead; PA hands coding work to it | design (§6) |
 | 3 | CTO bot that drives herdr-lead; push/merge/deploy follow the project's trust level | design (§7) |
 | 4 | Sandboxed shell (gVisor container per agent, egress rules) | design sketch (§8) |
 | 5 | Computer-use VMs | design sketch (§8) |
 
-Bots (1a) and routines (1c) have no feature flag: their tools are always installed, and each creation needs the owner's approval (bots: per `ZIMPOEN_PA_TRUST`).
+Bots (1a) and routines (1c) have no feature flag: their tools are always installed, and each creation needs the owner's approval (bots: per the PA's trust level, set in Settings or by `ZIMPOEN_PA_TRUST`).
 
 Why this order: 1b and 1c add reach with no new attack surface beyond one chat channel. 1a needs the trust model that
 1d defines, but only for its own approval step, so both ship in phase 1. 2 and 3 depend on 1d (secrets never enter the
@@ -75,7 +76,7 @@ function decide(level: TrustLevel, s: Sensitivity): "allow" | "ask" | "deny" {
 - Hub and spoke: `ask_agent` accepts bot ids; bots get no `ask_agent`.
 - Deleting a bot aborts its run and tasks, archives its conversation (kept in durable.sqlite), removes its rows, and
   clears its memory scope and weekly limit, so a later bot with the same slug starts clean.
-- Built: the trust level is `ZIMPOEN_PA_TRUST` (open / normal / strict, default normal; strict equals normal for bots
+- Built: the trust level is the owner's choice in Settings → Trust levels, else `ZIMPOEN_PA_TRUST` (open / normal / strict, default normal; strict equals normal for bots
   until a policy can deny). Durable gives a tool no request id, so rule 13 reads the conversation's placed inputs and
   parses their request ids with the one parser in `packages/extensions/src/scheduled-run.ts` (`routine:<id>:<slot>`, or
   `<daily job id>:<date>` with job ids taken from `DAILY_JOBS`). Bots and routines share it. An approval the owner gives
@@ -143,5 +144,18 @@ interface CredBroker {
 
 - Broker as a separate systemd unit under its own user with `systemd-creds` storage (phase 1 ships the interface and an
   in-process implementation with a file-backed fake store for tests).
-- Web UI for bots (sidebar shows them via `/agents`; a settings page for trust levels is not built).
+- ~~Web UI for bots and trust levels~~: built (1e, below).
 - Real Telegram, real whisper.cpp model and real broker credentials were never used: tested against fakes.
+
+## 10. Phase 1e: web UI for bots and trust levels (built)
+
+- **Bots page** (`/bots`, sidebar): lists bots, creates one (name, id, emoji, instructions, presets) and deletes one
+  (asks once more in the page). The owner acting directly: no approval. The server runs the same `createBot`/`deleteBot`
+  as the approval actions (`createOwnerBots`), so the 8-bot cap, slug rules, 6 000-char soul and preset allowlist hold;
+  owner-made rows have `approved_via = 'owner'` and a `owner:<uuid>` call id.
+- **Settings → Trust levels:** the PA's level and one per broker-policy project. Stored in `trust_setting`
+  (`apps/server/src/trust-settings.ts`), a server-only table no tool can write. A stored level overrides
+  `ZIMPOEN_PA_TRUST` / the policy's `trust`; "Default" removes the override. Read at each tool call and at approval time.
+- API: `GET|POST /api/bots`, `DELETE /api/bots/:slug`, `GET /api/settings/trust`, `PUT /api/settings/trust/pa`,
+  `PUT /api/settings/trust/projects/:id` (ARCHITECTURE §5.5).
+- `cred_run`'s description lists project ids without levels now: the level can change while the server runs.
