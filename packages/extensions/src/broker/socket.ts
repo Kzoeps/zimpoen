@@ -37,9 +37,19 @@ export type BrokerSocketServerDeps = {
  */
 export async function listenBrokerSocket(socketPath: string, deps: BrokerSocketServerDeps): Promise<Server> {
 	await checkSocketDirectory(dirname(socketPath));
-	await rm(socketPath, { force: true }); // a socket left by a crashed broker; the directory is ours alone
-	const server = createServer((socket) => serveConnection(socket, deps));
-	server.maxConnections = MAX_CONNECTIONS;
+	await removeStaleSocket(socketPath);
+	let active = 0;
+	const server = createServer((socket) => {
+		if (active >= MAX_CONNECTIONS) {
+			// Say so rather than drop it: a dropped connection reads like a broker that is not running.
+			socket.on("error", () => {});
+			socket.end(`${JSON.stringify({ ok: false, error: BUSY_MESSAGE })}\n`);
+			return;
+		}
+		active++;
+		socket.once("close", () => active--);
+		serveConnection(socket, deps);
+	});
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
 		server.listen(socketPath, () => {
@@ -49,6 +59,30 @@ export async function listenBrokerSocket(socketPath: string, deps: BrokerSocketS
 	});
 	await chmod(socketPath, 0o660);
 	return server;
+}
+
+const BUSY_MESSAGE = `The broker is busy (${MAX_CONNECTIONS} runs at once). Try again shortly.`;
+
+/**
+ * Remove a socket file left by a crashed broker, but never take the socket from a broker that is still listening on it
+ * (a second broker started by hand next to the systemd one).
+ */
+async function removeStaleSocket(socketPath: string): Promise<void> {
+	const live = await new Promise<boolean>((resolve, reject) => {
+		const probe = connect(socketPath);
+		probe.once("connect", () => {
+			probe.destroy();
+			resolve(true);
+		});
+		probe.once("error", (error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT" || error.code === "ECONNREFUSED") resolve(false);
+			else reject(new Error(`Cannot check the broker socket ${socketPath} (${error.message}).`));
+		});
+	});
+	if (live) {
+		throw new Error(`A broker is already listening at ${socketPath}. Stop it first (systemctl stop zimpoen-broker).`);
+	}
+	await rm(socketPath, { force: true });
 }
 
 /**
@@ -169,23 +203,31 @@ async function call(socketPath: string, message: object, timeoutMs: number): Pro
 			socket.destroy();
 			reject(new Error(`The broker at ${socketPath} did not answer within ${timeoutMs} ms.`));
 		}, timeoutMs);
-		const fail = (error: unknown): void => {
+		const fail = (message: string): void => {
 			clearTimeout(timer);
 			socket.destroy();
-			reject(
-				new Error(
-					`Cannot reach the broker at ${socketPath} (${reason(error)}). Is zimpoen-broker running, and is this user in its group?`,
-				),
-			);
+			reject(new Error(message));
 		};
-		socket.once("error", fail);
+		socket.once("error", (error) =>
+			fail(
+				`Cannot reach the broker at ${socketPath} (${reason(error)}). Is zimpoen-broker running, and is this user in its group?`,
+			),
+		);
 		socket.once("connect", () => {
 			socket.write(`${JSON.stringify(message)}\n`);
-			readLine(socket, MAX_RESPONSE_BYTES).then((text) => {
-				clearTimeout(timer);
-				socket.destroy();
-				resolve(text);
-			}, fail);
+			readLine(socket, MAX_RESPONSE_BYTES).then(
+				(text) => {
+					clearTimeout(timer);
+					socket.destroy();
+					resolve(text);
+				},
+				(error: unknown) =>
+					fail(
+						error instanceof ClosedEarly
+							? `The broker at ${socketPath} closed the connection without replying; it may be busy or restarting.`
+							: `The broker at ${socketPath} sent a bad reply (${reason(error)}).`,
+					),
+			);
 		});
 	});
 	let response: unknown;
@@ -221,7 +263,7 @@ function readLine(socket: Socket, maxBytes: number): Promise<string> {
 		};
 		const onEnd = (): void => {
 			done();
-			reject(new Error("The connection closed before a whole message arrived."));
+			reject(new ClosedEarly());
 		};
 		const onError = (error: Error): void => {
 			done();
@@ -236,6 +278,12 @@ function readLine(socket: Socket, maxBytes: number): Promise<string> {
 		socket.on("end", onEnd);
 		socket.on("error", onError);
 	});
+}
+
+class ClosedEarly extends Error {
+	constructor() {
+		super("The connection closed before a whole message arrived.");
+	}
 }
 
 function isResult(value: unknown): value is CredRunResult {

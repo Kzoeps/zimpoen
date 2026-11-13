@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -12,6 +13,7 @@ import {
 	createSystemdCredsStore,
 	fetchBrokerPolicy,
 	listenBrokerSocket,
+	MAX_CONNECTIONS,
 	MAX_REQUEST_BYTES,
 	parsePolicy,
 	REDACTED,
@@ -186,6 +188,62 @@ describe("broker socket", () => {
 			}).listen(flood),
 		);
 		await expect(fetchBrokerPolicy(flood, 10_000)).rejects.toThrow(/larger than/);
+	});
+
+	it("never takes the socket from a live broker, but replaces one a crash left behind", async () => {
+		const { socketPath } = await listen();
+		const { broker } = echoBroker();
+		await expect(listenBrokerSocket(socketPath, { broker, policyText: POLICY_TEXT })).rejects.toThrow(
+			/already listening/,
+		);
+		expect(parsePolicy(await fetchBrokerPolicy(socketPath)).actions.has("pr-view")).toBe(true);
+
+		const stale = join(await socketDir(), "broker.sock");
+		// A broker killed with SIGKILL leaves its socket file and nobody listening on it.
+		const child = spawn(process.execPath, [
+			"-e",
+			`require("node:net").createServer().listen(${JSON.stringify(stale)}, () => console.log("up"))`,
+		]);
+		await new Promise((resolve) => child.stdout.once("data", resolve));
+		child.kill("SIGKILL");
+		await new Promise((resolve) => child.once("exit", resolve));
+		await stat(stale);
+		closing(await listenBrokerSocket(stale, { broker, policyText: POLICY_TEXT }));
+		expect(parsePolicy(await fetchBrokerPolicy(stale)).actions.has("pr-view")).toBe(true);
+	});
+
+	it("tells a client over the connection limit that the broker is busy", async () => {
+		const socketPath = join(await socketDir(), "broker.sock");
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let started = 0;
+		let allStarted!: () => void;
+		const full = new Promise<void>((resolve) => {
+			allStarted = resolve;
+		});
+		const broker: CredBroker = {
+			async run() {
+				if (++started === MAX_CONNECTIONS) allStarted();
+				await held;
+				return { exitCode: 0, output: "done", redacted: false };
+			},
+		};
+		closing(await listenBrokerSocket(socketPath, { broker, policyText: POLICY_TEXT }));
+		const client = createSocketBroker({ socketPath, timeoutMs: () => 5000 });
+		const req = { project: "zimpoen", credId: "gh", action: "pr-view", params: { pr: "1" } };
+		const running = Array.from({ length: MAX_CONNECTIONS }, () => client.run(req));
+		await full;
+		await expect(client.run(req)).rejects.toThrow(/busy/);
+		release();
+		for (const result of await Promise.all(running)) expect(result.output).toBe("done");
+	});
+
+	it("says the broker closed the connection rather than that it is not running", async () => {
+		const closer = join(await socketDir(), "closer.sock");
+		closing(createServer((socket) => socket.end()).listen(closer));
+		await expect(fetchBrokerPolicy(closer)).rejects.toThrow(/closed the connection without replying/);
 	});
 
 	it("says how to fix an unreachable broker", async () => {
