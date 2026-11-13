@@ -805,5 +805,3 @@ async function warnIfNoOpenAiLogin(logger: ServerLogger, config: Config, runtime
 		);
 	}
 }
-
-/** The credential broker when `ZIMPOEN_CRED_BROKER=on` (a bad policy stops the start), nothing otherwise. */
