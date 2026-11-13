@@ -1,0 +1,31 @@
+# Coding VM: herdr-lead, the agent that takes coding cards from zimpoen's board relay (upgrade plan §6).
+# Installed by ops/coding-vm/provision.sh, which fills in User=. It refuses to start unless the egress rules are loaded.
+[Unit]
+Description=zimpoen coding VM: herdr-lead
+After=network-online.target zimpoen-vm-egress.service
+Wants=network-online.target
+Requires=zimpoen-vm-egress.service
+
+[Service]
+Type=simple
+# CHANGE: filled in by provision.sh (ZCV_USER, here and in the test-values path). Unprivileged, no sudo.
+User=CHANGE_ME
+WorkingDirectory=~
+EnvironmentFile=/etc/zimpoen-vm/egress.env
+# Test values only (provision.sh refuses credential-shaped values).
+EnvironmentFile=/home/CHANGE_ME/.config/zimpoen-vm/test-values.env
+# No rules, no lead: the check fails closed when the table is missing or is for another relay.
+ExecStartPre=/usr/local/lib/zimpoen-vm/egress.sh --check
+ExecStart=/usr/local/bin/herdr-lead
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
