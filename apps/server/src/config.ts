@@ -700,7 +700,7 @@ function parsePaTrust(raw: string | undefined, problem: ReportProblem): { paTrus
 	if (isTrustLevel(value)) return { paTrust: value };
 	problem(
 		"ZIMPOEN_PA_TRUST",
-		`'${value}' is not valid. Use 'normal' (default: the PA asks before creating or deleting a bot), 'strict', or 'open' (it never asks; every use is logged).`,
+		`'${value}' is not valid. Use 'normal' (default: the PA asks before creating or deleting a bot), 'strict' (the same as normal for bots today; it matters once actions can be denied), or 'open' (it never asks; every use is logged).`,
 	);
 	return {};
 }

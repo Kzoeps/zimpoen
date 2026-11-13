@@ -150,7 +150,8 @@ export function createOwnerApp(deps: OwnerDeps): Hono {
 
 	app.put("/settings/budget/:agent", async (c) => {
 		const agent = c.req.param("agent");
-		if (!isAnyAgentId(agent)) throw notFound(`There is no agent '${agent.slice(0, 20)}'. GET /api/agents lists them.`);
+		if (!deps.agents.some((known) => known.id === agent))
+			throw notFound(`There is no agent '${agent.slice(0, 20)}'. GET /api/agents lists them.`);
 		const { weeklyTokens } = parseUpdateBudget(await readJsonObject(c));
 		deps.usage.setLimit(agent, weeklyTokens);
 		const body: UsageResponse = await deps.usage.report(deps.agents);
