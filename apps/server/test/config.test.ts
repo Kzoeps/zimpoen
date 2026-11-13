@@ -470,15 +470,8 @@ describe("ZIMPOEN_CRED_BROKER", () => {
 		]);
 	});
 
-	it("over a socket, defaults to the zimpoen-broker unit's socket and keeps the server's audit in the data directory", () => {
-		expect(parseConfig({ ...auth, ZIMPOEN_CRED_BROKER: "socket" }, context).credBroker).toEqual({
-			mode: "socket",
-			socketPath: "/run/zimpoen-broker/broker.sock",
-			auditPath: "/work/assistant/data-dev/broker-audit.jsonl",
-		});
-		expect(problemsOf({ ...auth, ZIMPOEN_CRED_BROKER: "socket", ZIMPOEN_BROKER_SOCKET: "b.sock" })).toEqual([
-			"ZIMPOEN_BROKER_SOCKET",
-		]);
+	it("no longer accepts a separate broker process", () => {
+		expect(problemsOf({ ...auth, ZIMPOEN_CRED_BROKER: "socket" })).toEqual(["ZIMPOEN_CRED_BROKER"]);
 	});
 });
 
@@ -487,17 +480,17 @@ describe("ZIMPOEN_SHELL", () => {
 		expect(parseConfig({ ...auth }, context).shell).toEqual({ mode: "off" });
 	});
 
-	it("when on, defaults to docker, no network and the root-owned marker", () => {
+	it("when on, defaults to rootless podman, no network and the root-owned marker", () => {
 		expect(parseConfig({ ...auth, ZIMPOEN_SHELL: "on" }, context).shell).toEqual({
 			mode: "on",
-			engine: "docker",
-			bin: "/usr/bin/docker",
+			engine: "podman",
+			bin: "/usr/bin/podman",
 			image: "docker.io/library/debian:stable-slim",
 			network: "none",
 			egressMarker: "/run/zimpoen-shell/egress.ok",
 		});
-		expect(parseConfig({ ...auth, ZIMPOEN_SHELL: "on", ZIMPOEN_SHELL_ENGINE: "podman" }, context).shell).toMatchObject({
-			bin: "/usr/bin/podman",
+		expect(parseConfig({ ...auth, ZIMPOEN_SHELL: "on", ZIMPOEN_SHELL_ENGINE: "docker" }, context).shell).toMatchObject({
+			bin: "/usr/bin/docker",
 		});
 	});
 

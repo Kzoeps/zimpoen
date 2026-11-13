@@ -119,16 +119,15 @@ export type Config = {
 	 */
 	http: { host: "127.0.0.1"; port: number; publicHosts: readonly string[] };
 	/**
-	 * The credential broker (`ZIMPOEN_CRED_BROKER=off|inprocess|socket`, `on` meaning `inprocess`; default `off`: no tool,
-	 * nothing read). In process: the owner-written policy (`ZIMPOEN_CRED_POLICY`, default
-	 * `<data>/secrets/broker/policy.json`) and the secret files (`<data>/secrets/broker/creds`). Socket: the separate
-	 * `zimpoen-broker` process at `ZIMPOEN_BROKER_SOCKET` (default `/run/zimpoen-broker/broker.sock`) holds both. Either
-	 * way the server appends its decisions to `ZIMPOEN_CRED_AUDIT` (default `<data>/broker-audit.jsonl`).
+	 * The credential broker (`ZIMPOEN_CRED_BROKER=off|inprocess`, `on` meaning `inprocess`; default `off`: no tool,
+	 * nothing read). It runs inside the server: the owner-written policy (`ZIMPOEN_CRED_POLICY`, default
+	 * `<data>/secrets/broker/policy.json`), the secret files (`<data>/secrets/broker/creds`) and the audit log
+	 * (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`).
 	 */
 	credBroker: CredBrokerConfig;
 	/**
 	 * The sandboxed shell (`ZIMPOEN_SHELL`, default `off`: no tool, nothing checked). When on: the engine
-	 * (`ZIMPOEN_SHELL_ENGINE`, docker or podman) and its CLI (`ZIMPOEN_SHELL_BIN`), the image (`ZIMPOEN_SHELL_IMAGE`), the
+	 * (`ZIMPOEN_SHELL_ENGINE`, rootless podman by default, or docker) and its CLI (`ZIMPOEN_SHELL_BIN`), the image (`ZIMPOEN_SHELL_IMAGE`), the
 	 * network (`ZIMPOEN_SHELL_NETWORK`, default `none`) and the egress marker (`ZIMPOEN_SHELL_EGRESS_MARKER`).
 	 */
 	shell: ShellConfig;
@@ -156,10 +155,7 @@ export type CtoConfig =
 
 export type CredBrokerConfig =
 	| { mode: "off" }
-	| { mode: "inprocess"; policyPath: string; secretsDir: string; auditPath: string }
-	| { mode: "socket"; socketPath: string; auditPath: string };
-
-export const DEFAULT_BROKER_SOCKET = "/run/zimpoen-broker/broker.sock";
+	| { mode: "inprocess"; policyPath: string; secretsDir: string; auditPath: string };
 
 export type ShellConfig = { mode: "off" } | ({ mode: "on" } & ShellHostConfig);
 
@@ -728,17 +724,17 @@ function parseHeight(raw: string | undefined, problem: ReportProblem): { heightC
 }
 
 /**
- * `ZIMPOEN_CRED_BROKER=off|inprocess|socket` (`on` is kept as `inprocess`) and its paths. Off by default: nothing about
+ * `ZIMPOEN_CRED_BROKER=off|inprocess` (`on` is kept as `inprocess`) and its paths. Off by default: nothing about
  * the broker is read or registered.
  */
 function parseCredBroker(env: Env, dataDir: string, problem: ReportProblem): CredBrokerConfig {
 	const raw = nonEmpty(env.ZIMPOEN_CRED_BROKER) ?? "off";
 	const mode = raw === "on" ? "inprocess" : raw;
 	if (mode === "off") return { mode: "off" };
-	if (mode !== "inprocess" && mode !== "socket") {
+	if (mode !== "inprocess") {
 		problem(
 			"ZIMPOEN_CRED_BROKER",
-			`'${raw}' is not valid. Use 'off' (default: no broker), 'inprocess' (development; 'on' means the same) or 'socket' (the zimpoen-broker service).`,
+			`'${raw}' is not valid. Use 'off' (default: no broker) or 'inprocess' ('on' means the same).`,
 		);
 		return { mode: "off" };
 	}
@@ -749,9 +745,6 @@ function parseCredBroker(env: Env, dataDir: string, problem: ReportProblem): Cre
 		return resolve(raw);
 	};
 	const auditPath = pathOf("ZIMPOEN_CRED_AUDIT", join(dataDir, "broker-audit.jsonl"));
-	if (mode === "socket") {
-		return { mode, socketPath: pathOf("ZIMPOEN_BROKER_SOCKET", DEFAULT_BROKER_SOCKET), auditPath };
-	}
 	return {
 		mode,
 		policyPath: pathOf("ZIMPOEN_CRED_POLICY", join(dataDir, "secrets", "broker", "policy.json")),
@@ -768,9 +761,9 @@ function parseShell(env: Env, problem: ReportProblem): ShellConfig {
 		problem("ZIMPOEN_SHELL", `'${mode}' is not valid. Use 'off' (default: no shell tool) or 'on'.`);
 		return { mode: "off" };
 	}
-	const engine = nonEmpty(env.ZIMPOEN_SHELL_ENGINE) ?? "docker";
+	const engine = nonEmpty(env.ZIMPOEN_SHELL_ENGINE) ?? "podman";
 	if (engine !== "docker" && engine !== "podman") {
-		problem("ZIMPOEN_SHELL_ENGINE", `'${engine}' is not valid. Use 'docker' (default) or 'podman'.`);
+		problem("ZIMPOEN_SHELL_ENGINE", `'${engine}' is not valid. Use 'podman' (default, rootless) or 'docker'.`);
 		return { mode: "off" };
 	}
 	const bin = nonEmpty(env.ZIMPOEN_SHELL_BIN) ?? `/usr/bin/${engine}`;
