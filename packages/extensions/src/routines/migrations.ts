@@ -14,7 +14,7 @@ export const routinesMigrations: readonly Migration[] = [
 					title TEXT NOT NULL,
 					message TEXT NOT NULL,
 					kind TEXT NOT NULL CHECK (kind IN ('daily', 'weekly', 'hourly')),
-					local_time TEXT CHECK (local_time IS NULL OR local_time GLOB '[0-2][0-9]:[0-5][0-9]'),
+					local_time TEXT CHECK (local_time IS NULL OR local_time GLOB '[01][0-9]:[0-5][0-9]' OR local_time GLOB '2[0-3]:[0-5][0-9]'),
 					-- ISO weekdays, comma separated (1 = Monday), for kind = 'weekly'.
 					days TEXT,
 					every_hours INTEGER CHECK (every_hours IS NULL OR every_hours >= 1),

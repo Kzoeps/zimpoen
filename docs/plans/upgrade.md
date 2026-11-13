@@ -85,6 +85,7 @@ Schedule: daily at HH:MM, weekly on days at HH:MM, or every N hours (≥ 1 h). A
 `ask` with request id `routine:<id>:<slot>` so one slot runs at most once across restarts. After downtime only the newest
 due slot runs; a slot more than 6 h late is skipped. Same DB-authoritative timer pattern as §5.4 (gen + reconcile).
 During a routine run, routine/bot/broker tools refuse (rule 13). Cap 20 active routines.
+Creation goes through approval (`propose_routine`, Approve/YES), and a slot whose agent is over its weekly token limit is skipped.
 
 **Credential broker (1d).** `ZIMPOEN_CRED_BROKER=off|on`, default off: no tool registered, no socket. When on, phase 1
 runs the broker in-process behind an interface that a separate `zbroker` process implements later (§9):

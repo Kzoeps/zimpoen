@@ -40,6 +40,7 @@ export {
 	DIGEST_PUSH,
 	DIGEST_URL,
 	dailyModule,
+	dailyRequestId,
 	dailyStore,
 	dayWindow,
 	describeJournal,
@@ -305,8 +306,10 @@ export { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings, schedule
 export {
 	isScheduledRequestId,
 	isScheduledRun,
+	parseScheduledRequestId,
 	ROUTINE_REQUEST_PREFIX,
 	SCHEDULED_RUN_REFUSAL,
+	type ScheduledRequest,
 } from "./scheduled-run.ts";
 export {
 	type BillExtra,

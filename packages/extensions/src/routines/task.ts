@@ -57,6 +57,14 @@ export function createRoutineTask(deps: Deps, scheduler: () => TimerScheduler | 
 		}
 	}
 
+	async function choose(row: store.RoutineRow, now: number, runtime: Runtime): Promise<SlotChoice> {
+		const decided = decideSlot(row.schedule, row.dueAt, now, timezone);
+		if (decided.action === "run" && (await overBudget(row.agent, runtime))) {
+			return { slot: decided.slot, next: decided.next, action: "over_budget" };
+		}
+		return { slot: decided.slot, next: decided.next, action: decided.action };
+	}
+
 	return defineTask<RoutineInput, RoutineState, RoutineResult>({
 		name: ROUTINE_TASK_NAME,
 		version: 1,
@@ -72,17 +80,11 @@ export function createRoutineTask(deps: Deps, scheduler: () => TimerScheduler | 
 				if (row === undefined) return;
 				const now = runtime.now();
 				// Decided once and kept: a rerun after a crash must handle the same slot the first attempt chose.
-				const decision = await runtime.memo<SlotChoice>(
-					`slot:${row.dueAt}`,
-					await (async () => {
-						const decided = decideSlot(row.schedule, row.dueAt, now, timezone);
-						if (decided.action === "run" && (await overBudget(row.agent, runtime))) {
-							return { ...decided, action: "over_budget" as const };
-						}
-						return { slot: decided.slot, next: decided.next, action: decided.action };
-					})(),
-					context,
-				);
+				const memoKey = `slot:${row.dueAt}`;
+				// Read first, so a rerun does not ask the budget again: only the first attempt decides.
+				const decision =
+					(await runtime.memo<SlotChoice>(memoKey, context)) ??
+					(await runtime.memo<SlotChoice>(memoKey, await choose(row, now, runtime), context));
 				const ran = decision.action === "run";
 				if (ran) {
 					await deps.ask(row.conversationId, {

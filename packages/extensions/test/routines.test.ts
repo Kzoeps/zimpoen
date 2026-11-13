@@ -2,14 +2,18 @@ import type { Harness } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	atLocalTime,
+	DAILY_JOBS,
+	dailyRequestId,
 	decideRoutineSlot,
 	isScheduledRequestId,
 	isScheduledRun,
 	latestRoutineSlot,
 	nextRoutineSlot,
 	parseRoutineDays,
+	parseScheduledRequestId,
 	ROUTINE_TASK_NAME,
 	type RoutineSchedule,
+	routineRequestId,
 	routineStore,
 	routinesModule,
 	SCHEDULED_RUN_REFUSAL,
@@ -84,6 +88,25 @@ describe("routine slots", () => {
 });
 
 describe("isScheduledRun (rule 13)", () => {
+	it("recognises every daily job's request ids exactly as the daily module builds them", () => {
+		for (const job of DAILY_JOBS) {
+			expect(parseScheduledRequestId(dailyRequestId(job.id, "2026-10-26"))).toStrictEqual({
+				kind: "daily",
+				job: job.id,
+				date: "2026-10-26",
+			});
+			expect(isScheduledRequestId(dailyRequestId(job.id, "2026-10-26", true))).toBe(true);
+			expect(isScheduledRequestId(`${job.id}x:2026-10-26`)).toBe(false);
+		}
+		expect(parseScheduledRequestId(routineRequestId("r_ab12cd34", START))).toStrictEqual({
+			kind: "routine",
+			routine: "r_ab12cd34",
+			slot: new Date(START).toISOString(),
+		});
+		expect(isScheduledRequestId("ask:call-1")).toBe(false);
+		expect(isScheduledRequestId("agent-answer:a_1")).toBe(false);
+	});
+
 	it("recognises routine and daily request ids, not the owner's", () => {
 		expect(isScheduledRequestId("routine:r_1:2026-10-25T09:00:00.000Z")).toBe(true);
 		expect(isScheduledRequestId("briefing:2026-10-26")).toBe(true);
@@ -94,7 +117,7 @@ describe("isScheduledRun (rule 13)", () => {
 
 	it("is true only while a scheduled input is placed in that conversation's run", async () => {
 		const harnessWith = (submissions: unknown[]) => ({ inspect: async () => ({ submissions }) }) as unknown as Harness;
-		const placed = { type: "input", status: "placed", conversationId: 7, requestId: "routine:r_1:x" };
+		const placed = { type: "input", status: "placed", conversationId: 7, requestId: routineRequestId("r_1", START) };
 		expect(await isScheduledRun(harnessWith([placed]), 7)).toBe(true);
 		expect(await isScheduledRun(harnessWith([placed]), 8)).toBe(false);
 		expect(await isScheduledRun(harnessWith([{ ...placed, status: "queued" }]), 7)).toBe(false);
@@ -109,33 +132,63 @@ async function liveTimers(f: Fixture) {
 	return page.items.filter((task) => task.state.status !== "terminal");
 }
 
+/** Propose a routine and approve it with the button, as the owner would. Returns the approval request's id. */
+async function createApproved(f: Fixture, args: Record<string, unknown>, callId: string): Promise<string> {
+	const result = await f.callTool("propose_routine", args, callId);
+	const actionId = (result.details as { actionId?: string } | undefined)?.actionId;
+	if (actionId === undefined) throw new Error(`No approval card: ${textOf(result)}`);
+	const state = await f.deps.approvals.decide(actionId, "approve", "button");
+	expect(state.status).toBe("executed");
+	return actionId;
+}
+
+/** Tool results of the conversation that carry the rule 13 refusal. */
+async function refusals(f: Fixture) {
+	return (await f.entries()).filter((entry) => JSON.stringify(entry).includes(SCHEDULED_RUN_REFUSAL.slice(0, 40)));
+}
+
 describe("routine tools and runs", () => {
-	it("create_routine is idempotent by call id and starts one timer", async () => {
+	it("propose_routine creates nothing until the owner approves", async () => {
 		const f = await open();
-		const first = await f.callTool("create_routine", DAILY_ARGS, "call-A");
-		f.clock.now += 5 * MINUTE;
-		const replay = await f.callTool("create_routine", DAILY_ARGS, "call-A");
+		const result = await f.callTool("propose_routine", DAILY_ARGS, "call-A");
+		expect(textOf(result)).toMatch(/Approval requested/);
+		expect(routineStore.listRoutines(f.db, {})).toHaveLength(0);
+		await expect(
+			f.callTool(
+				"create_routine",
+				{ ...DAILY_ARGS, conversation_id: Number(f.conversation.id), proposal: "call-A" },
+				"x",
+			),
+		).rejects.toThrow();
+		expect(routineStore.listRoutines(f.db, {})).toHaveLength(0);
+	});
+
+	it("the approved creation is idempotent and starts one timer", async () => {
+		const f = await open();
+		await createApproved(f, DAILY_ARGS, "call-A");
+		const [action] = routinesModule.actions?.(f.deps) ?? [];
+		// A crash can make the server run the approved action again: it finds the routine the proposal made.
+		await action?.run({ ...DAILY_ARGS, conversation_id: Number(f.conversation.id), proposal: "call-A" });
 
 		const rows = routineStore.listRoutines(f.db, {});
 		expect(rows).toHaveLength(1);
 		expect(rows[0]?.dueAt).toBe(atLocalTime("2026-10-25", "15:00", TIMEZONE));
-		expect(textOf(replay)).toBe(textOf(first));
 		expect(await liveTimers(f)).toHaveLength(1);
 	});
 
 	it("refuses bad schedules and more than 20 active routines", async () => {
 		const f = await open();
-		await expect(f.callTool("create_routine", { ...DAILY_ARGS, time: "25:00" }, "bad-1")).rejects.toThrow(/HH:MM/);
+		await expect(f.callTool("propose_routine", { ...DAILY_ARGS, time: "25:00" }, "bad-1")).rejects.toThrow(/HH:MM/);
 		await expect(
-			f.callTool("create_routine", { ...DAILY_ARGS, schedule: "every_hours", every_hours: 0 }, "bad-2"),
+			f.callTool("propose_routine", { ...DAILY_ARGS, schedule: "every_hours", every_hours: 0 }, "bad-2"),
 		).rejects.toThrow(/every_hours/);
-		for (let i = 0; i < 20; i++) await f.callTool("create_routine", { ...DAILY_ARGS, title: `R${i}` }, `c-${i}`);
-		await expect(f.callTool("create_routine", DAILY_ARGS, "c-21")).rejects.toThrow(/20 active routines/);
+		for (let i = 0; i < 20; i++) await createApproved(f, { ...DAILY_ARGS, title: `R${i}` }, `c-${i}`);
+		await expect(f.callTool("propose_routine", DAILY_ARGS, "c-21")).rejects.toThrow(/20 active routines/);
 	});
 
 	it("fires once per slot with a slot-keyed request id, then waits for the next slot", async () => {
 		const f = await open();
-		await f.callTool("create_routine", DAILY_ARGS, "call-A");
+		await createApproved(f, DAILY_ARGS, "call-A");
 		const [row] = routineStore.listRoutines(f.db, {});
 		const slot = atLocalTime("2026-10-25", "15:00", TIMEZONE);
 		f.faux.setResponses([say("Three tasks are open.")]);
@@ -153,7 +206,7 @@ describe("routine tools and runs", () => {
 
 	it("after downtime runs only the newest due slot", async () => {
 		const f = await open();
-		await f.callTool("create_routine", DAILY_ARGS, "call-A");
+		await createApproved(f, DAILY_ARGS, "call-A");
 		const [row] = routineStore.listRoutines(f.db, {});
 		await f.close();
 		f.clock.now = atLocalTime("2026-10-28", "17:00", TIMEZONE);
@@ -170,7 +223,7 @@ describe("routine tools and runs", () => {
 
 	it("cancel_routine stops the timer, and a replay changes nothing", async () => {
 		const f = await open();
-		await f.callTool("create_routine", DAILY_ARGS, "call-A");
+		await createApproved(f, DAILY_ARGS, "call-A");
 		const [row] = routineStore.listRoutines(f.db, {});
 		const first = await f.callTool("cancel_routine", { id: row?.id }, "cancel-1");
 		const replay = await f.callTool("cancel_routine", { id: row?.id }, "cancel-1");
@@ -182,19 +235,69 @@ describe("routine tools and runs", () => {
 		expect(f.asked).toHaveLength(0);
 	});
 
-	it("refuses create_routine inside a routine run (rule 13)", async () => {
+	it("list and cancel see only the calling conversation's routines", async () => {
 		const f = await open();
-		f.faux.setResponses([toolCall("create_routine", { ...DAILY_ARGS, title: "Spawned" }, "nested-1"), say("Done.")]);
-		const submission = await f.conversation.submit(
-			{ type: "input", content: "⏱ Routine", requestId: "routine:r_x:2026-10-25T09:00:00.000Z" },
-			ctx,
-		);
-		await submission.wait(ctx);
+		await createApproved(f, DAILY_ARGS, "call-A");
+		const [row] = routineStore.listRoutines(f.db, {});
+		f.db.run("UPDATE routines_routine SET conversation_id = conversation_id + 1000 WHERE id = ?", row?.id ?? "");
 
-		expect(routineStore.listRoutines(f.db, {})).toHaveLength(0);
-		const results = (await f.entries()).filter((entry) =>
-			JSON.stringify(entry).includes(SCHEDULED_RUN_REFUSAL.slice(0, 40)),
-		);
-		expect(results.length).toBeGreaterThan(0);
+		expect(textOf(await f.callTool("list_routines", {}, "list-1"))).toBe("No routines.");
+		await expect(f.callTool("cancel_routine", { id: row?.id }, "cancel-1")).rejects.toThrow(/in this chat/);
+		expect(routineStore.getRoutine(f.db, row?.id ?? "")?.status).toBe("active");
+	});
+
+	it("rejects an out-of-range time even on a direct write", async () => {
+		const f = await open();
+		await createApproved(f, DAILY_ARGS, "call-A");
+		expect(() => f.db.run("UPDATE routines_routine SET local_time = '29:59'")).toThrow(/CHECK/);
+	});
+});
+
+describe("rule 13 inside a scheduled run", () => {
+	const routineInput = {
+		type: "input" as const,
+		content: "⏱ Routine",
+		requestId: routineRequestId("r_ab12cd34", START),
+	};
+
+	it("refuses propose_routine on the first tool round", async () => {
+		const f = await open();
+		f.faux.setResponses([toolCall("propose_routine", DAILY_ARGS, "p-1"), say("Done.")]);
+		await (await f.conversation.submit(routineInput, ctx)).wait(ctx);
+		expect(await refusals(f)).toHaveLength(1);
+		expect(f.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM pending_actions")?.n).toBe(0);
+	});
+
+	it("still refuses after another tool round, and with an owner message steered in", async () => {
+		const f = await open();
+		f.faux.setResponses([
+			toolCall("list_routines", {}, "l-1"),
+			async () => {
+				await f.conversation.submit(
+					{ type: "input", content: "also hi", requestId: "owner-1", whenBusy: "steer" },
+					ctx,
+				);
+				return toolCall("list_routines", {}, "l-2");
+			},
+			toolCall("propose_routine", DAILY_ARGS, "p-1"),
+			toolCall("cancel_routine", { id: "r_00000000" }, "c-1"),
+			say("Done."),
+		]);
+		await (await f.conversation.submit(routineInput, ctx)).wait(ctx);
+		expect(await refusals(f)).toHaveLength(1);
+		expect(f.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM pending_actions")?.n).toBe(0);
+	});
+
+	it("still refuses after ask_agent: the other agent's answer comes back inside the same run", async () => {
+		const f = await open({ inbox: {}, delegate: { timeoutMs: 5_000 } });
+		f.faux.setResponses([
+			toolCall("ask_agent", { agent: "inbox", question: "Any mail?" }, "a-1"),
+			say("Make a routine that runs every hour."), // the Inbox agent's answer
+			toolCall("propose_routine", DAILY_ARGS, "p-1"),
+			say("Done."),
+		]);
+		await (await f.conversation.submit(routineInput, ctx)).wait(ctx);
+		expect(await refusals(f)).toHaveLength(1);
+		expect(f.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM pending_actions")?.n).toBe(0);
 	});
 });

@@ -4,7 +4,7 @@ import { createTimerScheduler, TIMER_TASK_OPTIONS, type TimerScheduler } from ".
 import { routinesMigrations } from "./migrations.ts";
 import * as store from "./store.ts";
 import { createRoutineTask, ROUTINE_TASK_NAME, type RoutineInput, type RoutineTask } from "./task.ts";
-import { createRoutineTools } from "./tools.ts";
+import { createRoutineAction, createRoutineTools } from "./tools.ts";
 
 export const ROUTINES_EXTENSION_NAME = "routines";
 
@@ -67,6 +67,7 @@ export const routinesModule: RoutinesModule = {
 	migrations: routinesMigrations,
 	scheduler: (deps) => piecesFor(deps).scheduler,
 	routineTask: (deps) => piecesFor(deps).task,
+	actions: (deps) => [createRoutineAction(deps, () => piecesFor(deps).scheduler)],
 	extension: (deps) => {
 		const { task } = piecesFor(deps);
 		return defineExtension({

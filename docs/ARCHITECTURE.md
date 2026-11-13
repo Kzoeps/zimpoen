@@ -219,12 +219,13 @@ timer.**
 request. With nothing to report it posts a card and makes no model call. A briefing that missed its time while the server
 was down still runs until 11:00 (wrap-up until midnight, digests within 2 h). Each day runs at most once.
 
-**Routines:** agent-made (`create_routine`, `list_routines`, `cancel_routine`; PA only for now). Daily or weekly at HH:MM
+**Routines:** agent-proposed, owner-approved (`propose_routine` → Approve/YES → the server creates it; `list_routines` and
+`cancel_routine` see only the calling conversation; PA only for now). Daily or weekly at HH:MM
 in the owner's zone, or every N ≥ 1 hours; at most 20 active. A run is an `ask` with request id `routine:<id>:<slot ISO>`,
 so a slot runs at most once. After downtime only the newest due slot runs; one more than 6 h late is skipped. A routine
 whose agent is over its weekly token limit skips the slot. Rule 13: `isScheduledRun(harness, conversationId)`
-(`packages/extensions/src/scheduled-run.ts`) is true while a `routine:` or daily-job input is placed in the
-conversation's run; create/cancel routine tools refuse then, and other self-propagating tools (bots, broker) should
+(`packages/extensions/src/scheduled-run.ts`) is true while a `routine:` or daily-job input (parsed by `parseScheduledRequestId`) is placed in the
+conversation's run; propose/cancel routine tools refuse then, and other self-propagating tools (bots, broker) should
 call it too.
 
 **Gmail sync:** first read is the last 14 days (≤ 1,000 mails), then `history.list`. Failures back off exponentially
