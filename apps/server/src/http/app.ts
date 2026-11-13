@@ -48,6 +48,7 @@ import { runConversationStream } from "../stream.ts";
 import type { UnansweredReader } from "../unanswered.ts";
 import { toWireEntries } from "../wire.ts";
 import { authMiddleware } from "./auth.ts";
+import { type BotsAppDeps, createBotsApp } from "./bots.ts";
 import { ApiError, errorBody, errorHandler, invalidRequest, notFound, notFoundHandler } from "./errors.ts";
 import { type HostPolicy, requestGuard } from "./guard.ts";
 import { createOwnerApp, type OwnerProfile } from "./owner.ts";
@@ -99,6 +100,8 @@ export type AppDeps = {
 	inbox: InboxFacade;
 	/** The weekly token limits and what the agents spent: the dashboard, and the banner `GET /api/agents` feeds. */
 	usage: UsageService;
+	/** The owner's Bots page and trust levels. Omitted (tests of other routes): `/api/bots` and `/api/settings/trust` are not served. */
+	bots?: Omit<BotsAppDeps, "logger">;
 	/** What the profile page shows of the owner: the server's configuration. */
 	profile: OwnerProfile;
 	/** The owner's time zone, which the schedule's times are in. */
@@ -432,6 +435,10 @@ export function createApp(deps: AppDeps): Hono {
 			...(deps.now === undefined ? {} : { now: deps.now }),
 		}),
 	);
+
+	if (deps.bots !== undefined) {
+		app.route("/api", createBotsApp({ ...deps.bots, ...(deps.logger === undefined ? {} : { logger: deps.logger }) }));
+	}
 
 	return app;
 }

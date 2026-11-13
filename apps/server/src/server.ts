@@ -5,7 +5,6 @@ import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
 import type { WebDeps } from "@assistant/extensions";
 import {
 	type AccountantDeps,
-	DEFAULT_TRUST_LEVEL,
 	type DelegateDeps,
 	type DocumentsDeps,
 	type FakeGoogle,
@@ -35,6 +34,7 @@ import { createWebPushSender, type PushSender } from "./push/sender.ts";
 import { loadOrCreateVapidKeys } from "./push/vapid.ts";
 import { openRuntime, type Runtime } from "./runtime.ts";
 import { startTelegram, type TelegramSetupOptions, telegramMigrations } from "./telegram/setup.ts";
+import { createTrustSettings, trustMigrations } from "./trust-settings.ts";
 import { createWebSetup, type WebService } from "./web.ts";
 
 export type ServerLogger = Pick<Console, "info" | "warn" | "error">;
@@ -156,10 +156,18 @@ export async function startServer(config: Config, options: StartServerOptions = 
 				throw new Error("A bot was created or deleted before the server finished starting.");
 			return botRuntime;
 		};
+		// The owner's trust levels: Settings overrides ZIMPOEN_PA_TRUST and the broker policy's project levels.
+		const brokerDeps = await loadCredBroker(config.credBroker, now, (message) => logger.warn(message));
+		const trust = createTrustSettings({
+			db,
+			now,
+			...(config.paTrust === undefined ? {} : { paDefault: config.paTrust }),
+			...(brokerDeps === undefined ? {} : { projects: brokerDeps.policy.projects }),
+		});
 		const domain = createDomain({
 			db,
 			bots: {
-				trustLevel: config.paTrust ?? DEFAULT_TRUST_LEVEL,
+				trustLevel: trust.pa,
 				spawn: (spec) => requireBotRuntime().spawn(spec),
 				retire: (slug) => requireBotRuntime().retire(slug),
 			},
@@ -180,11 +188,16 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			},
 			...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 			web: options.web ?? (await startWeb()),
-			...(await brokerFor(config, now, (message) => logger.warn(message))),
+			...(brokerDeps === undefined ? {} : { broker: { ...brokerDeps, trustOf: trust.project } }),
 			warn: (message) => logger.warn(message),
 		});
 		undo.push(() => domain.close());
-		const migrations = migrate(db, [...coreMigrations, ...domain.migrations, ...telegramMigrations]);
+		const migrations = migrate(db, [
+			...coreMigrations,
+			...domain.migrations,
+			...telegramMigrations,
+			...trustMigrations,
+		]);
 		if (migrations.applied.length > 0) logger.info(`[db] applied migrations: ${migrations.applied.join(", ")}`);
 		// A Jev key that is there and no good is told in Settings (the triage badge) as well as in the log.
 		if (triage.problem === undefined) inboxStore.clearState(db, "triage_error");
@@ -225,8 +238,8 @@ export async function startServer(config: Config, options: StartServerOptions = 
 		if (bots.ensured.length > 0) logger.info(`[bots] ${bots.ensured.length} bot(s): ${bots.ensured.join(", ")}`);
 		if (bots.archived.length > 0)
 			logger.info(`[bots] archived the conversations of deleted bots: ${bots.archived.join(", ")}`);
-		if (config.paTrust === "open")
-			logger.warn("[bots] ZIMPOEN_PA_TRUST=open: the PA creates and deletes bots without asking.");
+		if (trust.pa() === "open")
+			logger.warn("[bots] The PA's trust level is open: it creates and deletes bots without asking.");
 		await warnIfNoOpenAiLogin(logger, config, runtime);
 		logModelCatalog(logger, config, runtime);
 		await warnAboutParkedTasks(logger, harness);
@@ -257,6 +270,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			daily: domain.daily,
 			inbox: domain.inbox,
 			usage: domain.usage,
+			bots: { bots: domain.bots, trust },
 			profile: {
 				...(config.profile.ownerName === DEFAULT_OWNER_NAME ? {} : { ownerName: config.profile.ownerName }),
 				timezone: config.profile.timezone,
@@ -793,7 +807,3 @@ async function warnIfNoOpenAiLogin(logger: ServerLogger, config: Config, runtime
 }
 
 /** The credential broker when `ZIMPOEN_CRED_BROKER=on` (a bad policy stops the start), nothing otherwise. */
-async function brokerFor(config: Config, now: () => number, warn: (message: string) => void) {
-	const broker = await loadCredBroker(config.credBroker, now, warn);
-	return broker === undefined ? {} : { broker };
-}

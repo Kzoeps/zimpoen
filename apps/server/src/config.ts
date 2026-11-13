@@ -125,7 +125,7 @@ export type Config = {
 	credBroker: CredBrokerConfig;
 	/** `ASSISTANT_CHROMIUM_PATH`: the Chrome or Chromium that makes PDFs. Absent: the usual install paths are tried. */
 	chromiumPath?: string;
-	/** `ZIMPOEN_PA_TRUST`: whether the PA asks before creating or deleting a bot (PLAN upgrade §3). Absent: normal (asks). */
+	/** `ZIMPOEN_PA_TRUST`: the default of whether the PA asks before creating or deleting a bot (PLAN upgrade §3); the owner's choice in Settings overrides it. Absent: normal (asks). */
 	paTrust?: TrustLevel;
 };
 
