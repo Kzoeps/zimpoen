@@ -61,6 +61,7 @@ import {
 	memoryModule,
 	type PostedEntry,
 	peopleModule,
+	routinesModule,
 	type ScheduleSettings,
 	type SyncSettings,
 	splitsModule,
@@ -231,6 +232,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		memoryModule,
 		usageModule,
 		webModule,
+		routinesModule,
 		botsModule,
 	];
 	migrate(db, [...coreMigrations, ...collectMigrations(modules)]);

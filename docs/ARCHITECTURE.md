@@ -39,7 +39,8 @@ subscription OAuth is not used: its consumer terms don't allow it.
 7. **Arithmetic is code, never the model:** splits, balances, totals, document numbers.
 8. **Every tool write to `app.sqlite` is idempotent by tool call id** (`source_call_id UNIQUE`, or a per-module `*_call`
    table), because Durable may replay a tool after a crash.
-9. **Secrets** (`credentials.json`, `vapid.json`, `google-oauth.json`, `google-accounts.json`, `jev.json`, `search.json`) live in
+9. **Secrets** (`credentials.json`, `vapid.json`, `google-oauth.json`, `google-accounts.json`, `jev.json`, `search.json`,
+   `telegram.json`) live in
    `<data>/secrets/` (0700, files 0600) and are never readable by an agent.
 10. **Server and web bind to `127.0.0.1` only.** Tailscale Serve is the only way in.
 11. **The web is read, public only.** The PA and the Accountant have `web_search`, `fetch_content`,
@@ -135,11 +136,11 @@ display-only card. Specialists can't reach each other. The Inbox reaches the PA 
 
 | Agent | Extensions |
 |---|---|
-| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `memory`, `tool_search`, `bots` |
+| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `routines`, `memory`, `tool_search`, `bots` |
 | `inbox` | `inbox`, `memory-read` |
 | `health` | `health`, `approvals`, `memory`, `tool_search` |
 | `accountant` | `ledger`, `splits`, `documents`, `files`, `approvals`, `memory`, `tool_search`, code mode |
-| `bot:<slug>` | the presets the PA chose (`tasks`, `health`, `ledger`, `splits`, `documents`, `web`, `memory`, `codemode`), `approvals`, `tool_search` |
+| `bot:<slug>` | the presets the PA chose (`tasks-read`, `documents`, `web`, `memory`, `codemode`), `approvals`, `tool_search` |
 
 **Bots (upgrade §4).** The PA's `create_bot`, `delete_bot` and `list_bots` (deferred) manage up to 8 specialist bots. A
 `bots_bot` row is authoritative: at every start the server gives each row a conversation (agent id `bot:<slug>`, built
@@ -147,9 +148,9 @@ by `botAgentDef` in `apps/server/src/agents.ts`) and archives the conversation o
 is rewritten so it is never adopted again; durable.sqlite keeps it). Creating or deleting follows the PA's trust level
 (`ZIMPOEN_PA_TRUST`, `decide()` in `packages/extensions/src/trust.ts`): `normal` (default) and `strict` ask through the
 approvals flow (actions `spawn_bot`, `retire_bot`), `open` runs and logs. Both tools refuse during a scheduled run (rule
-13): `isScheduledRun()` (`packages/extensions/src/scheduled-run.ts`) reads the run's inputs from `LiveDoc` and refuses
-when one has a scheduled request id (`routine:`, `daily:`, `briefing:`, `wrapup:`, `digest_*:`). `ask_agent` reaches bots
-by id; bots have no `ask_agent`.
+13), through the `isScheduledRun()` routines use too (`packages/extensions/src/scheduled-run.ts`: daily job ids come from
+`DAILY_JOBS`). `ask_agent` reaches bots
+by id; bots have no `ask_agent`. Deleting a bot aborts its run and clears its memory scope and weekly limit.
 
 Code mode runs scripts in a QuickJS sandbox with no network, no files and no model calls. Each script has a time limit
 (30 s by default, 2 minutes at most).
@@ -223,11 +224,21 @@ timer.**
 | Birthday (yearly) | `app.birthday` | `remind_wait → remind → check_wait → check`, then next year's cycle |
 | Daily jobs | `app.daily` | `wait → run` |
 | Gmail sync (per account) | `app.inbox-sync` | `wait → run` |
+| Routine | `app.routine` | `wait → run` |
 
 **Daily jobs:** morning briefing (07:30), evening wrap-up (21:00), inbox digests (12:30, 19:00). Times are settings
 (`schedule_daily`). At run time, code gathers facts from every module's provider and sends them to the agent as one
 request. With nothing to report it posts a card and makes no model call. A briefing that missed its time while the server
 was down still runs until 11:00 (wrap-up until midnight, digests within 2 h). Each day runs at most once.
+
+**Routines:** agent-proposed, owner-approved (`propose_routine` → Approve/YES → the server creates it; `list_routines` and
+`cancel_routine` see only the calling conversation; PA only for now). Daily or weekly at HH:MM
+in the owner's zone, or every N ≥ 1 hours; at most 20 active. A run is an `ask` with request id `routine:<id>:<slot ISO>`,
+so a slot runs at most once. After downtime only the newest due slot runs; one more than 6 h late is skipped. A routine
+whose agent is over its weekly token limit skips the slot. Rule 13: `isScheduledRun(harness, conversationId)`
+(`packages/extensions/src/scheduled-run.ts`) is true while a `routine:` or daily-job input (parsed by `parseScheduledRequestId`) is placed in the
+conversation's run; propose/cancel routine tools refuse then, and other self-propagating tools (bots, broker) should
+call it too.
 
 **Gmail sync:** first read is the last 14 days (≤ 1,000 mails), then `history.list`. Failures back off exponentially
 (≤ 1 h). A refused token marks the account `needs_reconnect` and stops its timer.
@@ -278,6 +289,24 @@ reconnecting just gets a fresh snapshot. At most 8 streams are open.
   `none`.
 - With `ASSISTANT_AUTH=on`, the peer must be loopback and `Tailscale-User-Login` must equal `ASSISTANT_OWNER_LOGIN`.
 - JSON bodies are capped at 256 KB.
+
+### 5.5a Telegram bridge
+
+`apps/server/src/telegram/`, off unless `ZIMPOEN_TELEGRAM=on` (off starts nothing). The bot token is
+`<data>/secrets/telegram.json` (`{ "token": "..." }`). A long poll (`getUpdates`, offset in `telegram_state`) reads
+updates. While unbound, the server logs a one-time code; `/start <code>` from a private chat binds that chat, and every
+other chat is ignored without an answer. Owner text goes to the PA as an input with request id `tg:<update_id>` (an exact
+YES goes through `tryYes`, §5.6); when the run ends, its final text is sent back in 4096-char pieces, at most once
+(`telegram_reply`, resumed after a restart). Voice notes (≤ 5 min, ≤ 10 MB) are converted by `ffmpeg` to 16 kHz mono WAV
+and transcribed by whisper.cpp's `whisper-cli` with fixed argv (`ZIMPOEN_WHISPER_BIN`, `ZIMPOEN_WHISPER_MODEL`, both or
+neither); only `[Voice note transcript] …` reaches the thread. No agent has a Telegram tool.
+
+- A Telegram YES approves the one waiting request (rule 3, same `tryYes` window as the web) without the approval card
+  being shown in Telegram: the owner approves from the chat context alone. Check the card in the web app when unsure.
+- Voice notes are transcribed inside the poll loop, so text sent during a transcription (up to ~6 min) waits for it.
+- A reply is retried with backoff when its first piece fails to send; once a piece went out it is never resent. A message
+  that could not be passed on gets a "please send it again" answer. Text over 20 000 characters is cut, with a note.
+- Open: the start code is printed to the server log and does not expire until a chat binds.
 
 ### 5.6 Approvals
 
@@ -330,6 +359,8 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 | inbox | `inbox_account`, `inbox_message` + FTS5, `inbox_event`, `inbox_rule`, `inbox_suggestion`, `inbox_digest`, `inbox_read_failure`, `inbox_state`, `inbox_call` |
 | delegate | `delegate_ask` |
 | bots | `bots_bot`, `bots_call` |
+| telegram (server, not a module) | `telegram_state` (poll offset, bound chat, one-time start code), `telegram_reply` |
+| routines | `routines_routine`, `routines_call` |
 
 Conventions:
 

@@ -7,7 +7,7 @@ import type { TimerScheduler } from "../timers.ts";
 import { type DailyFactsProvider, sectionOf } from "./facts.ts";
 import { DAILY_JOBS, type DailyJob } from "./jobs.ts";
 import { dailyMigrations } from "./migrations.ts";
-import { buildPlan, dateText, deliver, endsWithDailyRequest, withBudget } from "./run.ts";
+import { buildPlan, dailyRequestId, dateText, deliver, endsWithDailyRequest, withBudget } from "./run.ts";
 import { createScheduleAction, createScheduleTools } from "./schedule-tools.ts";
 import { createDailyScheduler } from "./scheduler.ts";
 import { createDailyService, type DailyService } from "./service.ts";
@@ -119,7 +119,10 @@ export type DailyStart = RunRecovery & {
 };
 
 /** The request ids a run of `job` on `date` can have: it asks the model, or (for a briefing with nothing to say) posts a card. */
-const requestIdsOf = (job: DailyJob, date: string): string[] => [`${job.id}:${date}`, `${job.id}:${date}:empty`];
+const requestIdsOf = (job: DailyJob, date: string): string[] => [
+	dailyRequestId(job.id, date),
+	dailyRequestId(job.id, date, true),
+];
 
 /** Whether Durable's database has a run of `job` on `date`, whichever of its two shapes it took (placed in the thread or still queued). */
 async function hasRun(deps: DomainDeps, job: DailyJob, date: string, conversationId: number): Promise<boolean> {
@@ -215,7 +218,7 @@ export {
 	WRAPUP_PUSH,
 } from "./jobs.ts";
 export { nextOccurrence, occurrenceOn, TIME_OF_DAY } from "./occurrence.ts";
-export { endsWithDailyRequest, renderRequest, renderSections } from "./run.ts";
+export { dailyRequestId, endsWithDailyRequest, renderRequest, renderSections } from "./run.ts";
 export { type DailyService, InvalidDailyTime, UnknownDailyJob } from "./service.ts";
 export * as dailyStore from "./store.ts";
 export { DAILY_TASK_NAME, type DailyInput } from "./task.ts";
