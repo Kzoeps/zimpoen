@@ -1,4 +1,10 @@
-import type { BotsResponse, CreateBotRequest, TrustLevelName, TrustSettingView } from "@assistant/shared";
+import {
+	BOT_SLUG_PATTERN,
+	type BotsResponse,
+	type CreateBotRequest,
+	type TrustLevelName,
+	type TrustSettingView,
+} from "@assistant/shared";
 
 /** What the owner is typing into the new-bot form. */
 export type BotDraft = { name: string; slug: string; avatar: string; soul: string; tools: string[] };
@@ -25,7 +31,7 @@ export function draftProblem(draft: BotDraft, data: BotsResponse): string | unde
 		return `There are already ${data.max} bots, the most there can be. Delete one first.`;
 	if (draft.name.trim() === "") return "Give the bot a name.";
 	if (draft.name.trim().length > data.maxNameChars) return `A name is at most ${data.maxNameChars} characters.`;
-	if (!/^[a-z][a-z0-9-]{1,31}$/.test(draft.slug.trim()))
+	if (!BOT_SLUG_PATTERN.test(draft.slug.trim()))
 		return "The id is 2 to 32 lowercase letters, digits and dashes, starting with a letter.";
 	if (draft.soul.trim() === "") return "Say who the bot is and what it does.";
 	if (draft.soul.length > data.maxSoulChars) return `The instructions are at most ${data.maxSoulChars} characters.`;
