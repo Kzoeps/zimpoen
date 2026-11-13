@@ -17,6 +17,8 @@ export {
 export {
 	BOT_PRESETS,
 	BOTS_EXTENSION_NAME,
+	BotConflict,
+	BotNotFound,
 	type BotPreset,
 	type BotSpec,
 	BotSpecError,
@@ -25,10 +27,13 @@ export {
 	botsStore,
 	CREATE_BOT_ACTION,
 	cleanBotSpec,
+	createOwnerBots,
 	DELETE_BOT_ACTION,
 	isBotPreset,
+	MAX_BOT_NAME_CHARS,
 	MAX_BOTS,
 	MAX_SOUL_CHARS,
+	type OwnerBots,
 } from "./bots/index.ts";
 export {
 	type AuditEvent,
@@ -51,6 +56,7 @@ export {
 	execProgram,
 	type Policy,
 	PolicyError,
+	type ProjectPolicy,
 	parsePolicy,
 	REDACTED,
 	type SecretStore,

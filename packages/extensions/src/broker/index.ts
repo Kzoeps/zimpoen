@@ -32,7 +32,7 @@ export {
 	execProgram,
 	resolveRequest,
 } from "./broker.ts";
-export { type ActionPolicy, buildArgv, type Policy, PolicyError, parsePolicy } from "./policy.ts";
+export { type ActionPolicy, buildArgv, type Policy, PolicyError, type ProjectPolicy, parsePolicy } from "./policy.ts";
 export { capBytes, REDACTED, scrub, secretVariants } from "./scrub.ts";
 export { createFileSecretStore, createMemorySecretStore, type SecretStore } from "./secrets.ts";
 export * as brokerStore from "./store.ts";

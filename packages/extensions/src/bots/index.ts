@@ -20,8 +20,17 @@ export {
 	BotSpecError,
 	cleanSpec as cleanBotSpec,
 	isBotPreset,
+	MAX_BOT_NAME_CHARS,
 	MAX_BOTS,
 	MAX_SOUL_CHARS,
 } from "./presets.ts";
 export * as botsStore from "./store.ts";
-export { type BotsDeps, CREATE_BOT_ACTION, DELETE_BOT_ACTION } from "./tools.ts";
+export {
+	BotConflict,
+	BotNotFound,
+	type BotsDeps,
+	CREATE_BOT_ACTION,
+	createOwnerBots,
+	DELETE_BOT_ACTION,
+	type OwnerBots,
+} from "./tools.ts";

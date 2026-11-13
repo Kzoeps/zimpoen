@@ -76,6 +76,18 @@ export {
 	type UpdateAgentSettingsRequest,
 } from "./api.ts";
 export {
+	type BotsResponse,
+	type BotView,
+	type CreateBotRequest,
+	isTrustLevelName,
+	type ProjectTrustView,
+	TRUST_LEVEL_NAMES,
+	type TrustLevelName,
+	type TrustSettingsResponse,
+	type TrustSettingView,
+	type UpdateTrustRequest,
+} from "./bots.ts";
+export {
 	AGENDA_ENTRY_KIND,
 	type AgendaEntryData,
 	type ApprovalCard,

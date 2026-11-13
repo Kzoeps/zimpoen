@@ -5,10 +5,10 @@ import type { ActionArgs, ApprovalAction } from "../approvals/service.ts";
 import type { DomainDeps } from "../module.ts";
 import { currentRunRequestIds, isScheduledRunIds } from "../scheduled-run.ts";
 import { asDetails, text } from "../tool-support.ts";
-import { decide } from "../trust.ts";
+import { decide, type TrustLevel } from "../trust.ts";
 import type { AuditEvent, AuditLog } from "./audit.ts";
 import { type CredBroker, type CredRunResult, resolveRequest } from "./broker.ts";
-import type { Policy } from "./policy.ts";
+import type { Policy, ProjectPolicy } from "./policy.ts";
 import * as store from "./store.ts";
 
 /** What the broker module needs from the server. Absent (`ZIMPOEN_CRED_BROKER=off`): no tool, no action. */
@@ -16,6 +16,11 @@ export type BrokerDeps = {
 	broker: CredBroker;
 	policy: Policy;
 	audit: AuditLog;
+	/**
+	 * The trust level that applies to a project now: the owner's choice in Settings when there is one. Default: the level
+	 * in the policy. Read at every call, so a change applies to the next one. Only the owner sets it; no tool can.
+	 */
+	trustOf?: (project: ProjectPolicy) => TrustLevel;
 	/**
 	 * The request ids of the inputs the calling conversation's current run answers. Default: read from the Harness's live
 	 * submissions. Tests replace it.
@@ -75,7 +80,7 @@ export function createCredExecAction(deps: Deps): ApprovalAction {
 				);
 			}
 			const resolved = resolveRequest(deps.broker.policy, request);
-			const decision = decide(resolved.project.trust, resolved.action.sensitivity, {
+			const decision = decide(trustOf(deps.broker, resolved.project), resolved.action.sensitivity, {
 				strictDeny: resolved.action.strictDeny,
 			});
 			const base = { callId: key, conversationId, ...request, approvalId: actionId, createdAt: now() };
@@ -98,6 +103,8 @@ export function createCredExecAction(deps: Deps): ApprovalAction {
 	};
 }
 
+const trustOf = (broker: BrokerDeps, project: ProjectPolicy): TrustLevel => broker.trustOf?.(project) ?? project.trust;
+
 const storedResult = (row: store.CallRow): CredRunResult => ({
 	exitCode: row.exitCode ?? -1,
 	output: row.output ?? "",
@@ -111,7 +118,8 @@ export function createBrokerTools(deps: Deps): ToolRegistration[] {
 	const runRequestIds =
 		deps.broker.runRequestIds ??
 		((api) => (deps.runRequestIds ?? ((id) => currentRunRequestIds(deps.harness(), id)))(Number(api.conversationId)));
-	const projects = [...policy.projects.values()].map((p) => `${p.id} (${p.trust})`).join(", ") || "none";
+	// Without levels: the owner may change a project's level while the server runs, and this text is fixed at start.
+	const projects = [...policy.projects.keys()].join(", ") || "none";
 	const actions = [...policy.actions.values()]
 		.map((a) => `${a.id}${a.params.size > 0 ? ` {${[...a.params.keys()].join(", ")}}` : ""} [${a.sensitivity}]`)
 		.join("; ");
@@ -187,7 +195,7 @@ export function createBrokerTools(deps: Deps): ToolRegistration[] {
 			}
 			// A bad request throws for the model to fix; nothing is recorded, so the corrected call is a new call.
 			const resolved = resolveRequest(policy, request);
-			const decision = decide(resolved.project.trust, resolved.action.sensitivity, {
+			const decision = decide(trustOf(deps.broker, resolved.project), resolved.action.sensitivity, {
 				strictDeny: resolved.action.strictDeny,
 			});
 
