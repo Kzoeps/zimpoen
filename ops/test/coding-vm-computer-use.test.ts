@@ -75,6 +75,24 @@ describe("every ops script parses", () => {
 	});
 });
 
+describe("--help prints the whole header", () => {
+	for (const rel of SCRIPTS.filter((s) => !s.endsWith("entrypoint.sh"))) {
+		it(rel, () => {
+			const header = read(rel).split("\n");
+			const end = header.indexOf("set -euo pipefail");
+			const lastComment = header
+				.slice(1, end)
+				.filter((l) => l.startsWith("#"))
+				.pop()
+				?.replace(/^# ?/, "");
+			const r = run(rel, ["--help"]);
+			expect(r.code).toBe(0);
+			expect(r.out.trimEnd().split("\n").pop()).toBe(lastComment);
+			expect(r.calls).toEqual([]);
+		});
+	}
+});
+
 describe("coding VM egress rules", () => {
 	const env = {
 		ZCV_RELAY: "100.64.0.10:7443",

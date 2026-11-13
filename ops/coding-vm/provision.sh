@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
 		--config) CONFIG="${2:-}"; shift ;;
 		--dry-run) DRY_RUN=1 ;;
 		-h | --help)
-			sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+			sed -n '2,/^set -euo pipefail$/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'
 			exit 0
 			;;
 		*)

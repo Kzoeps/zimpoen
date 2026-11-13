@@ -31,7 +31,7 @@ while [ $# -gt 0 ]; do
 		--remote) REMOTE="${2:-}"; shift ;;
 		--dry-run) DRY_RUN=1 ;;
 		-h | --help)
-			sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+			sed -n '2,/^set -euo pipefail$/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'
 			exit 0
 			;;
 		*)
