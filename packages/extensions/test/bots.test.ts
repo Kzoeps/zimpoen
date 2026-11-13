@@ -360,6 +360,41 @@ describe("the owner's bots (the Bots page)", () => {
 		await expect(owner.delete("research")).rejects.toBeInstanceOf(BotNotFound);
 	});
 
+	it("refuses the shell preset when the shell is off, and deletes the bot's shell storage with the bot", async () => {
+		const { f } = await open();
+		const spec = { ...RESEARCH, slug: "coder", tools: ["shell"] };
+		const off = createOwnerBots(f.deps, () => "owner:1");
+		await expect(off.create(spec)).rejects.toThrow(/ZIMPOEN_SHELL=off/);
+		expect(botsStore.getBot(f.db, "coder")).toBeUndefined();
+		await expect(f.callTool("create_bot", spec, "call-shell")).rejects.toThrow(/ZIMPOEN_SHELL=off/);
+
+		const removed: string[] = [];
+		const runner = {
+			run: async () => ({ exitCode: 0, output: "", timedOut: false, truncated: false }),
+			removeVolume: async (agentId: string) => {
+				removed.push(agentId);
+			},
+		};
+		const on = createOwnerBots({ ...f.deps, shell: { runner } }, () => "owner:2");
+		await on.create(spec);
+		await on.delete("coder");
+		expect(removed).toStrictEqual(["bot:coder"]);
+	});
+
+	it("keeps the bot when its shell storage cannot be deleted, so the delete can be repeated", async () => {
+		const { f } = await open();
+		botsStore.insertBot(f.db, { ...cleanBotSpec(RESEARCH), approvedVia: "owner", callId: "c1", now: 1 });
+		const runner = {
+			run: async () => ({ exitCode: 0, output: "", timedOut: false, truncated: false }),
+			removeVolume: async () => {
+				throw new Error("engine down");
+			},
+		};
+		const owner = createOwnerBots({ ...f.deps, shell: { runner } }, () => "owner:3");
+		await expect(owner.delete("research")).rejects.toThrow("engine down");
+		expect(botsStore.getBot(f.db, "research")).toBeDefined();
+	});
+
 	it("keeps the cap", async () => {
 		const { f } = await open();
 		const owner = createOwnerBots(f.deps, () => "owner:x");

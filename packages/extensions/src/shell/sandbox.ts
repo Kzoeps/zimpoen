@@ -55,6 +55,8 @@ export type ShellRunResult = { exitCode: number; output: string; timedOut: boole
 /** Runs one command in an agent's sandbox. The real one drives docker/podman; tests use a fake. */
 export interface ContainerRunner {
 	run(req: ShellRunRequest): Promise<ShellRunResult>;
+	/** Delete the agent's workspace volume and everything in it. Nothing to delete is success; a failure throws. */
+	removeVolume(agentId: string): Promise<void>;
 }
 
 const AGENT_ID = /^(pa|health|accountant|bot:[a-z][a-z0-9-]{1,31})$/;
@@ -186,6 +188,15 @@ export function createEngineRunner(config: ShellSandboxConfig, exec: ExecFn = ex
 	};
 
 	return {
+		async removeVolume(agentId) {
+			const volume = volumeName(agentId);
+			ready.delete(volume);
+			if ((await admin(["volume", "inspect", volume])).exitCode !== 0) return;
+			// --force also removes a container still using the volume (one left by a killed command).
+			const removed = await admin(["volume", "rm", "--force", volume]);
+			if (removed.exitCode !== 0)
+				throw new Error(`Could not delete the sandbox volume ${volume}: ${removed.output.trim()}`);
+		},
 		async run(req) {
 			await ensureVolume(req.agentId);
 			const [file, ...args] = buildRunArgv(config, req) as [string, ...string[]];

@@ -26,7 +26,7 @@ export type BotsDeps = {
 	isScheduledRun?: (conversationId: number) => Promise<boolean>;
 };
 
-type Deps = Pick<DomainDeps, "db" | "now" | "harness" | "approvals" | "bots" | "warn" | "runRequestIds">;
+type Deps = Pick<DomainDeps, "db" | "now" | "harness" | "approvals" | "bots" | "warn" | "runRequestIds" | "shell">;
 
 /** Approval action names: not tools the model can call. The server runs them when the owner approves. */
 export const CREATE_BOT_ACTION = "spawn_bot";
@@ -35,6 +35,15 @@ export const DELETE_BOT_ACTION = "retire_bot";
 function requireBots(deps: Deps): BotsDeps {
 	if (deps.bots === undefined) throw new Error("Bots are not set up on this server.");
 	return deps.bots;
+}
+
+/** A preset whose tool this server does not have is refused, not silently given: the bot would believe it has a shell. */
+function requireAvailablePresets(deps: Deps, spec: BotSpec): void {
+	if (spec.tools.includes("shell") && deps.shell === undefined) {
+		throw new BotSpecError(
+			"The 'shell' preset needs the sandboxed shell, which is off on this server (ZIMPOEN_SHELL=off). Leave 'shell' out, or ask the owner to turn the shell on.",
+		);
+	}
 }
 
 function specFromArgs(args: ActionArgs): { spec: BotSpec; callId: string } {
@@ -64,6 +73,7 @@ async function createBot(deps: Deps, spec: BotSpec, via: "owner" | "open", callI
 		);
 	}
 	if (existing === undefined) {
+		requireAvailablePresets(deps, spec);
 		if (store.countBots(deps.db) >= MAX_BOTS) {
 			throw new BotConflict(`There are already ${MAX_BOTS} bots, the most there can be. Delete one first.`);
 		}
@@ -73,10 +83,12 @@ async function createBot(deps: Deps, spec: BotSpec, via: "owner" | "open", callI
 	return `Created the bot ${spec.name} (${botIdOf(spec.slug)}) with ${spec.tools.length === 0 ? "no tools" : spec.tools.join(", ")}. It is in the sidebar, and ask_agent can reach it.`;
 }
 
-/** Delete the bot: the row first, then archive its conversation. Safe to run twice. */
+/** Delete the bot: its shell storage, then the row, then archive its conversation. Safe to run twice. */
 async function deleteBot(deps: Deps, slug: string): Promise<string> {
 	const bots = requireBots(deps);
 	const known = store.getBot(deps.db, slug);
+	// Storage first: when the engine fails, nothing is deleted and the same request can be repeated.
+	await deps.shell?.runner.removeVolume(botIdOf(slug));
 	store.deleteBot(deps.db, slug);
 	await bots.retire(slug);
 	// A later bot with the same slug starts clean: nothing the old one kept, and no weekly limit set for it.
@@ -234,6 +246,7 @@ export function createBotTools(deps: Deps) {
 				let spec: BotSpec;
 				try {
 					spec = cleanSpec(args);
+					requireAvailablePresets(deps, spec);
 				} catch (error) {
 					if (error instanceof BotSpecError) throw new Error(error.message);
 					throw error;
@@ -266,7 +279,7 @@ export function createBotTools(deps: Deps) {
 	const deleteBotTool = defineTool({
 		name: "delete_bot",
 		description:
-			"Delete a bot you created. Its chat is archived, not erased. Depending on the owner's trust setting it asks them to approve first.",
+			"Delete a bot you created. Its chat is archived, not erased; its shell workspace files are deleted for good. Depending on the owner's trust setting it asks them to approve first.",
 		parameters: Type.Object({ slug: Type.String({ minLength: 1, maxLength: 40, description: "The bot's slug." }) }),
 		replay: "safe",
 		deferred: true,

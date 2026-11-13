@@ -116,6 +116,29 @@ describe("engine runner", () => {
 		expect(calls[3]?.timeoutMs).toBe(5000);
 	});
 
+	it("removes an agent's volume, does nothing when there is none, and reports a failure", async () => {
+		let exists = true;
+		let rmFails = false;
+		const { calls, exec } = fakeExec((args) => {
+			if (args[1] === "inspect") return exists ? ok() : { ...ok("no such volume"), exitCode: 1 };
+			if (args[1] === "rm") return rmFails ? { ...ok("volume in use"), exitCode: 1 } : ok();
+			return ok();
+		});
+		const runner = createEngineRunner(CONFIG, exec);
+		await runner.removeVolume("bot:coder");
+		expect(calls.map((call) => call.args.join(" "))).toEqual([
+			"volume inspect zimpoen-shell-bot-coder",
+			"volume rm --force zimpoen-shell-bot-coder",
+		]);
+		exists = false;
+		calls.length = 0;
+		await runner.removeVolume("bot:coder");
+		expect(calls).toHaveLength(1);
+		exists = true;
+		rmFails = true;
+		await expect(runner.removeVolume("bot:coder")).rejects.toThrow("volume in use");
+	});
+
 	it("chowns an existing volume too, and retries a chown that failed", async () => {
 		let chownFails = true;
 		const { calls, exec } = fakeExec((args) => {
@@ -258,6 +281,7 @@ describe("shell_run tool", () => {
 		botsStore.insertBot(db, { ...bot, slug: "reader", tools: ["web"], callId: "b2" });
 		const runs: ShellRunRequest[] = [];
 		const runner: ContainerRunner = {
+			removeVolume: async () => undefined,
 			run: async (req) => {
 				runs.push(req);
 				if (options.fail === true) throw new Error("Could not create the sandbox volume zimpoen-shell-pa: boom");
