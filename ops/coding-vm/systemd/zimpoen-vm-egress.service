@@ -1,0 +1,16 @@
+# Coding VM: load the egress firewall (ops/coding-vm/egress.sh) at boot, before the network is up for anything else.
+# Installed by ops/coding-vm/provision.sh. Settings: /etc/zimpoen-vm/egress.env.
+[Unit]
+Description=zimpoen coding VM: egress firewall
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/zimpoen-vm/egress.env
+ExecStart=/usr/local/lib/zimpoen-vm/egress.sh --apply
+
+[Install]
+WantedBy=multi-user.target

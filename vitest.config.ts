@@ -6,7 +6,7 @@ export default defineConfig({
 	oxc: { jsx: { runtime: "automatic" } },
 	test: {
 		environment: "node",
-		include: ["{apps,packages}/*/test/**/*.test.ts", "{apps,packages}/*/src/**/*.test.ts"],
+		include: ["{apps,packages}/*/test/**/*.test.ts", "{apps,packages}/*/src/**/*.test.ts", "ops/test/**/*.test.ts"],
 		exclude: [...configDefaults.exclude, "**/.next/**"],
 		// Integration tests open real SQLite files and run Durable tasks; give slow CI-like laptops room.
 		testTimeout: 20_000,
