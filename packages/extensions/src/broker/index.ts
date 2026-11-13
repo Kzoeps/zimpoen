@@ -37,21 +37,7 @@ export { capBytes, REDACTED, scrub, secretVariants } from "./scrub.ts";
 export {
 	createFileSecretStore,
 	createMemorySecretStore,
-	createSystemdCredsStore,
 	type SecretStore,
 } from "./secrets.ts";
-export {
-	type BrokerSocketServerDeps,
-	checkSocketDirectory,
-	createSocketBroker,
-	fetchBrokerPolicy,
-	listenBrokerSocket,
-	MAX_CONNECTIONS,
-	MAX_REQUEST_BYTES,
-	MAX_RESPONSE_BYTES,
-	PROTOCOL_VERSION,
-	REQUEST_READ_TIMEOUT_MS,
-	type SocketBrokerOptions,
-} from "./socket.ts";
 export * as brokerStore from "./store.ts";
 export { type BrokerDeps, CRED_EXEC_ACTION } from "./tools.ts";

@@ -61,7 +61,7 @@ export type ProjectTrustView = TrustSettingView & { id: string };
 export type TrustSettingsResponse = {
 	/** Whether the PA asks before creating or deleting a bot. */
 	pa: TrustSettingView;
-	/** Whether the credential broker is on (`ZIMPOEN_CRED_BROKER=on`). Off: no projects. */
+	/** Whether the credential broker is on (`ZIMPOEN_CRED_BROKER=inprocess`). Off: no projects. */
 	broker: "on" | "off";
 	/** The broker policy's projects. */
 	projects: ProjectTrustView[];

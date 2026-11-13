@@ -4,7 +4,7 @@ import { MIN_SECRET_LENGTH } from "./scrub.ts";
 
 /**
  * Where the broker keeps credential values. Only the broker reads it; nothing returns a value to an agent, a model or
- * the database. A separate `zbroker` process with systemd-creds storage replaces the file store later (plan §9).
+ * the database.
  */
 export interface SecretStore {
 	/** The secret's value. Throws when there is none: the message names the ref, never a value. */
@@ -40,34 +40,6 @@ export function createFileSecretStore(dir: string): SecretStore {
 			}
 			const value = (await readFile(path, "utf8")).replace(/\r?\n$/, "");
 			return checked(ref, value);
-		},
-	};
-}
-
-/**
- * The `zimpoen-broker` unit's store: systemd decrypts each `LoadCredentialEncrypted=<ref>:...` into
- * `$CREDENTIALS_DIRECTORY/<ref>`, readable only by the service. `dir` is that variable's value; a missing variable is an
- * error naming the unit setting, so a broker started outside systemd says why it has no secrets.
- */
-export function createSystemdCredsStore(dir: string | undefined): SecretStore {
-	if (dir === undefined || dir === "") {
-		throw new Error(
-			"CREDENTIALS_DIRECTORY is not set: the systemd-creds store only works inside a unit with LoadCredentialEncrypted= " +
-				"(ops/systemd/zimpoen-broker.service). For development use ZIMPOEN_BROKER_SECRETS=file.",
-		);
-	}
-	return {
-		async get(ref) {
-			if (!REF.test(ref)) throw new Error(`'${ref}' is not a valid secret name.`);
-			let value: string;
-			try {
-				value = await readFile(join(dir, ref), "utf8");
-			} catch {
-				throw new Error(
-					`Secret '${ref}' is not loaded. Add LoadCredentialEncrypted=${ref}:/etc/credstore.encrypted/${ref} to zimpoen-broker.service.`,
-				);
-			}
-			return checked(ref, value.replace(/\r?\n$/, ""));
 		},
 	};
 }
