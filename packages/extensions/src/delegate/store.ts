@@ -1,7 +1,7 @@
 import type { AppDb } from "@assistant/db";
 import type { BotId } from "@assistant/shared";
 
-export type AskedAgent = "inbox" | "health" | "accountant" | BotId;
+export type AskedAgent = "inbox" | "health" | "accountant" | "cto" | BotId;
 
 export type AskRow = {
 	id: string;

@@ -377,6 +377,14 @@ export function createApp(deps: AppDeps): Hono {
 			const body: SendMessageResponse = { submissionId: approved.submissionId };
 			return c.json(body, 202);
 		}
+		// Hub and spoke (PLAN upgrade §7): the CTO takes work only from the PA. A YES above still approves its requests.
+		if (agentForConversation(db, id, agents)?.id === "cto") {
+			throw new ApiError(
+				403,
+				"forbidden",
+				"The CTO takes work only through the assistant (the PA). Ask the PA; you can still answer the CTO's approval requests here with Approve or YES.",
+			);
+		}
 		// A repeated requestId returns the original submission, so a retry after a dropped response is safe.
 		const submission = await conversation.submit(
 			{ type: "input", content, requestId, ...(whenBusy === undefined ? {} : { whenBusy }) },

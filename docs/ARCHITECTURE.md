@@ -136,10 +136,11 @@ display-only card. Specialists can't reach each other. The Inbox reaches the PA 
 
 | Agent | Extensions |
 |---|---|
-| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `routines`, `memory`, `tool_search`, `bots`, `broker` (only with `ZIMPOEN_CRED_BROKER=on`) |
+| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `routines`, `memory`, `tool_search`, `bots`, `broker` (unless `ZIMPOEN_CRED_BROKER=off`) |
 | `inbox` | `inbox`, `memory-read` |
 | `health` | `health`, `approvals`, `memory`, `tool_search` |
 | `accountant` | `ledger`, `splits`, `documents`, `files`, `approvals`, `memory`, `tool_search`, code mode |
+| `cto` (only with `ZIMPOEN_CTO=on`) | `cto`, `broker` (only with `ZIMPOEN_CRED_BROKER=on`), `approvals`, `tool_search` |
 | `bot:<slug>` | the presets the PA chose (`tasks-read`, `documents`, `web`, `memory`, `codemode`), `approvals`, `tool_search` |
 
 **Bots (upgrade §4).** The PA's `create_bot`, `delete_bot` and `list_bots` (deferred) manage up to 8 specialist bots. A
@@ -338,7 +339,12 @@ neither); only `[Voice note transcript] …` reaches the thread. No agent has a 
 
 ### 5.7 Credential broker (phase 1d)
 
-`ZIMPOEN_CRED_BROKER=off|on`, default `off`: no tool, no approval action, nothing read. When `on`, the PA gets
+`ZIMPOEN_CRED_BROKER=off|inprocess|socket` (`on` means `inprocess`), default `off`: no tool, no approval action,
+nothing read. `inprocess` runs the broker inside the server (development). `socket` uses the separate `zimpoen-broker`
+process (`apps/server/src/broker-main.ts`, unit `ops/systemd/zimpoen-broker.service`, own user, secrets from
+`systemd-creds`) through `createSocketBroker` (`packages/extensions/src/broker/socket.ts`): one line of JSON per request
+and reply, size and time capped; the server fetches the policy from the broker at start. Access to the socket is its
+0750 directory (Node has no SO_PEERCRED); see docs/OPS.md "Broker". Otherwise the PA gets
 `cred_run({ project, credId, action, params })` (module `packages/extensions/src/broker/`, server side
 `apps/server/src/broker.ts`). It runs a fixed action from an owner-written policy with a credential the agent never sees;
 there is no `get_secret`.
@@ -349,9 +355,10 @@ there is no `get_secret`.
   timeoutMs, strictDeny?, allowDashParams? }]`. `argv[0]` is absolute; `{name}` placeholders must be declared and match
   their regex in full. A value starting with `-` is refused unless `allowDashParams` (it would become an option). The env
   name may not be reserved (`PATH`, `LANG`, `HOME`, `LD_*`, `GIT_*`, ...).
-- **Secrets:** one file per `secretRef` in `<data>/secrets/broker/creds/` (dir 0700, files 0600, at least 8 characters;
-  refused otherwise).
-- **Decision:** `decide(trust, sensitivity)`, where `trust` is the owner's level from Settings when set, else the policy's in `packages/extensions/src/trust.ts` (plan §3). `allow` runs now; `ask`
+- **Secrets:** in process, one file per `secretRef` in `<data>/secrets/broker/creds/` (dir 0700, files 0600, at least 8
+  characters; refused otherwise). In the broker service, `$CREDENTIALS_DIRECTORY/<secretRef>` from
+  `LoadCredentialEncrypted=`.
+- **Decision:** `decide(trust, sensitivity)`, where `trust` is the owner's level from Settings when set, else the policy's, in `packages/extensions/src/trust.ts` (plan §3). `allow` runs now; `ask`
   proposes an approval (`cred_exec` target) and the server runs it on Approve/YES, after checking the current policy
   again; `deny` refuses.
 - **Run:** `spawn` with no shell in its own process group, env = `PATH`, `LANG` and the injected secret only; the timeout
@@ -360,9 +367,27 @@ there is no `get_secret`.
 - **Rule 8:** `broker_call` keyed by tool call id. A replay returns the stored result; a run interrupted by a crash is
   reported as "may have run", never run again. Approved runs get the same row keyed `approval:<id>`, so startup recovery
   never repeats one either.
-- **Audit:** append-only JSONL (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`), decisions and runs, no secret values.
+- **Audit:** append-only JSONL (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`), decisions and runs, no secret
+  values. With `socket`, runs go to the broker's own log (`ZIMPOEN_BROKER_AUDIT`) and the server's file keeps decisions.
 - **Scheduled runs:** refused when the current run answers a `routine:`/`daily:` request (or a daily job's `<job>:<date>`),
   and when no current input can be found.
+
+### 5.8 CTO (phase 3)
+
+`ZIMPOEN_CTO=off|on`, default `off`: no agent, no tool. When on, a built-in `cto` agent hands coding work to the owner's
+herdr-lead (module `packages/extensions/src/cto/`, server side `apps/server/src/cto.ts`).
+
+- **Config:** `ZIMPOEN_CTO_REPOS` (required, comma list of `name` or `owner/name`), `ZIMPOEN_CTO_TRUST` (default normal),
+  `ZIMPOEN_CTO_BOARD_BIN` (default `hc-board`), `ZIMPOEN_CTO_HC_BIN` (default `hc`).
+- **Tools:** `delegate_coding({ repo, goal, doneWhen, outOfScope })` opens a card and tells the lead; `board_status({ card_id? })`
+  reads cards it opened. Both go through the `CodingLead` interface; the server runs `hc-board`/`hc` with `execFile`, fixed
+  argv and a minimal environment. Arguments are validated (repo allowlist, length caps, no leading `-`, no control characters).
+- **Rule 8:** `cto_card` keyed by tool call id; the board call carries the same id as `--key`.
+- **Rule 13:** `delegate_coding` refuses in a scheduled run (including an `ask_agent` question the PA asked from one)
+  unless the CTO's trust is `open`.
+- **Hub and spoke:** no `ask_agent`; the PA asks it with `ask_agent cto`. The owner's messages to its thread are refused
+  (403), except a bare YES answering one of its approval requests. Push, merge and deploy are `cred_run` broker
+  actions (§5.7).
 
 ## 6. Web
 
@@ -405,6 +430,7 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 | trust (server, not a module) | `trust_setting` (owner's trust levels: `pa`, `project:<id>`) |
 | routines | `routines_routine`, `routines_call` |
 | broker | `broker_call` |
+| cto | `cto_card` |
 
 Conventions:
 

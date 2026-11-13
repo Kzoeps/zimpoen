@@ -6,6 +6,7 @@ import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import type { ApprovalAction, ApprovalService } from "./approvals/service.ts";
 import type { BotsDeps } from "./bots/tools.ts";
 import type { BrokerDeps } from "./broker/tools.ts";
+import type { CtoDeps } from "./cto/tools.ts";
 import type { DailyFactsProvider } from "./daily/facts.ts";
 import type { PdfRenderer } from "./documents/render.ts";
 import type { InboxDeps } from "./inbox/types.ts";
@@ -63,8 +64,10 @@ export type DomainDeps = {
 	budget?: BudgetGate;
 	/** How the PA's bots are made and retired, and the PA's trust level. Omitted: the bot tools say bots are not set up. */
 	bots?: BotsDeps;
-	/** The credential broker (`ZIMPOEN_CRED_BROKER=on`). Omitted: no `cred_run` tool and no broker approval action. */
+	/** The credential broker (unless `ZIMPOEN_CRED_BROKER=off`). Omitted: no `cred_run` tool and no broker approval action. */
 	broker?: BrokerDeps;
+	/** The CTO's way to the coding lead (`ZIMPOEN_CTO=on`). Omitted: no `delegate_coding` or `board_status`. */
+	cto?: CtoDeps;
 	/**
 	 * The request ids of the inputs placed in a conversation's current run, for rule 13. Omitted: read from the Harness
 	 * ({@link currentRunRequestIds}). Tests replace it to run a tool as if inside an owner's message.

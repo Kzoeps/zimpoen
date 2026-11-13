@@ -15,8 +15,9 @@ Sources: `/tmp/zimpoen-vs-durable-bots.md`, `/tmp/zimpoen-cred-vault.md`, `/tmp/
 | 1c | Agent-created recurring routines (slot-keyed, at most once) | built |
 | 1d | Credential broker + per-project trust levels | built, `ZIMPOEN_CRED_BROKER=off` by default |
 | 1e | Web UI: Bots page (list/create/delete) and Settings → Trust levels | built |
+| 2b | Broker split: `zimpoen-broker` process over a unix socket, systemd-creds | built (`ZIMPOEN_CRED_BROKER=socket`), not yet run on the host |
 | 2 | Dedicated coding VM running herdr-lead; PA hands coding work to it | design (§6) |
-| 3 | CTO bot that drives herdr-lead; push/merge/deploy follow the project's trust level | design (§7) |
+| 3 | CTO bot that drives herdr-lead; push/merge/deploy follow the project's trust level | built (§7), `ZIMPOEN_CTO=off` by default; board create command unverified |
 | 4 | Sandboxed shell (gVisor container per agent, egress rules) | design sketch (§8) |
 | 5 | Computer-use VMs | design sketch (§8) |
 
@@ -98,8 +99,9 @@ due slot runs; a slot more than 6 h late is skipped. Same DB-authoritative timer
 During a routine run, routine/bot/broker tools refuse (rule 13). Cap 20 active routines.
 Creation goes through approval (`propose_routine`, Approve/YES), and a slot whose agent is over its weekly token limit is skipped.
 
-**Credential broker (1d).** `ZIMPOEN_CRED_BROKER=off|on`, default off: no tool registered, no socket. When on, phase 1
-runs the broker in-process behind an interface that a separate `zbroker` process implements later (§9):
+**Credential broker (1d).** `ZIMPOEN_CRED_BROKER=off|inprocess|socket` (`on` = `inprocess`), default off: no tool
+registered, no socket. `inprocess` runs the broker inside the server; `socket` uses the separate `zimpoen-broker` process
+(§9). Both implement:
 
 ```ts
 interface CredBroker {
@@ -134,6 +136,32 @@ interface CredBroker {
   decides allow/ask. Branch pushes are `routine`.
 - Never from a scheduled run without the trust level being Open.
 
+**Built (phase 3, branch `zimpoen/p2-cto`):**
+
+- `ZIMPOEN_CTO=off|on` (default off: no agent, no tool). On needs `ZIMPOEN_CTO_REPOS` (comma list, `name` or
+  `owner/name`); optional `ZIMPOEN_CTO_TRUST` (default normal), `ZIMPOEN_CTO_BOARD_BIN` (default `hc-board`),
+  `ZIMPOEN_CTO_HC_BIN` (default `hc`).
+- Agent `cto` (`CTO_AGENT` in `apps/server/src/agents.ts`), added by `buildAgents` only when on. Extensions: `cto`
+  (`delegate_coding`, `board_status`), `broker` when `ZIMPOEN_CRED_BROKER=on`, `approvals`, `tool_search`. No `ask_agent`,
+  memory, files or web. The PA reaches it with `ask_agent cto` (refused while off).
+- The board sits behind `CodingLead { createCard, notifyLead, readCard }` (`packages/extensions/src/cto/lead.ts`); the
+  server implements it in `apps/server/src/cto.ts` with `execFile` (no shell, env = `PATH`, `HOME`, `LANG`,
+  `HC_BOARD_LIVE=1`). Argv: `hc-board create --key <call id> --repo --goal --done-when --out-of-scope` (card id on the last
+  line), `hc send lead "New coding card <id> …"`, `hc-board show <id>`. **`hc-board create` does not exist yet** in
+  herdr-lead (cards are made by the lead's extension); the contract above must be added there or the adapter changed.
+- `delegate_coding` validates: repo in the allowlist, goal ≤ 2000, doneWhen/outOfScope ≤ 1000 chars, no leading `-`, no
+  control characters. Rule 8: `cto_card` keyed by call id; a replay resumes (same key → same card; the lead is told at
+  most once after success). Sensitivity `routine` through `decide()`.
+- Rule 13: refused in a scheduled run unless `ZIMPOEN_CTO_TRUST=open`. `isScheduledRequest` now also treats an
+  `ask:<call id>` input (the question in the asked agent's thread) as scheduled when the PA asked from a scheduled run,
+  or when its `delegate_ask` row is missing. This also applies to bots.
+- Hub and spoke for owner input: `POST /conversations/:id/messages` refuses (403) a message to the CTO's thread; a bare
+  YES there still answers its approval requests. The CTO stays visible in the sidebar so its cards and approvals can be read.
+- Depends on herdr-lead adding `hc-board create --key …` before `ZIMPOEN_CTO=on` is usable on a real host.
+- `board_status` reads only cards the CTO opened; board text is clipped and labelled as information.
+- Push/merge/deploy stay `cred_run` broker actions (unchanged): `merge_main`/`deploy_prod` ask under Normal. The approval
+  card lands in the CTO's thread; the PA is told to relay it.
+
 ## 8. Phases 4–5 (sketch)
 
 - **Shell:** Docker/Podman `--runtime=runsc` per agent, workspace volume only, read-only root, limits, egress allowlist
@@ -142,9 +170,15 @@ interface CredBroker {
 
 ## 9. What is left after phase 1
 
-- Broker as a separate systemd unit under its own user with `systemd-creds` storage (phase 1 ships the interface and an
-  in-process implementation with a file-backed fake store for tests).
-- ~~Web UI for bots and trust levels~~: built (1e, below).
+- ~~Broker as a separate systemd unit~~ built: `apps/server/src/broker-main.ts` (`dist/broker.js`), unit
+  `ops/systemd/zimpoen-broker.service` (`User=zimpoen-broker`, `LoadCredentialEncrypted=`, hardening), protocol in
+  `packages/extensions/src/broker/socket.ts` (newline JSON, 64 KiB requests, 8 MiB replies, 5 s to send a request, 8
+  connections). Peer check: Node can't read `SO_PEERCRED`, so access is the socket directory (`/run/zimpoen-broker`,
+  0750, group = broker group, server user a member; startup refuses a world-accessible directory). A real peer-uid check
+  needs a native addon or a different language; open. The server still decides trust levels: the broker trusts any
+  connecting group member to have asked, so approval enforcement lives in the server only (open). Not yet run on a real
+  host with systemd-creds.
+- ~~Web UI for bots and trust levels~~: built (1e, §10).
 - Real Telegram, real whisper.cpp model and real broker credentials were never used: tested against fakes.
 
 ## 10. Phase 1e: web UI for bots and trust levels (built)
@@ -159,3 +193,6 @@ interface CredBroker {
 - API: `GET|POST /api/bots`, `DELETE /api/bots/:slug`, `GET /api/settings/trust`, `PUT /api/settings/trust/pa`,
   `PUT /api/settings/trust/projects/:id` (ARCHITECTURE §5.5).
 - `cred_run`'s description lists project ids without levels now: the level can change while the server runs.
+- The CTO's push/merge/deploy go through the same `cred_run`, so they follow the stored project level too (in-process
+  and socket broker alike: the server decides, not the broker). `ZIMPOEN_CTO_TRUST` (the CTO's own hand-over level) is
+  still env-only; not yet in Settings.

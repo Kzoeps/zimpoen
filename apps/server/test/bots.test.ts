@@ -181,9 +181,9 @@ const POLICY = {
 
 describe("trust levels in Settings", () => {
 	it("starts from ZIMPOEN_PA_TRUST and the policy, keeps the owner's choice across restarts, and goes back on null", async () => {
-		const h = await open({ ZIMPOEN_PA_TRUST: "strict", ZIMPOEN_CRED_BROKER: "on" });
+		const h = await open({ ZIMPOEN_PA_TRUST: "strict", ZIMPOEN_CRED_BROKER: "inprocess" });
 		const { credBroker } = h.fixture.config;
-		if (credBroker.mode !== "on") throw new Error("broker should be on");
+		if (credBroker.mode !== "inprocess") throw new Error("broker should be on");
 		await mkdir(dirname(credBroker.policyPath), { recursive: true });
 		await writeFile(credBroker.policyPath, JSON.stringify(POLICY));
 		let server = await h.start();

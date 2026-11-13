@@ -52,8 +52,12 @@ export {
 	createJsonlAudit,
 	createMemoryAudit,
 	createMemorySecretStore,
+	createSocketBroker,
+	createSystemdCredsStore,
 	type ExecFn,
 	execProgram,
+	fetchBrokerPolicy,
+	listenBrokerSocket,
 	type Policy,
 	PolicyError,
 	type ProjectPolicy,
@@ -62,13 +66,27 @@ export {
 	type SecretStore,
 	scrub,
 } from "./broker/index.ts";
-
 export {
 	boundCodemodeSource,
 	type CodemodeLimits,
 	createBoundedCodemodeExtension,
 	DEFAULT_CODEMODE_LIMITS,
 } from "./codemode.ts";
+export {
+	CARD_ID_PATTERN,
+	type CardRequest,
+	type CodingCard,
+	type CodingLead,
+	CTO_LIMITS,
+	type CtoDeps,
+	createFakeCodingLead,
+	ctoModule,
+	ctoStore,
+	type FakeCodingLead,
+	leadMessage,
+	parseCardShow,
+	validateCodingArgs,
+} from "./cto/index.ts";
 export {
 	BRIEFING_JOB,
 	BRIEFING_PUSH,
