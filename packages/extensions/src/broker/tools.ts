@@ -6,7 +6,7 @@ import { DAILY_JOBS } from "../daily/jobs.ts";
 import type { DomainDeps } from "../module.ts";
 import { asDetails, text } from "../tool-support.ts";
 import { decide } from "../trust.ts";
-import type { AuditLog } from "./audit.ts";
+import type { AuditEvent, AuditLog } from "./audit.ts";
 import { type CredBroker, type CredRunResult, resolveRequest } from "./broker.ts";
 import type { Policy } from "./policy.ts";
 import * as store from "./store.ts";
@@ -35,7 +35,7 @@ export function isScheduledRequest(requestId: string): boolean {
 	return DAILY_JOBS.some((job) => requestId.startsWith(`${job.id}:`));
 }
 
-type Deps = Pick<DomainDeps, "db" | "now" | "approvals" | "harness"> & { broker: BrokerDeps };
+type Deps = Pick<DomainDeps, "db" | "now" | "approvals" | "harness" | "warn"> & { broker: BrokerDeps };
 
 type CredArgs = { project: string; credId: string; action: string; params: Record<string, string> };
 
@@ -55,25 +55,73 @@ const targetOf = (args: CredArgs): string => {
 const describeRun = (result: CredRunResult): string =>
 	`Exit code ${result.exitCode}${result.redacted ? " (secrets redacted from output)" : ""}.\n${result.output}`;
 
-/** Approve → the server runs it: the request is checked against the current policy again, then the broker runs it. */
+/**
+ * Approve → the server runs it. The request is checked against the policy again (it may have been edited since it was
+ * asked, and a project now strict may refuse it), and a `broker_call` row keyed by the approval id is written before the
+ * run: a crash during the run leaves it `running`, and startup recovery then reports "may have run" instead of running a
+ * push or deploy twice.
+ */
 export function createCredExecAction(deps: Deps): ApprovalAction {
+	const { db, now } = deps;
 	return {
 		tool: CRED_EXEC_ACTION,
 		proposeTool: "cred_run",
 		target: (args) => targetOf(argsOf(args)),
-		run: async (args) => {
-			return describeRun(await deps.broker.broker.run(argsOf(args)));
+		run: async (args, approval) => {
+			if (approval === undefined) throw new Error("cred_exec runs only from an approval request.");
+			const { actionId, conversationId } = approval;
+			const request = argsOf(args);
+			const key = `approval:${actionId}`;
+			const earlier = store.getCall(db, key);
+			if (earlier?.status === "done") return describeRun(storedResult(earlier));
+			if (earlier !== undefined) {
+				throw new Error(
+					earlier.status === "running"
+						? "The server stopped while this action ran: it may or may not have run, so it was not run again. Check its effect."
+						: `Refused: ${earlier.reason ?? "not allowed"}`,
+				);
+			}
+			const resolved = resolveRequest(deps.broker.policy, request);
+			const decision = decide(resolved.project.trust, resolved.action.sensitivity, {
+				strictDeny: resolved.action.strictDeny,
+			});
+			const base = { callId: key, conversationId, ...request, approvalId: actionId, createdAt: now() };
+			if (decision === "deny") {
+				const reason = `project '${resolved.project.id}' is now strict and its policy refuses '${resolved.action.id}'.`;
+				store.insertCall(db, { ...base, decision, status: "refused", reason });
+				throw new Error(`Refused: ${reason}`);
+			}
+			store.insertCall(db, { ...base, decision, status: "running" });
+			let result: CredRunResult;
+			try {
+				result = await deps.broker.broker.run({ ...request, approvalId: actionId });
+			} catch (error) {
+				store.failCall(db, key, error instanceof Error ? error.message : String(error), now());
+				throw error;
+			}
+			store.finishCall(db, key, result, now());
+			return describeRun(result);
 		},
 	};
 }
 
+const storedResult = (row: store.CallRow): CredRunResult => ({
+	exitCode: row.exitCode ?? -1,
+	output: row.output ?? "",
+	redacted: row.redacted ?? false,
+});
+
+/**
+ * The request ids of the inputs the calling conversation is answering now. An input without a request id counts as
+ * `""` (an ordinary owner message). Empty when none is found, which the tool treats as "cannot tell": refused.
+ */
 async function defaultRunRequestIds(deps: Deps, api: ToolExecutionApi, context: Context): Promise<string[]> {
 	const live = await deps.harness().inspect(context);
 	return live.submissions
 		.filter(
 			(s) => Number(s.conversationId) === Number(api.conversationId) && s.type === "input" && s.status === "placed",
 		)
-		.flatMap((s) => (s.requestId === undefined ? [] : [s.requestId]));
+		.map((s) => s.requestId ?? "");
 }
 
 export function createBrokerTools(deps: Deps): ToolRegistration[] {
@@ -87,12 +135,7 @@ export function createBrokerTools(deps: Deps): ToolRegistration[] {
 
 	/** What a replayed call returns: exactly what the first execution said. */
 	const replay = (row: store.CallRow) => {
-		if (row.status === "done")
-			return {
-				output: text(
-					describeRun({ exitCode: row.exitCode ?? -1, output: row.output ?? "", redacted: row.redacted ?? false }),
-				),
-			};
+		if (row.status === "done") return { output: text(describeRun(storedResult(row))) };
 		if (row.status === "refused") return { output: text(`Refused: ${row.reason ?? "not allowed"}`) };
 		if (row.status === "asked" && row.approvalId !== undefined) {
 			const state = approvals.state(row.approvalId);
@@ -138,13 +181,25 @@ export function createBrokerTools(deps: Deps): ToolRegistration[] {
 				...request,
 				createdAt: now(),
 			};
+			/** Audit lines are written only after this call's row: a replay then finds the row and writes nothing twice. */
+			const record = async (event: Omit<AuditEvent, "at" | "project" | "credId" | "action" | "params" | "callId">) => {
+				try {
+					await audit.append({ at: now(), ...request, callId: api.callId, ...event });
+				} catch (error) {
+					deps.warn?.(`[broker] audit write failed: ${error instanceof Error ? error.message : String(error)}`);
+				}
+			};
 			const refuse = async (reason: string) => {
-				store.insertCall(db, { ...base, decision: "deny", status: "refused", reason });
-				await audit.append({ at: now(), event: "refused", ...request, callId: api.callId, reason });
+				if (store.insertCall(db, { ...base, decision: "deny", status: "refused", reason })) {
+					await record({ event: "refused", decision: "deny", reason });
+				}
 				return { output: text(`Refused: ${reason}`) };
 			};
 
 			const requestIds = await runRequestIds(api, context);
+			if (requestIds.length === 0) {
+				return refuse("could not tell which request this run answers, so broker actions are refused. Ask the owner.");
+			}
 			if (requestIds.some(isScheduledRequest)) {
 				return refuse(
 					"broker actions never run during a scheduled run (routine or daily job). Ask the owner in a normal conversation.",
@@ -155,7 +210,6 @@ export function createBrokerTools(deps: Deps): ToolRegistration[] {
 			const decision = decide(resolved.project.trust, resolved.action.sensitivity, {
 				strictDeny: resolved.action.strictDeny,
 			});
-			await audit.append({ at: now(), event: "decision", ...request, decision, callId: api.callId });
 
 			if (decision === "deny") {
 				return refuse(`project '${resolved.project.id}' is strict and its policy refuses '${resolved.action.id}'.`);
@@ -168,7 +222,9 @@ export function createBrokerTools(deps: Deps): ToolRegistration[] {
 					summary: `Run ${resolved.action.id} on ${resolved.project.id} with ${resolved.credential.id} (${resolved.action.sensitivity})`,
 					callId: api.callId,
 				});
-				store.insertCall(db, { ...base, decision, status: "asked", approvalId: state.id });
+				if (store.insertCall(db, { ...base, decision, status: "asked", approvalId: state.id })) {
+					await record({ event: "decision", decision, approvalId: state.id });
+				}
 				return {
 					output: text(
 						`Approval requested (${state.id}): ${state.summary}. Nothing has run yet. Tell the owner to tap Approve; the server runs it and posts the result.`,
@@ -185,15 +241,17 @@ export function createBrokerTools(deps: Deps): ToolRegistration[] {
 			if (!store.insertCall(db, { ...base, decision, status: "running" })) {
 				return replay(store.getCall(db, api.callId) as store.CallRow);
 			}
+			await record({ event: "decision", decision });
+			let result: CredRunResult;
 			try {
-				const result = await deps.broker.broker.run({ ...request, callId: api.callId });
-				store.finishCall(db, api.callId, result, now());
-				return { output: text(describeRun(result)) };
+				result = await deps.broker.broker.run({ ...request, callId: api.callId });
 			} catch (error) {
 				const reason = error instanceof Error ? error.message : String(error);
 				store.failCall(db, api.callId, reason, now());
 				return { output: text(`Refused: ${reason}`) };
 			}
+			store.finishCall(db, api.callId, result, now());
+			return { output: text(describeRun(result)) };
 		},
 	});
 	return [credRun];

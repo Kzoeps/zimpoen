@@ -1,5 +1,6 @@
 import { chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { MIN_SECRET_LENGTH } from "./scrub.ts";
 
 /**
  * Where the broker keeps credential values. Only the broker reads it; nothing returns a value to an agent, a model or
@@ -38,8 +39,7 @@ export function createFileSecretStore(dir: string): SecretStore {
 				throw new Error(`Secret file ${path} is readable by others. Run: chmod 600 ${path}`);
 			}
 			const value = (await readFile(path, "utf8")).replace(/\r?\n$/, "");
-			if (value === "") throw new Error(`Secret '${ref}' is empty.`);
-			return value;
+			return checked(ref, value);
 		},
 	};
 }
@@ -50,7 +50,16 @@ export function createMemorySecretStore(values: Readonly<Record<string, string>>
 		async get(ref) {
 			const value = values[ref];
 			if (value === undefined) throw new Error(`Secret '${ref}' is not set.`);
-			return value;
+			return checked(ref, value);
 		},
 	};
+}
+
+function checked(ref: string, value: string): string {
+	if (value.length < MIN_SECRET_LENGTH) {
+		throw new Error(
+			`Secret '${ref}' is shorter than ${MIN_SECRET_LENGTH} characters, too short to scrub from output reliably.`,
+		);
+	}
+	return value;
 }

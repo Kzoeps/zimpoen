@@ -12,7 +12,11 @@ import type { CredBrokerConfig } from "./config.ts";
  * The credential broker for `ZIMPOEN_CRED_BROKER=on`, in-process (phase 1; a separate `zbroker` process later). Reads and
  * validates the policy at start: a missing or invalid policy stops the server with every problem listed. Off: undefined.
  */
-export async function loadCredBroker(config: CredBrokerConfig, now: () => number): Promise<BrokerDeps | undefined> {
+export async function loadCredBroker(
+	config: CredBrokerConfig,
+	now: () => number,
+	warn?: (message: string) => void,
+): Promise<BrokerDeps | undefined> {
 	if (config.mode === "off") return undefined;
 	let text: string;
 	try {
@@ -25,6 +29,12 @@ export async function loadCredBroker(config: CredBrokerConfig, now: () => number
 	}
 	const policy = parsePolicy(text, config.policyPath);
 	const audit = createJsonlAudit(config.auditPath);
-	const broker = createInProcessBroker({ policy, secrets: createFileSecretStore(config.secretsDir), audit, now });
+	const broker = createInProcessBroker({
+		policy,
+		secrets: createFileSecretStore(config.secretsDir),
+		audit,
+		now,
+		...(warn === undefined ? {} : { warn }),
+	});
 	return { broker, policy, audit };
 }

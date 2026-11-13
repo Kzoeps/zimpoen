@@ -3,11 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	type AuditLog,
 	type BrokerDeps,
 	brokerModule,
+	brokerStore,
+	buildArgv,
 	CRED_EXEC_ACTION,
 	capBytes,
 	createFileSecretStore,
@@ -26,6 +30,7 @@ import {
 } from "../src/broker/index.ts";
 import { approvalsModule, createApprovalService, type DomainDeps, type PostedEntry } from "../src/index.ts";
 import { decide } from "../src/trust.ts";
+import { ctx, type Fixture, openFixture, say, toolCall } from "./support.ts";
 
 const SECRET = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -252,9 +257,9 @@ describe("file secret store and audit log", () => {
 		const secrets = join(dir, "creds");
 		const store = createFileSecretStore(secrets);
 		await expect(store.get("missing")).rejects.toThrow(/not set/);
-		await writeFile(join(secrets, "ok"), "value\n", { mode: 0o600 });
+		await writeFile(join(secrets, "ok"), "value-long-1\n", { mode: 0o600 });
 		await writeFile(join(secrets, "loose"), "value", { mode: 0o644 });
-		expect(await store.get("ok")).toBe("value");
+		expect(await store.get("ok")).toBe("value-long-1");
 		await expect(store.get("loose")).rejects.toThrow(/chmod 600/);
 		await expect(store.get("../etc")).rejects.toThrow(/not a valid secret name/);
 
@@ -275,7 +280,7 @@ describe("cred_run tool", () => {
 		}
 	});
 
-	async function setup(options: { requestIds?: string[] } = {}) {
+	async function setup(options: { requestIds?: string[]; audit?: AuditLog } = {}) {
 		const dir = await mkdtemp(join(tmpdir(), "broker-db-"));
 		const db = openAppDb(join(dir, "app.sqlite"));
 		dbs.push({ db, dir });
@@ -290,7 +295,7 @@ describe("cred_run tool", () => {
 			},
 		});
 		const execs: ExecRequest[] = [];
-		const audit = createMemoryAudit();
+		const audit = options.audit ?? createMemoryAudit();
 		const policy = parsePolicy(JSON.stringify(POLICY));
 		const broker: BrokerDeps = {
 			policy,
@@ -325,7 +330,7 @@ describe("cred_run tool", () => {
 				{ callId, conversationId: 7, now: () => 1000 } as unknown as ToolExecutionApi,
 				BACKGROUND_CONTEXT,
 			);
-		return { db, approvals, posted, execs, audit, call };
+		return { db, approvals, posted, execs, audit, call, broker };
 	}
 
 	const outputOf = (result: ToolExecutionResult): string =>
@@ -393,5 +398,260 @@ describe("cred_run tool", () => {
 			expect(f.execs).toHaveLength(0);
 		}
 		expect(isScheduledRequest("msg-1")).toBe(false);
+	});
+});
+
+describe("review hardening", () => {
+	const onePolicy = (action: Record<string, unknown>) =>
+		JSON.stringify({
+			projects: [{ id: "p", trust: "open" }],
+			credentials: [{ id: "c", project: "p", secretRef: "tok" }],
+			actions: [{ id: "a", sensitivity: "routine", maxOutputBytes: 4000, timeoutMs: 5000, ...action }],
+		});
+
+	it("refuses reserved env names for the secret", () => {
+		for (const name of ["PATH", "LANG", "LD_PRELOAD", "GIT_SSH_COMMAND"]) {
+			expect(() => parsePolicy(onePolicy({ argv: ["/bin/true"], inject: { type: "env", name } }))).toThrow(/reserved/);
+		}
+	});
+
+	it("refuses parameter values starting with '-' unless the action allows them", () => {
+		const action = { argv: ["/bin/echo", "{v}"], params: { v: ".*" }, inject: { type: "stdin" } };
+		const strict = parsePolicy(onePolicy(action)).actions.get("a");
+		const loose = parsePolicy(onePolicy({ ...action, allowDashParams: true })).actions.get("a");
+		if (strict === undefined || loose === undefined) throw new Error("no action");
+		expect(() => buildArgv(strict, { v: "--upload-pack=evil" })).toThrow(/may not start with '-'/);
+		expect(buildArgv(loose, { v: "-n" })).toEqual(["/bin/echo", "-n"]);
+	});
+
+	it("scrubs JSON-escaped and hex forms, and stores refuse short secrets", async () => {
+		const secret = 'pa"ss\\word99';
+		const out = scrub(
+			`${JSON.stringify({ t: secret })} ${Buffer.from(secret).toString("hex")} ${Buffer.from(secret).toString("hex").toUpperCase()}`,
+			[secret],
+		);
+		expect(out.text).not.toContain("ss\\\\word");
+		expect(out.text).not.toContain(Buffer.from(secret).toString("hex"));
+		expect(out.text).not.toContain(Buffer.from(secret).toString("hex").toUpperCase());
+		await expect(createMemorySecretStore({ s: "short" }).get("s")).rejects.toThrow(/shorter than/);
+	});
+
+	it("injects through stdin, and the default runner enforces the output cap", async () => {
+		const run = async (action: Record<string, unknown>) =>
+			createInProcessBroker({
+				policy: parsePolicy(onePolicy(action)),
+				secrets: createMemorySecretStore({ tok: "stdin-secret-value" }),
+				audit: createMemoryAudit(),
+				now: () => 1,
+				exec: execProgram,
+			}).run({ project: "p", credId: "c", action: "a", params: {} });
+		const cat = await run({ argv: ["/bin/cat"], inject: { type: "stdin" } });
+		expect(cat.output.trim()).toBe(REDACTED);
+		const yes = await run({ argv: ["/usr/bin/yes"], inject: { type: "stdin" }, maxOutputBytes: 1000 });
+		expect(yes.output).toContain("[output truncated at 1000 bytes]");
+	});
+
+	it("kills the whole process group on timeout, even when a grandchild holds the pipes", async () => {
+		const started = Date.now();
+		const result = await execProgram({
+			file: "/bin/sh",
+			args: ["-c", "sleep 30 & sleep 30"],
+			env: { PATH: "/usr/bin:/bin" },
+			timeoutMs: 300,
+			maxBytes: 1000,
+		});
+		expect(result.timedOut).toBe(true);
+		expect(Date.now() - started).toBeLessThan(5000);
+	});
+});
+
+describe("cred_run tool, review hardening", () => {
+	const dbs: Array<{ db: AppDb; dir: string }> = [];
+	afterEach(async () => {
+		for (const { db, dir } of dbs.splice(0)) {
+			db.close();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	async function setup(options: { requestIds?: string[]; audit?: AuditLog } = {}) {
+		const dir = await mkdtemp(join(tmpdir(), "broker-db-"));
+		const db = openAppDb(join(dir, "app.sqlite"));
+		dbs.push({ db, dir });
+		migrate(db, [...coreMigrations, ...approvalsModule.migrations, ...brokerModule.migrations]);
+		const approvals = createApprovalService({ db, now: () => 1000, post: async () => ({ submissionId: 1 }) });
+		const execs: ExecRequest[] = [];
+		const audit = options.audit ?? createMemoryAudit();
+		const policy = parsePolicy(JSON.stringify(POLICY));
+		const broker: BrokerDeps = {
+			policy,
+			audit,
+			broker: createInProcessBroker({
+				policy,
+				secrets: createMemorySecretStore({ "gh-token": SECRET }),
+				audit,
+				now: () => 1000,
+				exec: async (req) => {
+					execs.push(req);
+					return { exitCode: 0, output: "ok", timedOut: false, truncated: false };
+				},
+			}),
+			runRequestIds: async () => options.requestIds ?? ["msg-1"],
+		};
+		const deps = { db, now: () => 1000, approvals, broker } as unknown as DomainDeps;
+		for (const action of brokerModule.actions?.(deps) ?? []) approvals.register(action);
+		const tool = brokerModule.extension(deps).tools?.find((candidate) => candidate.name === "cred_run");
+		if (tool === undefined) throw new Error("cred_run not registered");
+		const call = (args: Record<string, unknown>, callId: string) =>
+			tool.execute(
+				args as never,
+				{ callId, conversationId: 7, now: () => 1000 } as unknown as ToolExecutionApi,
+				BACKGROUND_CONTEXT,
+			);
+		return { db, approvals, execs, audit, broker, call };
+	}
+	const outputOf = (result: ToolExecutionResult): string =>
+		(result.output ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
+	const merge = { project: "zimpoen", credId: "gh", action: "merge", params: { pr: "9" } };
+
+	it("refuses when it cannot tell which request the run answers", async () => {
+		const f = await setup({ requestIds: [] });
+		const result = await f.call(
+			{ project: "sandbox", credId: "gh-sandbox", action: "pr-view", params: { pr: "1" } },
+			"x",
+		);
+		expect(outputOf(result)).toMatch(/could not tell/);
+		expect(f.execs).toHaveLength(0);
+	});
+
+	it("a failed audit write after the run still reports that it ran", async () => {
+		const f = await setup({
+			audit: {
+				append: async () => {
+					throw new Error("disk full");
+				},
+			},
+		});
+		const result = await f.call(
+			{ project: "sandbox", credId: "gh-sandbox", action: "pr-view", params: { pr: "1" } },
+			"a",
+		);
+		expect(f.execs).toHaveLength(1);
+		expect(outputOf(result)).toContain("Exit code 0");
+		expect(outputOf(result)).toContain("audit log failed");
+	});
+
+	it("writes one decision line per call, even when replayed", async () => {
+		const f = await setup();
+		const args = { project: "sandbox", credId: "gh-sandbox", action: "pr-view", params: { pr: "1" } };
+		await f.call(args, "d");
+		await f.call(args, "d");
+		const events = (f.audit as ReturnType<typeof createMemoryAudit>).events;
+		expect(events.filter((event) => event.event === "decision")).toHaveLength(1);
+	});
+
+	it("links the approved run to its approval in the audit log", async () => {
+		const f = await setup();
+		const card = (await f.call(merge, "m")).details as { actionId: string };
+		await f.approvals.decide(card.actionId, "approve", "button");
+		const events = (f.audit as ReturnType<typeof createMemoryAudit>).events;
+		expect(events.find((event) => event.event === "run")?.approvalId).toBe(card.actionId);
+	});
+
+	it("re-checks the policy when the approval runs: a project made strict refuses", async () => {
+		const f = await setup();
+		const card = (await f.call(merge, "m")).details as { actionId: string };
+		f.broker.policy = parsePolicy(
+			JSON.stringify({
+				...POLICY,
+				projects: POLICY.projects.map((p) => (p.id === "zimpoen" ? { ...p, trust: "strict" } : p)),
+			}),
+		);
+		const state = await f.approvals.decide(card.actionId, "approve", "button");
+		expect(state.status).toBe("failed");
+		expect(state.resultText).toMatch(/strict/);
+		expect(f.execs).toHaveLength(0);
+	});
+
+	it("does not run an approved action again after a crash during its run", async () => {
+		const f = await setup();
+		const card = (await f.call(merge, "m")).details as { actionId: string };
+		// What a crash mid-run leaves: the request approved, the run's row written and never finished.
+		f.db.run("UPDATE pending_actions SET status = 'approved' WHERE id = ?", card.actionId);
+		brokerStore.insertCall(f.db, {
+			callId: `approval:${card.actionId}`,
+			conversationId: 7,
+			...merge,
+			decision: "ask",
+			status: "running",
+			createdAt: 1000,
+		});
+		const report = await f.approvals.recover();
+		expect(report.executed).toBe(1);
+		expect(f.execs).toHaveLength(0);
+		expect(f.approvals.state(card.actionId)).toMatchObject({ status: "failed" });
+		expect(f.approvals.state(card.actionId)?.resultText).toMatch(/may or may not have run/);
+	});
+});
+
+describe("cred_run in a real Harness", () => {
+	const fixtures: Fixture[] = [];
+	afterEach(async () => {
+		for (const f of fixtures.splice(0)) {
+			await f.close().catch(() => {});
+			await f.dispose();
+		}
+	});
+
+	async function open() {
+		const execs: ExecRequest[] = [];
+		const audit = createMemoryAudit();
+		const policy = parsePolicy(JSON.stringify(POLICY));
+		const broker: BrokerDeps = {
+			policy,
+			audit,
+			broker: createInProcessBroker({
+				policy,
+				secrets: createMemorySecretStore({ "gh-token": SECRET }),
+				audit,
+				now: () => 1,
+				exec: async (req) => {
+					execs.push(req);
+					return { exitCode: 0, output: "ok", timedOut: false, truncated: false };
+				},
+			}),
+		};
+		const f = await openFixture({ broker });
+		fixtures.push(f);
+		return { f, execs };
+	}
+
+	const lastToolText = async (f: Fixture): Promise<string> => {
+		const message = (await f.entries())
+			.flatMap((entry) => entry.model ?? [])
+			.filter((m): m is ToolResultMessage => m.role === "toolResult")
+			.at(-1);
+		return (message?.content ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
+	};
+	const args = { project: "sandbox", credId: "gh-sandbox", action: "pr-view", params: { pr: "1" } };
+
+	it("runs for an owner's message", async () => {
+		const { f, execs } = await open();
+		f.faux.setResponses([toolCall("cred_run", args, "h1"), say("done")]);
+		await f.say("view PR 1");
+		expect(await lastToolText(f)).toContain("Exit code 0");
+		expect(execs).toHaveLength(1);
+	});
+
+	it("refuses for a routine's input, read from the live Harness", async () => {
+		const { f, execs } = await open();
+		f.faux.setResponses([toolCall("cred_run", args, "h2"), say("done")]);
+		const submission = await f.conversation.submit(
+			{ type: "input", content: "routine run", requestId: "routine:r_1:2026-10-25" },
+			ctx,
+		);
+		await submission.wait(ctx);
+		expect(await lastToolText(f)).toMatch(/scheduled run/);
+		expect(execs).toHaveLength(0);
 	});
 });

@@ -67,6 +67,8 @@ export type InProcessBrokerDeps = {
 	audit: AuditLog;
 	now: () => number;
 	exec?: ExecFn;
+	/** Where a failed audit write is said (the server log). The run's result is still returned: the program already ran. */
+	warn?: (message: string) => void;
 };
 
 export function createInProcessBroker(deps: InProcessBrokerDeps): CredBroker {
@@ -94,56 +96,86 @@ export function createInProcessBroker(deps: InProcessBrokerDeps): CredBroker {
 			const scrubbed = scrub(raw, [secret]);
 			const capped = capBytes(scrubbed.text, action.maxOutputBytes);
 			const output = result.timedOut ? `${capped.text}\n[timed out after ${action.timeoutMs} ms]` : capped.text;
-			await deps.audit.append({
-				at: deps.now(),
-				event: "run",
-				project: req.project,
-				credId: req.credId,
-				action: req.action,
-				params: req.params,
-				exitCode: result.exitCode,
-				timedOut: result.timedOut,
-				redacted: scrubbed.redacted,
-				...(req.callId === undefined ? {} : { callId: req.callId }),
-				...(req.approvalId === undefined ? {} : { approvalId: req.approvalId }),
-			});
-			return { exitCode: result.exitCode, output, redacted: scrubbed.redacted };
+			let auditNote = "";
+			try {
+				await deps.audit.append({
+					at: deps.now(),
+					event: "run",
+					project: req.project,
+					credId: req.credId,
+					action: req.action,
+					params: req.params,
+					exitCode: result.exitCode,
+					timedOut: result.timedOut,
+					redacted: scrubbed.redacted,
+					...(req.callId === undefined ? {} : { callId: req.callId }),
+					...(req.approvalId === undefined ? {} : { approvalId: req.approvalId }),
+				});
+			} catch (error) {
+				const reason = error instanceof Error ? error.message : String(error);
+				deps.warn?.(`[broker] audit write failed after ${req.action} ran: ${reason}`);
+				auditNote = "\n[the action ran, but writing the audit log failed]";
+			}
+			return { exitCode: result.exitCode, output: output + auditNote, redacted: scrubbed.redacted };
 		},
 	};
 }
 
-/** Run a program with a fixed argv (no shell), a clean environment, a time limit and an output limit. */
+/** After a kill, how long to wait for the pipes to close before giving up on them. */
+const KILL_GRACE_MS = 2000;
+
+/**
+ * Run a program with a fixed argv (no shell), a clean environment, a time limit and an output limit. The program gets
+ * its own process group, and the timeout or the cap kills the whole group: a grandchild (`git` → `ssh`) holding the
+ * pipes open would otherwise keep the run alive. The promise settles even if the pipes never close.
+ */
 export const execProgram: ExecFn = (req) =>
 	new Promise((resolve) => {
 		const child = spawn(req.file, [...req.args], {
 			env: { ...req.env },
 			shell: false,
+			detached: true,
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		const chunks: Buffer[] = [];
 		let size = 0;
 		let truncated = false;
 		let timedOut = false;
+		let settled = false;
+		let grace: NodeJS.Timeout | undefined;
+		const killGroup = (): void => {
+			try {
+				if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+			} catch {
+				child.kill("SIGKILL");
+			}
+			grace ??= setTimeout(() => finish(137), KILL_GRACE_MS);
+		};
 		const collect = (chunk: Buffer): void => {
 			if (truncated) return;
 			chunks.push(chunk);
 			size += chunk.length;
 			if (size > req.maxBytes) {
 				truncated = true;
-				child.kill("SIGKILL");
+				killGroup();
 			}
 		};
 		child.stdout.on("data", collect);
 		child.stderr.on("data", collect);
 		const timer = setTimeout(() => {
 			timedOut = true;
-			child.kill("SIGKILL");
+			killGroup();
 		}, req.timeoutMs);
-		const finish = (exitCode: number, extra = ""): void => {
+		function finish(exitCode: number, extra = ""): void {
+			if (settled) return;
+			settled = true;
 			clearTimeout(timer);
+			if (grace !== undefined) clearTimeout(grace);
+			child.stdout.destroy();
+			child.stderr.destroy();
 			const output = Buffer.concat(chunks).subarray(0, req.maxBytes).toString("utf8") + extra;
 			resolve({ exitCode, output, timedOut, truncated });
-		};
+		}
 		child.on("error", (error) => finish(127, `failed to start ${req.file}: ${error.message}`));
 		child.on("close", (code) => finish(code ?? 137));
 		child.stdin.on("error", () => {});

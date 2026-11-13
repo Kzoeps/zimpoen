@@ -1,5 +1,8 @@
 export const REDACTED = "[REDACTED]";
 
+/** Shorter secrets would be scrubbed out of ordinary words; the stores refuse them. */
+export const MIN_SECRET_LENGTH = 8;
+
 /**
  * Token shapes redacted even when they are not the secret the action used: a program can print another credential it
  * found (a config file, an error that echoes a header).
@@ -21,9 +24,12 @@ export function secretVariants(secret: string): string[] {
 		base64.replace(/=+$/, ""),
 		Buffer.from(secret, "utf8").toString("base64url"),
 		encodeURIComponent(secret),
+		JSON.stringify(secret).slice(1, -1),
+		Buffer.from(secret, "utf8").toString("hex"),
+		Buffer.from(secret, "utf8").toString("hex").toUpperCase(),
 	];
-	// Longest first, so a variant that contains another is replaced whole.
-	return [...new Set(variants.filter((v) => v.length >= 4))].sort((a, b) => b.length - a.length);
+	// Longest first, so a variant that contains another is replaced whole. Stores refuse secrets under MIN_SECRET_LENGTH.
+	return [...new Set(variants.filter((v) => v.length > 0))].sort((a, b) => b.length - a.length);
 }
 
 /** Replace every known form of `secrets` and every known token pattern. `redacted` says whether anything was. */

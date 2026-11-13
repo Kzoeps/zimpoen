@@ -162,7 +162,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			},
 			...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 			web: options.web ?? (await startWeb()),
-			...(await brokerFor(config, now)),
+			...(await brokerFor(config, now, (message) => logger.warn(message))),
 			warn: (message) => logger.warn(message),
 		});
 		undo.push(() => domain.close());
@@ -758,7 +758,7 @@ async function warnIfNoOpenAiLogin(logger: ServerLogger, config: Config, runtime
 }
 
 /** The credential broker when `ZIMPOEN_CRED_BROKER=on` (a bad policy stops the start), nothing otherwise. */
-async function brokerFor(config: Config, now: () => number) {
-	const broker = await loadCredBroker(config.credBroker, now);
+async function brokerFor(config: Config, now: () => number, warn: (message: string) => void) {
+	const broker = await loadCredBroker(config.credBroker, now, warn);
 	return broker === undefined ? {} : { broker };
 }

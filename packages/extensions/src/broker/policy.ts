@@ -30,6 +30,8 @@ export type ActionPolicy = {
 	timeoutMs: number;
 	/** Refused outright when the project's trust level is `strict`. */
 	strictDeny: boolean;
+	/** Let a parameter value start with `-`. Off by default: such a value would become an option of the program. */
+	allowDashParams: boolean;
 };
 
 export const MAX_OUTPUT_BYTES_LIMIT = 1024 * 1024;
@@ -38,6 +40,8 @@ export const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const ID = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
 const PLACEHOLDER = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+/** Names that would replace the clean environment or change how the program loads. */
+const RESERVED_ENV = /^(PATH|LANG|HOME|SHELL|IFS|ENV|BASH_ENV|NODE_OPTIONS|GIT_.*|LD_.*|DYLD_.*|LC_.*)$/;
 const ACTION_SENSITIVITIES: readonly Sensitivity[] = SENSITIVITIES.filter((s) => s !== "bot_lifecycle");
 
 /** Every problem with a policy file, listed together so one edit fixes all of them. */
@@ -191,7 +195,9 @@ function actionOf(
 		typeof rawInject.name === "string" &&
 		ENV_NAME.test(rawInject.name)
 	) {
-		inject = { type: "env", name: rawInject.name };
+		if (RESERVED_ENV.test(rawInject.name)) {
+			problems.push(`${at}.inject.name '${rawInject.name}' is reserved; pick another variable name`);
+		} else inject = { type: "env", name: rawInject.name };
 	} else problems.push(`${at}.inject must be {"type":"stdin"} or {"type":"env","name":"UPPER_CASE"}`);
 
 	const sensitivity = entry.sensitivity;
@@ -203,6 +209,9 @@ function actionOf(
 	if (entry.strictDeny !== undefined && typeof entry.strictDeny !== "boolean") {
 		problems.push(`${at}.strictDeny must be true or false`);
 	}
+	if (entry.allowDashParams !== undefined && typeof entry.allowDashParams !== "boolean") {
+		problems.push(`${at}.allowDashParams must be true or false`);
+	}
 	if (problems.length > before || id === undefined || inject === undefined) return undefined;
 	return {
 		id,
@@ -213,6 +222,7 @@ function actionOf(
 		maxOutputBytes,
 		timeoutMs,
 		strictDeny: entry.strictDeny === true,
+		allowDashParams: entry.allowDashParams === true,
 	};
 }
 
@@ -239,6 +249,9 @@ export function buildArgv(action: ActionPolicy, params: Readonly<Record<string, 
 	for (const [name, pattern] of action.params) {
 		const value = params[name];
 		if (value === undefined) throw new Error(`Action '${action.id}' needs parameter '${name}'.`);
+		if (value.startsWith("-") && !action.allowDashParams) {
+			throw new Error(`Parameter '${name}' may not start with '-': the program would read it as an option.`);
+		}
 		if (!pattern.test(value))
 			throw new Error(`Parameter '${name}' does not match the pattern the policy allows for '${action.id}'.`);
 	}
