@@ -23,9 +23,18 @@ export function isTrustLevel(value: unknown): value is TrustLevel {
 	return value === "open" || value === "normal" || value === "strict";
 }
 
+export const SENSITIVITIES: readonly Sensitivity[] = [
+	"routine",
+	"bot_lifecycle",
+	"merge_main",
+	"deploy_prod",
+	"prod_data_write",
+	"destructive",
+];
+
 /**
- * Open allows everything (the caller logs it); Normal and Strict ask for anything that is not routine. Strict differs only
- * in that a caller's policy may mark an action `deny`, which it passes as `strictDeny`.
+ * Open allows everything (the caller logs it). Normal and Strict allow routine work and ask for anything else; Strict
+ * also refuses an action whose policy entry is marked `strictDeny`, routine or not.
  */
 export function decide(
 	level: TrustLevel,
@@ -33,7 +42,7 @@ export function decide(
 	options: { strictDeny?: boolean } = {},
 ): TrustDecision {
 	if (level === "open") return "allow";
-	if (sensitivity === "routine") return "allow";
 	if (level === "strict" && options.strictDeny === true) return "deny";
+	if (sensitivity === "routine") return "allow";
 	return "ask";
 }

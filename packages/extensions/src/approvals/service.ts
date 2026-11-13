@@ -32,7 +32,7 @@ export type ApprovalAction = {
 	 * Carry it out and say what happened, in words for the owner. Must be safe to run twice (a crash can rerun it).
 	 * Throw an `Error` whose message tells the owner what went wrong.
 	 */
-	run(args: ActionArgs): Promise<string> | string;
+	run(args: ActionArgs, request?: { actionId: string; conversationId: number }): Promise<string> | string;
 };
 
 export type ProposeInput = {
@@ -143,7 +143,13 @@ export function createApprovalService(deps: Deps): ApprovalService {
 	async function execute(action: store.PendingAction): Promise<store.PendingAction> {
 		let result: { ok: boolean; text: string };
 		try {
-			result = { ok: true, text: await actionFor(action.tool).run(action.args) };
+			result = {
+				ok: true,
+				text: await actionFor(action.tool).run(action.args, {
+					actionId: action.id,
+					conversationId: action.conversationId,
+				}),
+			};
 		} catch (error) {
 			result = { ok: false, text: error instanceof Error ? error.message : String(error) };
 		}

@@ -322,3 +322,11 @@ describe("review follow-ups", () => {
 		expect(names).toStrictEqual(["current_time", "list_tasks"]);
 	});
 });
+
+describe("currentRunRequestIds", () => {
+	it("is empty for an idle conversation, which the broker treats as cannot-tell and refuses", async () => {
+		const { f } = await open();
+		const { currentRunRequestIds } = await import("../src/index.ts");
+		expect(await currentRunRequestIds(f.harness, Number(f.conversation.id))).toStrictEqual([]);
+	});
+});

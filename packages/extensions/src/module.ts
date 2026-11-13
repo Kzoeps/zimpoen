@@ -5,6 +5,7 @@ import type { ConversationId, Extension, Harness } from "@earendil-works/pi-dura
 import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import type { ApprovalAction, ApprovalService } from "./approvals/service.ts";
 import type { BotsDeps } from "./bots/tools.ts";
+import type { BrokerDeps } from "./broker/tools.ts";
 import type { DailyFactsProvider } from "./daily/facts.ts";
 import type { PdfRenderer } from "./documents/render.ts";
 import type { InboxDeps } from "./inbox/types.ts";
@@ -62,6 +63,8 @@ export type DomainDeps = {
 	budget?: BudgetGate;
 	/** How the PA's bots are made and retired, and the PA's trust level. Omitted: the bot tools say bots are not set up. */
 	bots?: BotsDeps;
+	/** The credential broker (`ZIMPOEN_CRED_BROKER=on`). Omitted: no `cred_run` tool and no broker approval action. */
+	broker?: BrokerDeps;
 	/** Say that something failed which the work goes on without (the server logs it). Omitted: nothing is said. Never throws. */
 	warn?: (message: string) => void;
 };
