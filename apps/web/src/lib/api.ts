@@ -6,6 +6,8 @@ import type {
 	ApiErrorBody,
 	ApprovalDecision,
 	ApprovalState,
+	BotsResponse,
+	CreateBotRequest,
 	DecideSuggestionRequest,
 	DisconnectGoogleRequest,
 	GoogleSettingsResponse,
@@ -21,11 +23,14 @@ import type {
 	SendMessageResponse,
 	SuggestionDecision,
 	SuggestionState,
+	TrustLevelName,
+	TrustSettingsResponse,
 	UpdateAgentSettingsRequest,
 	UpdateBudgetRequest,
 	UpdateMemoryRequest,
 	UpdatePreferencesRequest,
 	UpdateScheduleRequest,
+	UpdateTrustRequest,
 	UploadResponse,
 	UsageResponse,
 } from "@assistant/shared";
@@ -238,3 +243,25 @@ export function newRequestId(): string {
 	const bytes = crypto.getRandomValues(new Uint8Array(16));
 	return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
+
+/** The bots the PA (or the owner) created, and what a new one may have. */
+export const fetchBots = (): Promise<BotsResponse> => request("/api/bots");
+
+/** The owner's own creation: no approval is asked; the server applies the same caps and checks as the PA's tool. */
+export const createBot = (bot: CreateBotRequest): Promise<BotsResponse> => request("/api/bots", json(bot));
+
+/** The owner's own deletion: the bot's chat is archived, not erased. */
+export const deleteBot = (slug: string): Promise<BotsResponse> =>
+	request(`/api/bots/${encodeURIComponent(slug)}`, json({}, "DELETE"));
+
+export const fetchTrust = (): Promise<TrustSettingsResponse> => request("/api/settings/trust");
+
+/** `null` goes back to the default (`ZIMPOEN_PA_TRUST`, or the project's level in the broker policy). */
+export const updatePaTrust = (level: TrustLevelName | null): Promise<TrustSettingsResponse> =>
+	request("/api/settings/trust/pa", json({ level } satisfies UpdateTrustRequest, "PUT"));
+
+export const updateProjectTrust = (project: string, level: TrustLevelName | null): Promise<TrustSettingsResponse> =>
+	request(
+		`/api/settings/trust/projects/${encodeURIComponent(project)}`,
+		json({ level } satisfies UpdateTrustRequest, "PUT"),
+	);

@@ -6,11 +6,12 @@ import { BotAvatar } from "./bot-avatar.tsx";
 import { useChat } from "./chat-context.tsx";
 import { PageIcon } from "./page-icon.tsx";
 
-/** The owner's own pages, under the agents: what the assistant knows about them, did, and spent. */
+/** The owner's own pages, under the agents: what the assistant knows about them, did, and spent, and its bots. */
 const OWNER_PAGES = [
 	{ href: "/profile", label: "Profile", icon: "profile" },
 	{ href: "/activity", label: "Activity", icon: "activity" },
 	{ href: "/usage", label: "Usage", icon: "usage" },
+	{ href: "/bots", label: "Bots", icon: "bots" },
 ] as const;
 
 export function AgentSidebar() {
