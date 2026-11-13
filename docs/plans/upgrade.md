@@ -19,6 +19,8 @@ Sources: `/tmp/zimpoen-vs-durable-bots.md`, `/tmp/zimpoen-cred-vault.md`, `/tmp/
 | 4 | Sandboxed shell (gVisor container per agent, egress rules) | design sketch (§8) |
 | 5 | Computer-use VMs | design sketch (§8) |
 
+Bots (1a) and routines (1c) have no feature flag: their tools are always installed, and each creation needs the owner's approval (bots: per `ZIMPOEN_PA_TRUST`).
+
 Why this order: 1b and 1c add reach with no new attack surface beyond one chat channel. 1a needs the trust model that
 1d defines, but only for its own approval step, so both ship in phase 1. 2 and 3 depend on 1d (secrets never enter the
 VM) and on the trust levels. Shell and computer use carry the most risk and come last.
