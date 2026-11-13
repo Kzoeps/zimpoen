@@ -36,6 +36,7 @@ describe("parseConfig", () => {
 			googleAccounts: "/work/assistant/state/secrets/google-accounts.json",
 			jev: "/work/assistant/state/secrets/jev.json",
 			search: "/work/assistant/state/secrets/search.json",
+			telegram: "/work/assistant/state/secrets/telegram.json",
 			web: "/work/assistant/state/web",
 			modelCatalog: "/work/assistant/state/model-catalog.json",
 		});

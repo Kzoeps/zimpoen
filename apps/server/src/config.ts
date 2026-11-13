@@ -45,6 +45,12 @@ export type GoogleConfig = {
 	syncMinutes: number;
 };
 
+/**
+ * The Telegram bridge to the PA (upgrade plan §5, phase 1b). Off unless `ZIMPOEN_TELEGRAM=on`; off starts nothing.
+ * `whisper` is set when both `ZIMPOEN_WHISPER_BIN` and `ZIMPOEN_WHISPER_MODEL` are: voice notes are transcribed locally.
+ */
+export type TelegramConfig = { enabled: boolean; whisper?: { bin: string; model: string } };
+
 /** What the profile calls the owner when `ASSISTANT_OWNER_NAME` is not set. A module that needs a real name checks against it. */
 export const DEFAULT_OWNER_NAME = "the owner";
 
@@ -85,6 +91,8 @@ export type Config = {
 		web: string;
 		/** Newer OpenAI models than pi-ai ships, written by `pnpm models:update`. Optional. */
 		modelCatalog: string;
+		/** The Telegram bot token, `{ "token": "..." }`. Read only when `ZIMPOEN_TELEGRAM=on`. Inside `secrets`. */
+		telegram: string;
 	};
 	/** Absolute directories agents may read: `ASSISTANT_READ_PATHS` (or its defaults) plus `<data>/files`. */
 	readPaths: readonly string[];
@@ -96,6 +104,7 @@ export type Config = {
 	/** When follow-ups and birthdays fire. */
 	schedule: ScheduleSettings;
 	google: GoogleConfig;
+	telegram: TelegramConfig;
 	modelMode: ModelMode;
 	push: {
 		mode: PushMode;
@@ -172,6 +181,7 @@ export function resolveDataPaths(
 			search: join(dataDir, "secrets", "search.json"),
 			web: join(dataDir, "web"),
 			modelCatalog: join(dataDir, "model-catalog.json"),
+			telegram: join(dataDir, "secrets", "telegram.json"),
 		},
 	};
 }
@@ -201,6 +211,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 		health: parseHeight(env.ASSISTANT_OWNER_HEIGHT_CM, problem),
 		schedule: parseSchedule(env, problem),
 		google: parseGoogle(env, problem),
+		telegram: parseTelegram(env, problem),
 		modelMode: parseModelMode(env, problem),
 		push: parsePush(env, problem),
 		http: {
@@ -282,6 +293,7 @@ export async function canonicalizeDataPaths(config: Config): Promise<Config> {
 		search: join(secrets, "search.json"),
 		web: join(dataDir, "web"),
 		modelCatalog: join(dataDir, "model-catalog.json"),
+		telegram: join(secrets, "telegram.json"),
 	};
 	return { ...config, dataDir, paths, writePath: workspace };
 }
@@ -450,6 +462,32 @@ function parseGoogle(env: Env, problem: ReportProblem): GoogleConfig {
 		}
 	}
 	return { mode, syncMinutes };
+}
+
+/** `ZIMPOEN_TELEGRAM` (off|on, default off), `ZIMPOEN_WHISPER_BIN` and `ZIMPOEN_WHISPER_MODEL`. */
+function parseTelegram(env: Env, problem: ReportProblem): TelegramConfig {
+	const raw = nonEmpty(env.ZIMPOEN_TELEGRAM) ?? "off";
+	if (raw !== "on" && raw !== "off") {
+		problem("ZIMPOEN_TELEGRAM", `'${raw}' is not valid. Use 'on' (bridge the PA to Telegram) or 'off' (default).`);
+	}
+	const bin = nonEmpty(env.ZIMPOEN_WHISPER_BIN);
+	const model = nonEmpty(env.ZIMPOEN_WHISPER_MODEL);
+	if ((bin === undefined) !== (model === undefined)) {
+		problem(
+			bin === undefined ? "ZIMPOEN_WHISPER_BIN" : "ZIMPOEN_WHISPER_MODEL",
+			"is needed too: voice notes need both the whisper-cli binary and a model file (for example ggml-base.bin). Set both, or neither.",
+		);
+	}
+	for (const [setting, path] of [
+		["ZIMPOEN_WHISPER_BIN", bin],
+		["ZIMPOEN_WHISPER_MODEL", model],
+	] as const) {
+		if (path !== undefined && !isAbsolute(path)) problem(setting, `'${path}' is not an absolute path.`);
+	}
+	return {
+		enabled: raw === "on",
+		...(bin === undefined || model === undefined ? {} : { whisper: { bin, model } }),
+	};
 }
 
 const PUSH_MODES: readonly PushMode[] = ["web-push", "fake"];
