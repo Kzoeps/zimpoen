@@ -14,10 +14,10 @@ Sources: `/tmp/zimpoen-vs-durable-bots.md`, `/tmp/zimpoen-cred-vault.md`, `/tmp/
 | 1b | Telegram bridge for the PA, voice notes via local whisper.cpp | built, off until configured |
 | 1c | Agent-created recurring routines (slot-keyed, at most once) | built |
 | 1d | Credential broker + per-project trust levels | built, `ZIMPOEN_CRED_BROKER=off` by default |
-| 2 | Dedicated coding VM running herdr-lead; PA hands coding work to it | design (§6) |
+| 2 | Dedicated coding VM running herdr-lead; PA hands coding work to it | design (§6); provisioning scripts in `ops/coding-vm/`, not run |
 | 3 | CTO bot that drives herdr-lead; push/merge/deploy follow the project's trust level | design (§7) |
 | 4 | Sandboxed shell (gVisor container per agent, egress rules) | design sketch (§8) |
-| 5 | Computer-use VMs | design sketch (§8) |
+| 5 | Computer-use VMs | design (§8); image and run script in `ops/computer-use/`, not built |
 
 Bots (1a) and routines (1c) have no feature flag: their tools are always installed, and each creation needs the owner's approval (bots: per `ZIMPOEN_PA_TRUST`).
 
@@ -124,6 +124,12 @@ interface CredBroker {
   back by polling the board and post as display-only cards.
 - Git push from the VM uses a broker-minted, short-lived, repo-scoped token handed to a host-side push step on files
   copied out, never into the VM.
+- Built (scripts only, never run; [docs/coding-vm.md](../coding-vm.md)): `ops/coding-vm/provision.sh` (pinned,
+  checksummed installs; refuses credential-shaped values), `egress.sh` (nftables: relay and DNS allowed, then the host's
+  addresses, private, tailnet and link-local ranges dropped, on output and forward), a `herdr-lead` unit whose
+  `ExecStartPre` refuses to start without those rules, and `host-push.sh` (bundle copied out over ssh, verified, pushed
+  from a throwaway clone with the token on stdin; never main, never force). Minting the short-lived token needs the
+  broker to grow a mint step (phase 1's broker injects a stored secret).
 
 ## 7. Phase 3: CTO bot (design)
 
@@ -138,6 +144,9 @@ interface CredBroker {
 - **Shell:** Docker/Podman `--runtime=runsc` per agent, workspace volume only, read-only root, limits, egress allowlist
   copied from pi-durable-bots `ops/vm-egress.sh`; startup refuses if rules missing. No network by default.
 - **Computer use:** builds on the shell sandbox plus a desktop image, viewer/takeover in the PWA, approval per task.
+  Image and host run script in `ops/computer-use/` ([docs/computer-use.md](../computer-use.md)): same gVisor flags,
+  filtered network required, viewer on 127.0.0.1 only, view-only and takeover passwords per task, one desktop per
+  approved task. Tool, approval action and PWA viewer are not built.
 
 ## 9. What is left after phase 1
 

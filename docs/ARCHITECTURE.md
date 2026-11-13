@@ -89,7 +89,7 @@ packages/
   shared/       API contracts: DTOs, SSE event types, card types
   db/           app.sqlite wrapper and migration runner
   extensions/   Domain modules (Durable extensions)
-ops/            systemd units, Tailscale Serve and check scripts
+ops/            systemd units, Tailscale Serve and check scripts; coding-vm/ and computer-use/ (docs/coding-vm.md, docs/computer-use.md)
 docs/
 ```
 
