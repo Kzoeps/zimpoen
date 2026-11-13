@@ -13,8 +13,11 @@ import * as store from "./store.ts";
 
 /** What the server gives the bots module: how a bot's conversation is made and archived, and the PA's trust level. */
 export type BotsDeps = {
-	/** Who decides bot creation and deletion (PLAN upgrade §3). Only the owner sets it. */
-	trustLevel: TrustLevel;
+	/**
+	 * Who decides bot creation and deletion (PLAN upgrade §3), read at each call: the owner may change it in Settings while
+	 * the server runs. Only the owner sets it; no tool can.
+	 */
+	trustLevel: () => TrustLevel;
 	/** Make sure the bot has its conversation and an `agents` row `bot:<slug>`. Idempotent: called again after a crash. */
 	spawn(bot: BotSpec): Promise<void>;
 	/** Archive the bot's conversation (kept in durable.sqlite) and remove its `agents` row. Idempotent. */
@@ -56,11 +59,13 @@ async function createBot(deps: Deps, spec: BotSpec, via: "owner" | "open", callI
 	const bots = requireBots(deps);
 	const existing = store.getBot(deps.db, spec.slug);
 	if (existing !== undefined && existing.callId !== callId) {
-		throw new Error(`There is already a bot ${botIdOf(spec.slug)}, made by another request. Nothing was changed.`);
+		throw new BotConflict(
+			`There is already a bot ${botIdOf(spec.slug)}, made by another request. Nothing was changed.`,
+		);
 	}
 	if (existing === undefined) {
 		if (store.countBots(deps.db) >= MAX_BOTS) {
-			throw new Error(`There are already ${MAX_BOTS} bots, the most there can be. Delete one first.`);
+			throw new BotConflict(`There are already ${MAX_BOTS} bots, the most there can be. Delete one first.`);
 		}
 		store.insertBot(deps.db, { ...spec, approvedVia: via, callId, now: deps.now() });
 	}
@@ -80,6 +85,63 @@ async function deleteBot(deps: Deps, slug: string): Promise<string> {
 	return known === undefined
 		? `There is no bot ${botIdOf(slug)} any more.`
 		: `Deleted the bot ${known.name} (${botIdOf(slug)}). Its conversation is archived, not erased.`;
+}
+
+/** A bot that cannot be created as asked: the slug is taken, or there are already {@link MAX_BOTS}. */
+export class BotConflict extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "BotConflict";
+	}
+}
+
+export class BotNotFound extends Error {
+	constructor(slug: string) {
+		super(`There is no bot '${slug.slice(0, 40)}'.`);
+		this.name = "BotNotFound";
+	}
+}
+
+/** What the owner's own Bots page does: no approval and no trust level (the owner is the one who decides). */
+export type OwnerBots = {
+	list(): store.BotRow[];
+	/** Throws {@link BotSpecError} for a bad spec and {@link BotConflict} for a taken slug or a full list. */
+	create(raw: {
+		slug: string;
+		name: string;
+		avatar?: string;
+		soul: string;
+		tools: readonly string[];
+	}): Promise<store.BotRow>;
+	/** Throws {@link BotNotFound} when there is no such bot. */
+	delete(slug: string): Promise<void>;
+};
+
+/**
+ * The owner's bot lifecycle: the same create and delete the approval actions run (row first, conversation after, memory
+ * and weekly limit cleared on delete), with the owner as the one who allowed it. `newCallId` names the request; it is
+ * what a replay of the same create would match, so each owner request gets a fresh one.
+ */
+export function createOwnerBots(deps: Deps, newCallId: () => string): OwnerBots {
+	return {
+		list: () => store.listBots(deps.db),
+		create: async (raw) => {
+			const spec = cleanSpec(raw);
+			const callId = newCallId();
+			if (store.getBot(deps.db, spec.slug) !== undefined) {
+				throw new BotConflict(
+					`There is already a bot ${botIdOf(spec.slug)}. Choose another slug, or delete that one first.`,
+				);
+			}
+			await createBot(deps, spec, "owner", callId);
+			return store.getBot(deps.db, spec.slug) as store.BotRow;
+		},
+		delete: async (raw) => {
+			const slug = raw.trim().toLowerCase();
+			if (store.getBot(deps.db, slug) === undefined) throw new BotNotFound(slug);
+			await deleteBot(deps, slug);
+		},
+	};
 }
 
 /** Bot creation and deletion as approval actions: the server carries them out when the owner approves. */
@@ -185,7 +247,7 @@ export function createBotTools(deps: Deps) {
 				if (existing === undefined && store.countBots(db) >= MAX_BOTS) {
 					throw new Error(`There are already ${MAX_BOTS} bots, the most there can be. Delete one first.`);
 				}
-				const verdict = decide(requireBots(deps).trustLevel, "bot_lifecycle");
+				const verdict = decide(requireBots(deps).trustLevel(), "bot_lifecycle");
 				if (verdict === "deny") throw new Error("The owner's trust setting does not allow creating bots.");
 				if (verdict === "allow") {
 					deps.warn?.(`[bots] creating ${botIdOf(spec.slug)} without asking: the PA's trust level is open.`);
@@ -215,7 +277,7 @@ export function createBotTools(deps: Deps) {
 				// A replay of a delete this call already began: finish it (every step is idempotent).
 				if (bot === undefined && resumed) return { output: await deleteBot(deps, slug) };
 				if (bot === undefined) throw new Error(`There is no bot '${slug.slice(0, 40)}'. list_bots shows them.`);
-				const verdict = decide(requireBots(deps).trustLevel, "bot_lifecycle");
+				const verdict = decide(requireBots(deps).trustLevel(), "bot_lifecycle");
 				if (verdict === "deny") throw new Error("The owner's trust setting does not allow deleting bots.");
 				if (verdict === "allow") {
 					deps.warn?.(`[bots] deleting ${botIdOf(slug)} without asking: the PA's trust level is open.`);

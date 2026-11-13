@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AppDb, Migration } from "@assistant/db";
 import {
 	type AccountantDeps,
@@ -17,6 +18,7 @@ import {
 	createBoundedCodemodeExtension,
 	createEntryPoster,
 	createInputSubmitter,
+	createOwnerBots,
 	ctoModule,
 	type DailyFactsProvider,
 	type DailyService,
@@ -40,6 +42,7 @@ import {
 	inboxModule,
 	ledgerModule,
 	memoryModule,
+	type OwnerBots,
 	peopleModule,
 	type ReconcileReport,
 	type RecoveryReport,
@@ -103,6 +106,8 @@ export type Domain = {
 	botExtensions(tools: readonly BotPreset[]): Extension[];
 	/** The Inbox's accounts, as Settings shows and changes them, and the owner's answers to what it suggests. */
 	inbox: InboxFacade;
+	/** The owner's Bots page: list, create and delete bots directly (no approval: the owner is the one deciding). */
+	bots: OwnerBots;
 	/** What the agents spent, sampled from Durable into days and weeks, and the weekly token limits the daily jobs obey (M8). */
 	usage: UsageService;
 	approvals: ApprovalService;
@@ -364,6 +369,8 @@ export function createDomain(options: DomainOptions): Domain {
 			return [...tools.map((preset) => byPreset[preset]), guard, toolSearch];
 		},
 		usage,
+		// `owner:` keeps these apart from tool call ids, which a replayed create_bot matches its row by.
+		bots: createOwnerBots(deps, () => `owner:${randomUUID()}`),
 		inbox: {
 			settings: () => inboxModule.accounts(deps).settings(),
 			disconnect: (email) => inboxModule.accounts(deps).disconnect(email),

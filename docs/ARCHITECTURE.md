@@ -147,11 +147,19 @@ display-only card. Specialists can't reach each other. The Inbox reaches the PA 
 `bots_bot` row is authoritative: at every start the server gives each row a conversation (agent id `bot:<slug>`, built
 by `botAgentDef` in `apps/server/src/agents.ts`) and archives the conversation of a bot whose row is gone (its agent key
 is rewritten so it is never adopted again; durable.sqlite keeps it). Creating or deleting follows the PA's trust level
-(`ZIMPOEN_PA_TRUST`, `decide()` in `packages/extensions/src/trust.ts`): `normal` (default) and `strict` ask through the
+(Settings → Trust levels, else `ZIMPOEN_PA_TRUST`; `decide()` in `packages/extensions/src/trust.ts`): `normal` (default) and `strict` ask through the
 approvals flow (actions `spawn_bot`, `retire_bot`), `open` runs and logs. Both tools refuse during a scheduled run (rule
 13), through the `isScheduledRun()` routines use too (`packages/extensions/src/scheduled-run.ts`: daily job ids come from
 `DAILY_JOBS`). `ask_agent` reaches bots
 by id; bots have no `ask_agent`. Deleting a bot aborts its run and clears its memory scope and weekly limit.
+The owner can also create and delete bots on the Bots page (`/api/bots`): no approval, same code (`createOwnerBots` in
+`packages/extensions/src/bots/tools.ts`), so the cap, slug, soul and preset checks are the PA's.
+
+**Trust levels.** Stored owner-only in `trust_setting` (`apps/server/src/trust-settings.ts`, a server table like
+Telegram's: no tool can reach it), written only by `PUT /api/settings/trust/...`. Subjects are `pa` and `project:<id>`.
+A stored level overrides the default (`ZIMPOEN_PA_TRUST` for the PA, the policy's `trust` for a project); `null` removes
+it. The bots tools and `cred_run` read the level at each call (`BotsDeps.trustLevel()`, `BrokerDeps.trustOf`), so a
+change applies to the next call, and an approved `cred_exec` is checked against the level at approval time.
 
 Code mode runs scripts in a QuickJS sandbox with no network, no files and no model calls. Each script has a time limit
 (30 s by default, 2 minutes at most).
@@ -263,6 +271,12 @@ PUT    /settings/schedule/:job              { localTime?, enabled? }
 GET    /settings/google                     accounts, triage mode
 DELETE /settings/google/accounts            { email }: forget sign-in locally
 PUT    /settings/budget/:agent              { weeklyTokens | null }
+GET    /settings/trust                      PA and broker-project trust levels, with defaults
+PUT    /settings/trust/pa                   { level: open|normal|strict | null }
+PUT    /settings/trust/projects/:id         { level | null }; 404 for a project not in the policy
+GET    /bots                                bots, cap, presets
+POST   /bots                                { slug, name, avatar?, soul, tools[] } -> 201; 400 bad spec, 409 taken/full
+DELETE /bots/:slug                          archive the bot's chat, clear its memory and limit
 GET    /push/config                         VAPID public key
 POST|DELETE /push/subscribe                 one device's subscription (≤ 20 devices)
 POST   /approvals/:id                       { decision: "approve" | "deny" }
@@ -344,7 +358,7 @@ there is no `get_secret`.
 - **Secrets:** in process, one file per `secretRef` in `<data>/secrets/broker/creds/` (dir 0700, files 0600, at least 8
   characters; refused otherwise). In the broker service, `$CREDENTIALS_DIRECTORY/<secretRef>` from
   `LoadCredentialEncrypted=`.
-- **Decision:** `decide(trust, sensitivity)` in `packages/extensions/src/trust.ts` (plan §3). `allow` runs now; `ask`
+- **Decision:** `decide(trust, sensitivity)`, where `trust` is the owner's level from Settings when set, else the policy's, in `packages/extensions/src/trust.ts` (plan §3). `allow` runs now; `ask`
   proposes an approval (`cred_exec` target) and the server runs it on Approve/YES, after checking the current policy
   again; `deny` refuses.
 - **Run:** `spawn` with no shell in its own process group, env = `PATH`, `LANG` and the injected secret only; the timeout
@@ -383,8 +397,8 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 - **Thread:** one endless chat per agent. Display-only entries render as system cards; tool results render as typed cards
   (approvals, tasks, health charts, spending bars, split bills, invoices, mail lists, suggestions). Charts are plain SVG.
 - **Composer:** text, attachments (each uploads as it's picked, up to 10 per message), stop.
-- **Pages:** Settings (agent models, daily schedule, Google accounts, notifications), Profile (memory editor, tone),
-  Activity, Usage (weekly limits).
+- **Pages:** Settings (agent models, daily schedule, Google accounts, trust levels, notifications), Profile (memory
+  editor, tone), Activity, Usage (weekly limits), Bots (list, create, delete).
 - **PWA:** manifest, generated icons, `sw.js` for push (no caching), Android share target. iOS delivers push only to an
   installed web app.
 - A banner reports tasks Durable parked after repeated crashes, with a Retry button.
@@ -413,6 +427,7 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 | delegate | `delegate_ask` |
 | bots | `bots_bot`, `bots_call` |
 | telegram (server, not a module) | `telegram_state` (poll offset, bound chat, one-time start code), `telegram_reply` |
+| trust (server, not a module) | `trust_setting` (owner's trust levels: `pa`, `project:<id>`) |
 | routines | `routines_routine`, `routines_call` |
 | broker | `broker_call` |
 | cto | `cto_card` |
