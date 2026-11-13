@@ -1,4 +1,5 @@
-export const AGENT_IDS = ["pa", "inbox", "health", "accountant"] as const;
+/** Built-in agents. `cto` exists only with `ZIMPOEN_CTO=on` (PLAN upgrade §7). */
+export const AGENT_IDS = ["pa", "inbox", "health", "accountant", "cto"] as const;
 
 export type AgentId = (typeof AGENT_IDS)[number];
 

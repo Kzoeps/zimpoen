@@ -9,6 +9,7 @@ import {
 	botsModule,
 	brokerModule,
 	type CodemodeLimits,
+	type CtoDeps,
 	closingYesWindow,
 	closingYesWindowOnAsk,
 	collectMigrations,
@@ -16,6 +17,7 @@ import {
 	createBoundedCodemodeExtension,
 	createEntryPoster,
 	createInputSubmitter,
+	ctoModule,
 	type DailyFactsProvider,
 	type DailyService,
 	type DailyStart,
@@ -89,6 +91,11 @@ export type Domain = {
 	 * Approve): the suggestion queue is its only way to the PA, and server code owns that.
 	 */
 	inboxExtensions: Extension[];
+	/**
+	 * What the CTO selects (`ZIMPOEN_CTO=on`, PLAN upgrade §7): its board tools, `cred_run` when the broker is on, the
+	 * approval hook and `tool_search`. No `ask_agent`, memory, files or web. Undefined when the CTO is off.
+	 */
+	ctoExtensions?: Extension[];
 	/**
 	 * What a bot the PA created selects (PLAN upgrade §4): the extensions of its presets, the approval hook (a preset's
 	 * deletes stay guarded) and `tool_search`. Never `delegate`, `inbox`, `files`, `daily` or `bots`: the presets cannot name them.
@@ -179,6 +186,8 @@ export type DomainOptions = {
 	bots?: BotsDeps;
 	/** The credential broker (unless `ZIMPOEN_CRED_BROKER=off`). Omitted: no `cred_run` tool. */
 	broker?: BrokerDeps;
+	/** The CTO's coding lead, allowed repos and trust (`ZIMPOEN_CTO=on`). Omitted: no CTO. */
+	cto?: CtoDeps;
 	/** Where a failure the work goes on without is said (the server's log). */
 	warn?: (message: string) => void;
 };
@@ -210,6 +219,7 @@ export const MODULES: readonly DomainModule[] = [
 	routinesModule,
 	botsModule,
 	brokerModule,
+	ctoModule,
 ];
 
 export function createDomain(options: DomainOptions): Domain {
@@ -246,6 +256,7 @@ export function createDomain(options: DomainOptions): Domain {
 		...(options.warn === undefined ? {} : { warn: options.warn }),
 		...(options.bots === undefined ? {} : { bots: options.bots }),
 		...(options.broker === undefined ? {} : { broker: options.broker }),
+		...(options.cto === undefined ? {} : { cto: options.cto }),
 		// The daily jobs ask this before they spend tokens; the module is built from `deps`, so it is looked up when asked.
 		budget: { check: (agent) => usageModule.service(deps).check(agent) },
 	};
@@ -267,8 +278,10 @@ export function createDomain(options: DomainOptions): Domain {
 	// The PA and the Accountant read the public web; the Inbox never does: it reads untrusted mail, and a page fetch is a
 	// way to send what it read somewhere.
 	const web = webModule.extension(deps);
-	// Only the PA, and only unless ZIMPOEN_CRED_BROKER=off: off, nothing of the broker is installed.
+	// The PA and the CTO, and only unless ZIMPOEN_CRED_BROKER=off: off, nothing of the broker is installed.
 	const broker = options.broker === undefined ? [] : [brokerModule.extension(deps)];
+	// Only the CTO, and only with ZIMPOEN_CTO=on.
+	const cto = options.cto === undefined ? undefined : ctoModule.extension(deps);
 	// Every agent is told what is remembered; all but the Inbox may also remember and (with approval) forget. The Inbox reads
 	// untrusted email text, and a line it wrote would be in a prompt for good, so it only reads (PLAN rule 6).
 	const memory = memoryModule.extension(deps);
@@ -311,6 +324,7 @@ export function createDomain(options: DomainOptions): Domain {
 			routines,
 			web,
 			...broker,
+			...(cto === undefined ? [] : [cto]),
 			memory,
 			memoryRead,
 			guard,
@@ -338,6 +352,7 @@ export function createDomain(options: DomainOptions): Domain {
 		healthExtensions: [health, guard, toolSearch, memory],
 		accountantExtensions: [ledger, splits, documents, files, web, guard, toolSearch, codemode, memory],
 		inboxExtensions: [inbox, memoryRead],
+		...(cto === undefined ? {} : { ctoExtensions: [cto, ...broker, guard, toolSearch] }),
 		botExtensions: (tools) => {
 			const byPreset: Record<BotPreset, Extension> = {
 				"tasks-read": tasksRead,
