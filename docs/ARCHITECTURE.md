@@ -280,6 +280,13 @@ YES goes through `tryYes`, §5.6); when the run ends, its final text is sent bac
 and transcribed by whisper.cpp's `whisper-cli` with fixed argv (`ZIMPOEN_WHISPER_BIN`, `ZIMPOEN_WHISPER_MODEL`, both or
 neither); only `[Voice note transcript] …` reaches the thread. No agent has a Telegram tool.
 
+- A Telegram YES approves the one waiting request (rule 3, same `tryYes` window as the web) without the approval card
+  being shown in Telegram: the owner approves from the chat context alone. Check the card in the web app when unsure.
+- Voice notes are transcribed inside the poll loop, so text sent during a transcription (up to ~6 min) waits for it.
+- A reply is retried with backoff when its first piece fails to send; once a piece went out it is never resent. A message
+  that could not be passed on gets a "please send it again" answer. Text over 20 000 characters is cut, with a note.
+- Open: the start code is printed to the server log and does not expire until a chat binds.
+
 ### 5.6 Approvals
 
 `pending_actions` holds one row per request: tool, target (`task:t_ab12`), args, status
