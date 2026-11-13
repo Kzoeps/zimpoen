@@ -113,6 +113,16 @@ There is no separate broker process, socket or user. Files, all under `<data>/se
 The server reads the policy once at start: after editing it, restart `assistant-server`. Every run and decision goes to
 `<data>/broker-audit.jsonl` (`ZIMPOEN_CRED_AUDIT`).
 
+## Shell
+
+`ZIMPOEN_SHELL=on` runs commands in gVisor containers through rootless Podman (the default engine), started by the
+server's own user: no docker group. Install Podman and gVisor (`runsc` registered as a Podman runtime) for that user and
+pull `ZIMPOEN_SHELL_IMAGE`. Keep `ZIMPOEN_SHELL_NETWORK=none` (the default) with rootless Podman: `ops/shell-egress.sh`
+filters a rootful engine's bridge (it defaults to `--engine docker`), not a rootless one. Details: ARCHITECTURE §5.9.
+
+Deleting a bot deletes its volume only while `ZIMPOEN_SHELL=on`. If you turned the shell off first, remove leftovers by
+hand: `podman volume rm zimpoen-shell-bot-<slug>`.
+
 ## Files
 
 Uploads are in `<data>/files/<yyyy-mm>/`, mode 0600, indexed by path in `files_index`. Nothing deletes them. A file
