@@ -29,9 +29,29 @@ export function parseScheduledRequestId(requestId: string | undefined): Schedule
 	return undefined;
 }
 
-/** Whether a submission's request id belongs to a scheduled run rather than to the owner. */
+/**
+ * Whether a submission's request id belongs to a scheduled run rather than to the owner. Anything under the `routine:` or
+ * reserved `daily:` prefix counts even when malformed: refusing is the safe side.
+ */
 export const isScheduledRequestId = (requestId: string | undefined): boolean =>
-	parseScheduledRequestId(requestId) !== undefined;
+	parseScheduledRequestId(requestId) !== undefined ||
+	(requestId !== undefined && (requestId.startsWith(ROUTINE_REQUEST_PREFIX) || requestId.startsWith("daily:")));
+
+/**
+ * The request ids of the inputs placed in the conversation's current run (`""` for an input without one, an ordinary
+ * owner message). Empty when the conversation has no placed input: a caller that must fail closed treats that as unknown.
+ */
+export async function currentRunRequestIds(harness: Harness, conversationId: number): Promise<string[]> {
+	const { submissions } = await harness.inspect(BACKGROUND_CONTEXT);
+	return submissions
+		.filter(
+			(submission) =>
+				Number(submission.conversationId) === conversationId &&
+				submission.type === "input" &&
+				submission.status === "placed",
+		)
+		.map((submission) => submission.requestId ?? "");
+}
 
 /**
  * Rule 13: whether the conversation is running for a scheduled run right now, i.e. one of the inputs placed in its
@@ -41,14 +61,7 @@ export const isScheduledRequestId = (requestId: string | undefined): boolean =>
  * Conservative on purpose: an owner message steered into a scheduled run counts as scheduled too.
  */
 export async function isScheduledRun(harness: Harness, conversationId: number): Promise<boolean> {
-	const { submissions } = await harness.inspect(BACKGROUND_CONTEXT);
-	return submissions.some(
-		(submission) =>
-			Number(submission.conversationId) === conversationId &&
-			submission.type === "input" &&
-			submission.status === "placed" &&
-			isScheduledRequestId(submission.requestId),
-	);
+	return (await currentRunRequestIds(harness, conversationId)).some(isScheduledRequestId);
 }
 
 /** The refusal text tools return under rule 13. */

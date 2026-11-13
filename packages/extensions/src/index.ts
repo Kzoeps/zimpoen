@@ -31,6 +31,33 @@ export {
 	MAX_SOUL_CHARS,
 } from "./bots/index.ts";
 export {
+	type AuditEvent,
+	type AuditLog,
+	BROKER_EXTENSION_NAME,
+	type BrokerDeps,
+	brokerModule,
+	brokerStore,
+	CRED_EXEC_ACTION,
+	type CredBroker,
+	type CredRunRequest,
+	type CredRunResult,
+	capBytes,
+	createFileSecretStore,
+	createInProcessBroker,
+	createJsonlAudit,
+	createMemoryAudit,
+	createMemorySecretStore,
+	type ExecFn,
+	execProgram,
+	type Policy,
+	PolicyError,
+	parsePolicy,
+	REDACTED,
+	type SecretStore,
+	scrub,
+} from "./broker/index.ts";
+
+export {
 	boundCodemodeSource,
 	type CodemodeLimits,
 	createBoundedCodemodeExtension,
@@ -320,6 +347,7 @@ export {
 } from "./routines/index.ts";
 export { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings, scheduleOf } from "./schedule.ts";
 export {
+	currentRunRequestIds,
 	isScheduledRequestId,
 	isScheduledRun,
 	parseScheduledRequestId,
@@ -372,6 +400,7 @@ export {
 	DEFAULT_TRUST_LEVEL,
 	decide as decideTrust,
 	isTrustLevel,
+	SENSITIVITIES,
 	type Sensitivity,
 	TRUST_LEVELS,
 	type TrustDecision,

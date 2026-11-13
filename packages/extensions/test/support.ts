@@ -25,6 +25,7 @@ import {
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { type BrokerDeps, brokerModule } from "../src/broker/index.ts";
 import {
 	type AccountantDeps,
 	type AskedInput,
@@ -160,6 +161,8 @@ export type FixtureOptions = {
 	budget?: BudgetGate;
 	/** How bots are made and retired, and the PA's trust level. Default: none, and the bot tools say bots are not set up. */
 	bots?: BotsDeps;
+	/** The credential broker. Default: none, and the broker extension has no tools. */
+	broker?: BrokerDeps;
 };
 
 export type Fixture = {
@@ -234,6 +237,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		webModule,
 		routinesModule,
 		botsModule,
+		brokerModule,
 	];
 	migrate(db, [...coreMigrations, ...collectMigrations(modules)]);
 
@@ -297,6 +301,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		...(options.budget === undefined ? {} : { budget: options.budget }),
 		...(options.web === undefined ? {} : { web: options.web }),
 		...(options.bots === undefined ? {} : { bots: options.bots }),
+		...(options.broker === undefined ? {} : { broker: options.broker }),
 	};
 	for (const module of modules) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = [...modules.flatMap((module) => module.facts?.(deps) ?? []), ...(options.providers ?? [])];

@@ -5,7 +5,9 @@ import {
 	approvalsModule,
 	type BotPreset,
 	type BotsDeps,
+	type BrokerDeps,
 	botsModule,
+	brokerModule,
 	type CodemodeLimits,
 	closingYesWindow,
 	closingYesWindowOnAsk,
@@ -175,6 +177,8 @@ export type DomainOptions = {
 	web?: WebDeps;
 	/** How bots are made and retired, and the PA's trust level. Omitted: the bot tools say bots are not set up. */
 	bots?: BotsDeps;
+	/** The credential broker (`ZIMPOEN_CRED_BROKER=on`). Omitted: no `cred_run` tool. */
+	broker?: BrokerDeps;
 	/** Where a failure the work goes on without is said (the server's log). */
 	warn?: (message: string) => void;
 };
@@ -205,6 +209,7 @@ export const MODULES: readonly DomainModule[] = [
 	webModule,
 	routinesModule,
 	botsModule,
+	brokerModule,
 ];
 
 export function createDomain(options: DomainOptions): Domain {
@@ -240,6 +245,7 @@ export function createDomain(options: DomainOptions): Domain {
 		...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 		...(options.warn === undefined ? {} : { warn: options.warn }),
 		...(options.bots === undefined ? {} : { bots: options.bots }),
+		...(options.broker === undefined ? {} : { broker: options.broker }),
 		// The daily jobs ask this before they spend tokens; the module is built from `deps`, so it is looked up when asked.
 		budget: { check: (agent) => usageModule.service(deps).check(agent) },
 	};
@@ -261,6 +267,8 @@ export function createDomain(options: DomainOptions): Domain {
 	// The PA and the Accountant read the public web; the Inbox never does: it reads untrusted mail, and a page fetch is a
 	// way to send what it read somewhere.
 	const web = webModule.extension(deps);
+	// Only the PA, and only with ZIMPOEN_CRED_BROKER=on: off, nothing of the broker is installed.
+	const broker = options.broker === undefined ? [] : [brokerModule.extension(deps)];
 	// Every agent is told what is remembered; all but the Inbox may also remember and (with approval) forget. The Inbox reads
 	// untrusted email text, and a line it wrote would be in a prompt for good, so it only reads (PLAN rule 6).
 	const memory = memoryModule.extension(deps);
@@ -302,6 +310,7 @@ export function createDomain(options: DomainOptions): Domain {
 			delegate,
 			routines,
 			web,
+			...broker,
 			memory,
 			memoryRead,
 			guard,
@@ -320,6 +329,7 @@ export function createDomain(options: DomainOptions): Domain {
 			web,
 			delegate,
 			routines,
+			...broker,
 			guard,
 			toolSearch,
 			memory,
