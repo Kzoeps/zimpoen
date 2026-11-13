@@ -1,6 +1,7 @@
 import { TIME_OF_DAY } from "@assistant/extensions";
 import {
 	type ApprovalDecision,
+	type CreateBotRequest,
 	DEFAULT_ACTIVITY_PAGE,
 	DEFAULT_HISTORY_PAGE,
 	type DisconnectGoogleRequest,
@@ -8,6 +9,7 @@ import {
 	isMemoryKind,
 	isMemoryScope,
 	isThinkingLevel,
+	isTrustLevelName,
 	MAX_ACTIVITY_PAGE,
 	MAX_HISTORY_PAGE,
 	MAX_MEMORY_CHARS,
@@ -28,6 +30,7 @@ import {
 	type UpdateMemoryRequest,
 	type UpdatePreferencesRequest,
 	type UpdateScheduleRequest,
+	type UpdateTrustRequest,
 } from "@assistant/shared";
 import type { Context, MiddlewareHandler } from "hono";
 import { ApiError, invalidRequest } from "./errors.ts";
@@ -365,4 +368,39 @@ export function parseUpdateBudget(body: Record<string, unknown>): UpdateBudgetRe
 		);
 	}
 	return { weeklyTokens };
+}
+
+/**
+ * `POST /api/bots`: the shape only. What the values may be (slug, name length, soul size, presets) is checked by the same
+ * code the PA's `create_bot` goes through, so the two never disagree.
+ */
+export function parseCreateBot(body: Record<string, unknown>): CreateBotRequest {
+	const { slug, name, avatar, soul, tools } = body;
+	for (const [field, value] of [
+		["slug", slug],
+		["name", name],
+		["soul", soul],
+	] as const) {
+		if (typeof value !== "string") throw invalidRequest(`'${field}' must be text.`);
+	}
+	if (avatar !== undefined && typeof avatar !== "string") throw invalidRequest("'avatar' must be one emoji.");
+	if (!Array.isArray(tools) || tools.length > 20 || !tools.every((tool) => typeof tool === "string")) {
+		throw invalidRequest("'tools' must be a list of tool preset names. GET /api/bots lists them.");
+	}
+	return {
+		slug: slug as string,
+		name: name as string,
+		soul: soul as string,
+		tools: tools as string[],
+		...(avatar === undefined ? {} : { avatar }),
+	};
+}
+
+/** `PUT /api/settings/trust/...`: a trust level, or null to go back to the default. */
+export function parseUpdateTrust(body: Record<string, unknown>): UpdateTrustRequest {
+	const { level } = body;
+	if (level !== null && !isTrustLevelName(level)) {
+		throw invalidRequest("'level' must be 'open', 'normal' or 'strict', or null to go back to the default.");
+	}
+	return { level };
 }

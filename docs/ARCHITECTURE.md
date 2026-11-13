@@ -33,7 +33,7 @@ subscription OAuth is not used: its consumer terms don't allow it.
    `<data>/secrets/**`. Startup rejects a read path that would expose the databases.
 5. **No shell on the host.** Documents are converted by the server itself (poppler, LibreOffice) with fixed
    arguments; no agent chooses what runs on the host. With `ZIMPOEN_SHELL=on` (default off) the PA, and bots given the
-   `shell` preset, get `shell_run`, which runs only inside the agent's own gVisor container (§5.8). Never the Inbox.
+   `shell` preset, get `shell_run`, which runs only inside the agent's own gVisor container (§5.9). Never the Inbox.
 6. **The Inbox agent has no file tools,** because it handles untrusted email. Its only tools are `search_mail`,
    `read_mail`, `list_events`, `mark_triage`, `propose_sender_rule`, `suggest_followup`, `recall` and `current_time`. No
    `tool_search`, no approval hook, no `ask_agent`. Email text is treated as data everywhere.
@@ -137,21 +137,30 @@ display-only card. Specialists can't reach each other. The Inbox reaches the PA 
 
 | Agent | Extensions |
 |---|---|
-| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `routines`, `memory`, `tool_search`, `bots`, `broker` (only with `ZIMPOEN_CRED_BROKER=on`), `shell` (only with `ZIMPOEN_SHELL=on`) |
+| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `routines`, `memory`, `tool_search`, `bots`, `broker` (unless `ZIMPOEN_CRED_BROKER=off`), `shell` (only with `ZIMPOEN_SHELL=on`) |
 | `inbox` | `inbox`, `memory-read` |
 | `health` | `health`, `approvals`, `memory`, `tool_search` |
 | `accountant` | `ledger`, `splits`, `documents`, `files`, `approvals`, `memory`, `tool_search`, code mode |
+| `cto` (only with `ZIMPOEN_CTO=on`) | `cto`, `broker` (only with `ZIMPOEN_CRED_BROKER=on`), `approvals`, `tool_search` |
 | `bot:<slug>` | the presets the PA chose (`tasks-read`, `documents`, `web`, `memory`, `codemode`, `shell`), `approvals`, `tool_search` |
 
 **Bots (upgrade §4).** The PA's `create_bot`, `delete_bot` and `list_bots` (deferred) manage up to 8 specialist bots. A
 `bots_bot` row is authoritative: at every start the server gives each row a conversation (agent id `bot:<slug>`, built
 by `botAgentDef` in `apps/server/src/agents.ts`) and archives the conversation of a bot whose row is gone (its agent key
 is rewritten so it is never adopted again; durable.sqlite keeps it). Creating or deleting follows the PA's trust level
-(`ZIMPOEN_PA_TRUST`, `decide()` in `packages/extensions/src/trust.ts`): `normal` (default) and `strict` ask through the
+(Settings → Trust levels, else `ZIMPOEN_PA_TRUST`; `decide()` in `packages/extensions/src/trust.ts`): `normal` (default) and `strict` ask through the
 approvals flow (actions `spawn_bot`, `retire_bot`), `open` runs and logs. Both tools refuse during a scheduled run (rule
 13), through the `isScheduledRun()` routines use too (`packages/extensions/src/scheduled-run.ts`: daily job ids come from
 `DAILY_JOBS`). `ask_agent` reaches bots
 by id; bots have no `ask_agent`. Deleting a bot aborts its run and clears its memory scope and weekly limit.
+The owner can also create and delete bots on the Bots page (`/api/bots`): no approval, same code (`createOwnerBots` in
+`packages/extensions/src/bots/tools.ts`), so the cap, slug, soul and preset checks are the PA's.
+
+**Trust levels.** Stored owner-only in `trust_setting` (`apps/server/src/trust-settings.ts`, a server table like
+Telegram's: no tool can reach it), written only by `PUT /api/settings/trust/...`. Subjects are `pa` and `project:<id>`.
+A stored level overrides the default (`ZIMPOEN_PA_TRUST` for the PA, the policy's `trust` for a project); `null` removes
+it. The bots tools and `cred_run` read the level at each call (`BotsDeps.trustLevel()`, `BrokerDeps.trustOf`), so a
+change applies to the next call, and an approved `cred_exec` is checked against the level at approval time.
 
 Code mode runs scripts in a QuickJS sandbox with no network, no files and no model calls. Each script has a time limit
 (30 s by default, 2 minutes at most).
@@ -263,6 +272,12 @@ PUT    /settings/schedule/:job              { localTime?, enabled? }
 GET    /settings/google                     accounts, triage mode
 DELETE /settings/google/accounts            { email }: forget sign-in locally
 PUT    /settings/budget/:agent              { weeklyTokens | null }
+GET    /settings/trust                      PA and broker-project trust levels, with defaults
+PUT    /settings/trust/pa                   { level: open|normal|strict | null }
+PUT    /settings/trust/projects/:id         { level | null }; 404 for a project not in the policy
+GET    /bots                                bots, cap, presets
+POST   /bots                                { slug, name, avatar?, soul, tools[] } -> 201; 400 bad spec, 409 taken/full
+DELETE /bots/:slug                          archive the bot's chat, clear its memory and limit
 GET    /push/config                         VAPID public key
 POST|DELETE /push/subscribe                 one device's subscription (≤ 20 devices)
 POST   /approvals/:id                       { decision: "approve" | "deny" }
@@ -325,7 +340,12 @@ neither); only `[Voice note transcript] …` reaches the thread. No agent has a 
 
 ### 5.7 Credential broker (phase 1d)
 
-`ZIMPOEN_CRED_BROKER=off|on`, default `off`: no tool, no approval action, nothing read. When `on`, the PA gets
+`ZIMPOEN_CRED_BROKER=off|inprocess|socket` (`on` means `inprocess`), default `off`: no tool, no approval action,
+nothing read. `inprocess` runs the broker inside the server (development). `socket` uses the separate `zimpoen-broker`
+process (`apps/server/src/broker-main.ts`, unit `ops/systemd/zimpoen-broker.service`, own user, secrets from
+`systemd-creds`) through `createSocketBroker` (`packages/extensions/src/broker/socket.ts`): one line of JSON per request
+and reply, size and time capped; the server fetches the policy from the broker at start. Access to the socket is its
+0750 directory (Node has no SO_PEERCRED); see docs/OPS.md "Broker". Otherwise the PA gets
 `cred_run({ project, credId, action, params })` (module `packages/extensions/src/broker/`, server side
 `apps/server/src/broker.ts`). It runs a fixed action from an owner-written policy with a credential the agent never sees;
 there is no `get_secret`.
@@ -336,9 +356,10 @@ there is no `get_secret`.
   timeoutMs, strictDeny?, allowDashParams? }]`. `argv[0]` is absolute; `{name}` placeholders must be declared and match
   their regex in full. A value starting with `-` is refused unless `allowDashParams` (it would become an option). The env
   name may not be reserved (`PATH`, `LANG`, `HOME`, `LD_*`, `GIT_*`, ...).
-- **Secrets:** one file per `secretRef` in `<data>/secrets/broker/creds/` (dir 0700, files 0600, at least 8 characters;
-  refused otherwise).
-- **Decision:** `decide(trust, sensitivity)` in `packages/extensions/src/trust.ts` (plan §3). `allow` runs now; `ask`
+- **Secrets:** in process, one file per `secretRef` in `<data>/secrets/broker/creds/` (dir 0700, files 0600, at least 8
+  characters; refused otherwise). In the broker service, `$CREDENTIALS_DIRECTORY/<secretRef>` from
+  `LoadCredentialEncrypted=`.
+- **Decision:** `decide(trust, sensitivity)`, where `trust` is the owner's level from Settings when set, else the policy's, in `packages/extensions/src/trust.ts` (plan §3). `allow` runs now; `ask`
   proposes an approval (`cred_exec` target) and the server runs it on Approve/YES, after checking the current policy
   again; `deny` refuses.
 - **Run:** `spawn` with no shell in its own process group, env = `PATH`, `LANG` and the injected secret only; the timeout
@@ -347,11 +368,29 @@ there is no `get_secret`.
 - **Rule 8:** `broker_call` keyed by tool call id. A replay returns the stored result; a run interrupted by a crash is
   reported as "may have run", never run again. Approved runs get the same row keyed `approval:<id>`, so startup recovery
   never repeats one either.
-- **Audit:** append-only JSONL (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`), decisions and runs, no secret values.
+- **Audit:** append-only JSONL (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`), decisions and runs, no secret
+  values. With `socket`, runs go to the broker's own log (`ZIMPOEN_BROKER_AUDIT`) and the server's file keeps decisions.
 - **Scheduled runs:** refused when the current run answers a `routine:`/`daily:` request (or a daily job's `<job>:<date>`),
   and when no current input can be found.
 
-### 5.8 Sandboxed shell (upgrade phase 4)
+### 5.8 CTO (phase 3)
+
+`ZIMPOEN_CTO=off|on`, default `off`: no agent, no tool. When on, a built-in `cto` agent hands coding work to the owner's
+herdr-lead (module `packages/extensions/src/cto/`, server side `apps/server/src/cto.ts`).
+
+- **Config:** `ZIMPOEN_CTO_REPOS` (required, comma list of `name` or `owner/name`), `ZIMPOEN_CTO_TRUST` (default normal),
+  `ZIMPOEN_CTO_BOARD_BIN` (default `hc-board`), `ZIMPOEN_CTO_HC_BIN` (default `hc`).
+- **Tools:** `delegate_coding({ repo, goal, doneWhen, outOfScope })` opens a card and tells the lead; `board_status({ card_id? })`
+  reads cards it opened. Both go through the `CodingLead` interface; the server runs `hc-board`/`hc` with `execFile`, fixed
+  argv and a minimal environment. Arguments are validated (repo allowlist, length caps, no leading `-`, no control characters).
+- **Rule 8:** `cto_card` keyed by tool call id; the board call carries the same id as `--key`.
+- **Rule 13:** `delegate_coding` refuses in a scheduled run (including an `ask_agent` question the PA asked from one)
+  unless the CTO's trust is `open`.
+- **Hub and spoke:** no `ask_agent`; the PA asks it with `ask_agent cto`. The owner's messages to its thread are refused
+  (403), except a bare YES answering one of its approval requests. Push, merge and deploy are `cred_run` broker
+  actions (§5.7).
+
+### 5.9 Sandboxed shell (upgrade phase 4)
 
 `ZIMPOEN_SHELL=off|on`, default `off`: no tool, no container engine touched. When `on`, `shell_run({ command,
 timeoutSeconds? })` (deferred; module `packages/extensions/src/shell/`, server side `apps/server/src/shell.ts`) runs one
@@ -392,8 +431,8 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 - **Thread:** one endless chat per agent. Display-only entries render as system cards; tool results render as typed cards
   (approvals, tasks, health charts, spending bars, split bills, invoices, mail lists, suggestions). Charts are plain SVG.
 - **Composer:** text, attachments (each uploads as it's picked, up to 10 per message), stop.
-- **Pages:** Settings (agent models, daily schedule, Google accounts, notifications), Profile (memory editor, tone),
-  Activity, Usage (weekly limits).
+- **Pages:** Settings (agent models, daily schedule, Google accounts, trust levels, notifications), Profile (memory
+  editor, tone), Activity, Usage (weekly limits), Bots (list, create, delete).
 - **PWA:** manifest, generated icons, `sw.js` for push (no caching), Android share target. iOS delivers push only to an
   installed web app.
 - A banner reports tasks Durable parked after repeated crashes, with a Retry button.
@@ -422,8 +461,10 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 | delegate | `delegate_ask` |
 | bots | `bots_bot`, `bots_call` |
 | telegram (server, not a module) | `telegram_state` (poll offset, bound chat, one-time start code), `telegram_reply` |
+| trust (server, not a module) | `trust_setting` (owner's trust levels: `pa`, `project:<id>`) |
 | routines | `routines_routine`, `routines_call` |
 | broker | `broker_call` |
+| cto | `cto_card` |
 
 Conventions:
 

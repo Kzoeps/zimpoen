@@ -1,6 +1,6 @@
 /** Flat icons for the owner's pages, drawn to sit next to the ninja bot avatars. */
 
-export type PageIconName = "profile" | "activity" | "usage" | "settings";
+export type PageIconName = "profile" | "activity" | "usage" | "bots" | "settings";
 
 export function PageIcon({ name, size = 26 }: { name: PageIconName; size?: number }) {
 	return (
@@ -38,6 +38,16 @@ const ICONS: Record<PageIconName, React.ReactElement> = {
 			<Kunai x={16} top={34} />
 			<Kunai x={32} top={22} />
 			<Kunai x={48} top={10} />
+		</g>
+	),
+	// Bots: a small round helper with two white eyes, like the agents' avatars.
+	bots: (
+		<g>
+			<rect x="30" y="6" width="4" height="10" rx="2" fill="#5d6370" />
+			<circle cx="32" cy="6" r="4" fill="#b4372f" />
+			<rect x="10" y="16" width="44" height="38" rx="14" fill="#8c93a1" />
+			<circle cx="24" cy="34" r="5" fill="#fff" />
+			<circle cx="40" cy="34" r="5" fill="#fff" />
 		</g>
 	),
 	// Settings: a shuriken that spins on hover.

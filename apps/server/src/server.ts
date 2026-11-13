@@ -5,7 +5,6 @@ import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
 import type { ShellHostCheckDeps, WebDeps } from "@assistant/extensions";
 import {
 	type AccountantDeps,
-	DEFAULT_TRUST_LEVEL,
 	type DelegateDeps,
 	type DocumentsDeps,
 	type FakeGoogle,
@@ -21,6 +20,7 @@ import { buildAgents, countParkedTasks, type EnsureAgentsResult, ensureAgents, l
 import { type BotRuntime, createBotRuntime } from "./bots.ts";
 import { loadCredBroker } from "./broker.ts";
 import { type Config, DEFAULT_OWNER_NAME } from "./config.ts";
+import { type CtoExec, ctoFor } from "./cto.ts";
 import type { DevProviderOptions } from "./dev-model.ts";
 import { documentsDeps } from "./documents.ts";
 import { createDomain, type Domain, type DomainOptions, type RepairReport, type SweepReport } from "./domain.ts";
@@ -36,6 +36,7 @@ import { loadOrCreateVapidKeys } from "./push/vapid.ts";
 import { openRuntime, type Runtime } from "./runtime.ts";
 import { loadShell } from "./shell.ts";
 import { startTelegram, type TelegramSetupOptions, telegramMigrations } from "./telegram/setup.ts";
+import { createTrustSettings, trustMigrations } from "./trust-settings.ts";
 import { createWebSetup, type WebService } from "./web.ts";
 
 export type ServerLogger = Pick<Console, "info" | "warn" | "error">;
@@ -77,6 +78,8 @@ export type StartServerOptions = {
 	telegram?: Pick<TelegramSetupOptions, "fetch" | "base" | "run" | "pollSeconds">;
 	/** The container engine and egress marker the shell sandbox (`ZIMPOEN_SHELL=on`) checks and uses. Tests play them. */
 	shellHost?: ShellHostCheckDeps;
+	/** Replaces how the CTO runs `hc-board` and `hc` (`ZIMPOEN_CTO=on`): tests play the board. */
+	ctoExec?: CtoExec;
 };
 
 /** How often sleeping tasks that came due are woken. A reminder is at most this late after a suspend or a clock step. */
@@ -159,10 +162,18 @@ export async function startServer(config: Config, options: StartServerOptions = 
 				throw new Error("A bot was created or deleted before the server finished starting.");
 			return botRuntime;
 		};
+		// The owner's trust levels: Settings overrides ZIMPOEN_PA_TRUST and the broker policy's project levels.
+		const brokerDeps = await loadCredBroker(config.credBroker, now, (message) => logger.warn(message));
+		const trust = createTrustSettings({
+			db,
+			now,
+			...(config.paTrust === undefined ? {} : { paDefault: config.paTrust }),
+			...(brokerDeps === undefined ? {} : { projects: brokerDeps.policy.projects }),
+		});
 		const domain = createDomain({
 			db,
 			bots: {
-				trustLevel: config.paTrust ?? DEFAULT_TRUST_LEVEL,
+				trustLevel: trust.pa,
 				spawn: (spec) => requireBotRuntime().spawn(spec),
 				retire: (slug) => requireBotRuntime().retire(slug),
 			},
@@ -183,12 +194,18 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			},
 			...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 			web: options.web ?? (await startWeb()),
-			...(await brokerFor(config, now, (message) => logger.warn(message))),
+			...(brokerDeps === undefined ? {} : { broker: { ...brokerDeps, trustOf: trust.project } }),
+			...ctoOption(config, options.ctoExec),
 			...(await shellFor(config, options.shellHost)),
 			warn: (message) => logger.warn(message),
 		});
 		undo.push(() => domain.close());
-		const migrations = migrate(db, [...coreMigrations, ...domain.migrations, ...telegramMigrations]);
+		const migrations = migrate(db, [
+			...coreMigrations,
+			...domain.migrations,
+			...telegramMigrations,
+			...trustMigrations,
+		]);
 		if (migrations.applied.length > 0) logger.info(`[db] applied migrations: ${migrations.applied.join(", ")}`);
 		// A Jev key that is there and no good is told in Settings (the triage badge) as well as in the log.
 		if (triage.problem === undefined) inboxStore.clearState(db, "triage_error");
@@ -216,6 +233,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			health: domain.healthExtensions,
 			accountant: domain.accountantExtensions,
 			inbox: domain.inboxExtensions,
+			...(domain.ctoExtensions === undefined ? {} : { cto: domain.ctoExtensions }),
 		});
 		const ensureOptions = {
 			shared: runtime.shared,
@@ -229,8 +247,15 @@ export async function startServer(config: Config, options: StartServerOptions = 
 		if (bots.ensured.length > 0) logger.info(`[bots] ${bots.ensured.length} bot(s): ${bots.ensured.join(", ")}`);
 		if (bots.archived.length > 0)
 			logger.info(`[bots] archived the conversations of deleted bots: ${bots.archived.join(", ")}`);
-		if (config.paTrust === "open")
-			logger.warn("[bots] ZIMPOEN_PA_TRUST=open: the PA creates and deletes bots without asking.");
+		if (trust.pa() === "open")
+			logger.warn("[bots] The PA's trust level is open: it creates and deletes bots without asking.");
+		if (config.cto.mode === "on") {
+			logger.info(
+				`[cto] on: repos ${config.cto.repos.join(", ")}, trust ${config.cto.trust}, board ${config.cto.boardBin}`,
+			);
+			if (config.cto.trust === "open")
+				logger.warn("[cto] ZIMPOEN_CTO_TRUST=open: the CTO hands work over during scheduled runs too.");
+		}
 		await warnIfNoOpenAiLogin(logger, config, runtime);
 		logModelCatalog(logger, config, runtime);
 		await warnAboutParkedTasks(logger, harness);
@@ -261,6 +286,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			daily: domain.daily,
 			inbox: domain.inbox,
 			usage: domain.usage,
+			bots: { bots: domain.bots, trust },
 			profile: {
 				...(config.profile.ownerName === DEFAULT_OWNER_NAME ? {} : { ownerName: config.profile.ownerName }),
 				timezone: config.profile.timezone,
@@ -802,8 +828,8 @@ async function shellFor(config: Config, host: ShellHostCheckDeps | undefined) {
 	return shell === undefined ? {} : { shell };
 }
 
-/** The credential broker when `ZIMPOEN_CRED_BROKER=on` (a bad policy stops the start), nothing otherwise. */
-async function brokerFor(config: Config, now: () => number, warn: (message: string) => void) {
-	const broker = await loadCredBroker(config.credBroker, now, warn);
-	return broker === undefined ? {} : { broker };
+/** The CTO's coding lead when `ZIMPOEN_CTO=on`, nothing otherwise. */
+function ctoOption(config: Config, exec: CtoExec | undefined) {
+	const cto = ctoFor(config.cto, exec);
+	return cto === undefined ? {} : { cto };
 }

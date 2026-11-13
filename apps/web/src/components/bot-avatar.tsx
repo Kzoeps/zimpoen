@@ -58,6 +58,13 @@ const LOOKS: Record<AgentId, Look> = {
 		eyeY: 33,
 		headwear: "hat",
 	},
+	cto: {
+		color: "#e11d48",
+		body: <rect x="8" y="12" width="48" height="44" rx="8" />,
+		collarY: 45,
+		eyeY: 31,
+		headwear: "headband",
+	},
 };
 
 /** A bot the PA created has no look of its own: it wears the Health body in grey. */

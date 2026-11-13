@@ -136,6 +136,29 @@ describe("isScheduledRun (rule 13)", () => {
 		expect(await check([""])).toBe(false);
 		expect(await check(["agent-answer:q_missing"])).toBe(true);
 	});
+
+	it("refuses an asked bot's gated tools when the PA asked from a scheduled run, and allows them otherwise (the check propose_routine and cancel_routine use)", async () => {
+		const f = await open();
+		const check = (ids: string[]) =>
+			runIsScheduled({ db: f.db, harness: () => f.harness, runRequestIds: async () => ids }, 7);
+		const ask = (callId: string, scheduled: boolean) =>
+			delegateStore.insertAsk(f.db, {
+				id: `q_${callId}`,
+				callId,
+				conversationId: 1,
+				agent: "bot:research",
+				question: "What changed?",
+				requestId: `ask:${callId}`,
+				scheduled,
+				now: START,
+			});
+		ask("from-routine", true);
+		ask("from-owner", false);
+		expect(await check(["ask:from-routine"])).toBe(true);
+		expect(await check(["ask:from-owner"])).toBe(false);
+		// A question whose row is gone cannot be told apart from a scheduled one.
+		expect(await check(["ask:unknown"])).toBe(true);
+	});
 });
 
 const DAILY_ARGS = { title: "Tasks check", message: "Check my open tasks.", schedule: "daily", time: "15:00" };

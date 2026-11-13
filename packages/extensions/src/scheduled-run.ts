@@ -54,16 +54,24 @@ export async function currentRunRequestIds(harness: Harness, conversationId: num
 		.map((submission) => submission.requestId ?? "");
 }
 
+/** Request id prefix of the question `ask_agent` puts into the asked agent's thread: `ask:<call id>`. */
+export const ASK_REQUEST_PREFIX = "ask:";
+
 /** Request id prefix of a run that posts an `ask_agent` answer into the asking thread: `agent-answer:<ask id>`. */
 export const AGENT_ANSWER_REQUEST_PREFIX = "agent-answer:";
 
 /**
- * Whether one request id belongs to a scheduled run: a routine or daily request, or the answer to an `ask_agent` question
- * that was asked inside a scheduled run (the `delegate_ask` row says so). An answer whose ask row is gone counts as
- * scheduled: refusing is the safe side.
+ * Whether one request id belongs to a scheduled run: a routine or daily request, or an `ask_agent` question (in the asked
+ * agent's thread) or its answer (in the PA's) that was asked inside a scheduled run (the `delegate_ask` row says so). One
+ * whose ask row is gone counts as scheduled: refusing is the safe side.
  */
 export function isScheduledRequest(db: AppDb, requestId: string): boolean {
 	if (isScheduledRequestId(requestId)) return true;
+	if (requestId.startsWith(ASK_REQUEST_PREFIX)) {
+		// The asked agent's run (a bot, the CTO): scheduled when the PA asked from a scheduled run, or when the row is gone.
+		const ask = db.get<{ scheduled: number }>("SELECT scheduled FROM delegate_ask WHERE request_id = ?", requestId);
+		return ask === undefined || ask.scheduled === 1;
+	}
 	if (!requestId.startsWith(AGENT_ANSWER_REQUEST_PREFIX)) return false;
 	const row = db.get<{ scheduled: number }>(
 		"SELECT scheduled FROM delegate_ask WHERE id = ?",

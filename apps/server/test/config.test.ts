@@ -455,9 +455,11 @@ describe("ZIMPOEN_CRED_BROKER", () => {
 		expect(parseConfig({ ...auth }, context).credBroker).toEqual({ mode: "off" });
 	});
 
-	it("when on, defaults its paths into the data directory and rejects bad values", () => {
-		expect(parseConfig({ ...auth, ZIMPOEN_CRED_BROKER: "on" }, context).credBroker).toEqual({
-			mode: "on",
+	it("in process ('on' means the same), defaults its paths into the data directory and rejects bad values", () => {
+		const inprocess = parseConfig({ ...auth, ZIMPOEN_CRED_BROKER: "inprocess" }, context).credBroker;
+		expect(parseConfig({ ...auth, ZIMPOEN_CRED_BROKER: "on" }, context).credBroker).toEqual(inprocess);
+		expect(inprocess).toEqual({
+			mode: "inprocess",
 			policyPath: "/work/assistant/data-dev/secrets/broker/policy.json",
 			secretsDir: "/work/assistant/data-dev/secrets/broker/creds",
 			auditPath: "/work/assistant/data-dev/broker-audit.jsonl",
@@ -465,6 +467,17 @@ describe("ZIMPOEN_CRED_BROKER", () => {
 		expect(problemsOf({ ...auth, ZIMPOEN_CRED_BROKER: "yes" })).toEqual(["ZIMPOEN_CRED_BROKER"]);
 		expect(problemsOf({ ...auth, ZIMPOEN_CRED_BROKER: "on", ZIMPOEN_CRED_POLICY: "rel.json" })).toEqual([
 			"ZIMPOEN_CRED_POLICY",
+		]);
+	});
+
+	it("over a socket, defaults to the zimpoen-broker unit's socket and keeps the server's audit in the data directory", () => {
+		expect(parseConfig({ ...auth, ZIMPOEN_CRED_BROKER: "socket" }, context).credBroker).toEqual({
+			mode: "socket",
+			socketPath: "/run/zimpoen-broker/broker.sock",
+			auditPath: "/work/assistant/data-dev/broker-audit.jsonl",
+		});
+		expect(problemsOf({ ...auth, ZIMPOEN_CRED_BROKER: "socket", ZIMPOEN_BROKER_SOCKET: "b.sock" })).toEqual([
+			"ZIMPOEN_BROKER_SOCKET",
 		]);
 	});
 });

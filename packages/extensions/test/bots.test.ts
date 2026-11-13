@@ -2,12 +2,16 @@ import { deleteAgentRow, getAgentRow, insertAgentRow } from "@assistant/db";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	BOT_PRESETS,
+	BotConflict,
+	BotNotFound,
 	type BotSpec,
+	BotSpecError,
 	type BotsDeps,
 	botsModule,
 	botsStore,
 	CREATE_BOT_ACTION,
 	cleanBotSpec,
+	createOwnerBots,
 	DELETE_BOT_ACTION,
 	decideTrust,
 	isScheduledRequestId,
@@ -32,7 +36,7 @@ async function open(trustLevel: TrustLevel = "normal", overrides: Partial<BotsDe
 	const retired: string[] = [];
 	const holder: { fixture?: Fixture } = {};
 	const bots: BotsDeps = {
-		trustLevel,
+		trustLevel: () => trustLevel,
 		spawn: async (spec) => {
 			spawned.push(spec);
 			const f = holder.fixture as Fixture;
@@ -151,7 +155,7 @@ describe("create_bot and delete_bot", () => {
 	it("deletes a bot after approval: the row goes and its conversation is retired", async () => {
 		const { f, retired } = await open("open");
 		await f.callTool("create_bot", RESEARCH, "call-create");
-		f.deps.bots = { ...(f.deps.bots as BotsDeps), trustLevel: "normal" };
+		f.deps.bots = { ...(f.deps.bots as BotsDeps), trustLevel: () => "normal" };
 
 		const result = await f.callTool("delete_bot", { slug: "bot:research" }, "call-delete");
 		expect(textOf(result)).toContain("Delete the bot");
@@ -328,5 +332,56 @@ describe("currentRunRequestIds", () => {
 		const { f } = await open();
 		const { currentRunRequestIds } = await import("../src/index.ts");
 		expect(await currentRunRequestIds(f.harness, Number(f.conversation.id))).toStrictEqual([]);
+	});
+});
+
+describe("the owner's bots (the Bots page)", () => {
+	it("creates and deletes without asking, whatever the trust level, and clears what the bot kept", async () => {
+		const { f, spawned, retired } = await open("strict");
+		let next = 0;
+		const owner = createOwnerBots(f.deps, () => `owner:${++next}`);
+
+		const bot = await owner.create(RESEARCH);
+		expect(bot).toMatchObject({ slug: "research", approvedVia: "owner", callId: "owner:1" });
+		expect(spawned.map((spec) => spec.slug)).toStrictEqual(["research"]);
+		expect(f.db.get<{ n: number }>("SELECT count(*) AS n FROM pending_actions")?.n).toBe(0);
+		await expect(owner.create(RESEARCH)).rejects.toBeInstanceOf(BotConflict);
+		await expect(owner.create({ ...RESEARCH, slug: "x", tools: ["inbox"] })).rejects.toBeInstanceOf(BotSpecError);
+
+		memoryStore.insertFact(
+			f.db,
+			{ scope: "bot:research", kind: "fact", text: "kept", source: "agent", createdAt: f.clock.now },
+			"call-fact",
+		);
+		await owner.delete("research");
+		expect(botsStore.getBot(f.db, "research")).toBeUndefined();
+		expect(retired).toStrictEqual(["research"]);
+		expect(memoryStore.listFacts(f.db, { scopes: ["bot:research"], limit: 10 }).total).toBe(0);
+		await expect(owner.delete("research")).rejects.toBeInstanceOf(BotNotFound);
+	});
+
+	it("keeps the cap", async () => {
+		const { f } = await open();
+		const owner = createOwnerBots(f.deps, () => "owner:x");
+		for (let index = 0; index < MAX_BOTS; index += 1) {
+			botsStore.insertBot(f.db, {
+				...cleanBotSpec(RESEARCH),
+				slug: `bot-${index}`,
+				approvedVia: "owner",
+				callId: `c${index}`,
+				now: 1,
+			});
+		}
+		await expect(owner.create(RESEARCH)).rejects.toThrow(`already ${MAX_BOTS} bots`);
+	});
+
+	it("reads the PA's trust level at each call, so the owner's change applies to the next one", async () => {
+		let level: TrustLevel = "open";
+		const { f } = await open("normal", { trustLevel: () => level });
+		expect(textOf(await f.callTool("create_bot", RESEARCH, "call-a"))).toContain("Created the bot");
+		level = "normal";
+		expect(textOf(await f.callTool("create_bot", { ...RESEARCH, slug: "other" }, "call-b"))).toContain(
+			"Asked the owner to approve",
+		);
 	});
 });

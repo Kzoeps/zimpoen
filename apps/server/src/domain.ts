@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AppDb, Migration } from "@assistant/db";
 import {
 	type AccountantDeps,
@@ -9,6 +10,7 @@ import {
 	botsModule,
 	brokerModule,
 	type CodemodeLimits,
+	type CtoDeps,
 	closingYesWindow,
 	closingYesWindowOnAsk,
 	collectMigrations,
@@ -16,7 +18,9 @@ import {
 	createBoundedCodemodeExtension,
 	createEntryPoster,
 	createInputSubmitter,
+	createOwnerBots,
 	createShellExtension,
+	ctoModule,
 	type DailyFactsProvider,
 	type DailyService,
 	type DailyStart,
@@ -39,6 +43,7 @@ import {
 	inboxModule,
 	ledgerModule,
 	memoryModule,
+	type OwnerBots,
 	peopleModule,
 	type ReconcileReport,
 	type RecoveryReport,
@@ -92,12 +97,19 @@ export type Domain = {
 	 */
 	inboxExtensions: Extension[];
 	/**
+	 * What the CTO selects (`ZIMPOEN_CTO=on`, PLAN upgrade §7): its board tools, `cred_run` when the broker is on, the
+	 * approval hook and `tool_search`. No `ask_agent`, memory, files or web. Undefined when the CTO is off.
+	 */
+	ctoExtensions?: Extension[];
+	/**
 	 * What a bot the PA created selects (PLAN upgrade §4): the extensions of its presets, the approval hook (a preset's
 	 * deletes stay guarded) and `tool_search`. Never `delegate`, `inbox`, `files`, `daily` or `bots`: the presets cannot name them.
 	 */
 	botExtensions(tools: readonly BotPreset[]): Extension[];
 	/** The Inbox's accounts, as Settings shows and changes them, and the owner's answers to what it suggests. */
 	inbox: InboxFacade;
+	/** The owner's Bots page: list, create and delete bots directly (no approval: the owner is the one deciding). */
+	bots: OwnerBots;
 	/** What the agents spent, sampled from Durable into days and weeks, and the weekly token limits the daily jobs obey (M8). */
 	usage: UsageService;
 	approvals: ApprovalService;
@@ -179,10 +191,12 @@ export type DomainOptions = {
 	web?: WebDeps;
 	/** How bots are made and retired, and the PA's trust level. Omitted: the bot tools say bots are not set up. */
 	bots?: BotsDeps;
-	/** The credential broker (`ZIMPOEN_CRED_BROKER=on`). Omitted: no `cred_run` tool. */
+	/** The credential broker (unless `ZIMPOEN_CRED_BROKER=off`). Omitted: no `cred_run` tool. */
 	broker?: BrokerDeps;
 	/** The sandboxed shell (`ZIMPOEN_SHELL=on`). Omitted: no `shell_run` tool for anyone. */
 	shell?: ShellDeps;
+	/** The CTO's coding lead, allowed repos and trust (`ZIMPOEN_CTO=on`). Omitted: no CTO. */
+	cto?: CtoDeps;
 	/** Where a failure the work goes on without is said (the server's log). */
 	warn?: (message: string) => void;
 };
@@ -214,6 +228,7 @@ export const MODULES: readonly DomainModule[] = [
 	routinesModule,
 	botsModule,
 	brokerModule,
+	ctoModule,
 ];
 
 export function createDomain(options: DomainOptions): Domain {
@@ -251,6 +266,7 @@ export function createDomain(options: DomainOptions): Domain {
 		...(options.bots === undefined ? {} : { bots: options.bots }),
 		...(options.broker === undefined ? {} : { broker: options.broker }),
 		...(options.shell === undefined ? {} : { shell: options.shell }),
+		...(options.cto === undefined ? {} : { cto: options.cto }),
 		// The daily jobs ask this before they spend tokens; the module is built from `deps`, so it is looked up when asked.
 		budget: { check: (agent) => usageModule.service(deps).check(agent) },
 	};
@@ -272,11 +288,13 @@ export function createDomain(options: DomainOptions): Domain {
 	// The PA and the Accountant read the public web; the Inbox never does: it reads untrusted mail, and a page fetch is a
 	// way to send what it read somewhere.
 	const web = webModule.extension(deps);
-	// Only the PA, and only with ZIMPOEN_CRED_BROKER=on: off, nothing of the broker is installed.
+	// The PA and the CTO, and only unless ZIMPOEN_CRED_BROKER=off: off, nothing of the broker is installed.
 	const broker = options.broker === undefined ? [] : [brokerModule.extension(deps)];
 	// The sandboxed shell (upgrade §8): the PA, and bots whose preset has it; only with ZIMPOEN_SHELL=on. Never the Inbox.
 	const shellExtension = createShellExtension(deps);
 	const shell = options.shell === undefined ? [] : [shellExtension];
+	// Only the CTO, and only with ZIMPOEN_CTO=on.
+	const cto = options.cto === undefined ? undefined : ctoModule.extension(deps);
 	// Every agent is told what is remembered; all but the Inbox may also remember and (with approval) forget. The Inbox reads
 	// untrusted email text, and a line it wrote would be in a prompt for good, so it only reads (PLAN rule 6).
 	const memory = memoryModule.extension(deps);
@@ -320,6 +338,7 @@ export function createDomain(options: DomainOptions): Domain {
 			web,
 			...broker,
 			shellExtension,
+			...(cto === undefined ? [] : [cto]),
 			memory,
 			memoryRead,
 			guard,
@@ -348,6 +367,7 @@ export function createDomain(options: DomainOptions): Domain {
 		healthExtensions: [health, guard, toolSearch, memory],
 		accountantExtensions: [ledger, splits, documents, files, web, guard, toolSearch, codemode, memory],
 		inboxExtensions: [inbox, memoryRead],
+		...(cto === undefined ? {} : { ctoExtensions: [cto, ...broker, guard, toolSearch] }),
 		botExtensions: (tools) => {
 			const byPreset: Record<BotPreset, Extension> = {
 				"tasks-read": tasksRead,
@@ -360,6 +380,8 @@ export function createDomain(options: DomainOptions): Domain {
 			return [...tools.map((preset) => byPreset[preset]), guard, toolSearch];
 		},
 		usage,
+		// `owner:` keeps these apart from tool call ids, which a replayed create_bot matches its row by.
+		bots: createOwnerBots(deps, () => `owner:${randomUUID()}`),
 		inbox: {
 			settings: () => inboxModule.accounts(deps).settings(),
 			disconnect: (email) => inboxModule.accounts(deps).disconnect(email),

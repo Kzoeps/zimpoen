@@ -2090,3 +2090,31 @@ button {
 		gap: 2px;
 	}
 }
+
+/* The Bots page: one row per bot inside its card. */
+.bot-row {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 12px;
+	border-top: 1px solid var(--border);
+}
+
+.bot-row__name {
+	margin: 0;
+	font-size: 15px;
+}
+
+.bot-row__soul {
+	white-space: pre-wrap;
+	font-size: 14px;
+}
+
+.bot-tools {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}

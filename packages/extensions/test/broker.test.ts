@@ -29,7 +29,7 @@ import {
 } from "../src/broker/index.ts";
 import { approvalsModule, createApprovalService, type DomainDeps, type PostedEntry } from "../src/index.ts";
 import { isScheduledRequestId } from "../src/scheduled-run.ts";
-import { decide } from "../src/trust.ts";
+import { decide, type TrustLevel } from "../src/trust.ts";
 import { ctx, type Fixture, openFixture, say, toolCall } from "./support.ts";
 
 const SECRET = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
@@ -383,6 +383,24 @@ describe("cred_run tool", () => {
 		expect(f.execs).toHaveLength(1);
 		const denied = await f.call({ project: "bank", credId: "db", action: "merge", params: { pr: "2" } }, "s1");
 		expect(outputOf(denied)).toMatch(/^Refused: .*strict/);
+		expect(f.execs).toHaveLength(1);
+	});
+
+	it("uses the owner's level from trustOf over the policy's, read at each call and again on approval", async () => {
+		const f = await setup();
+		const levels = new Map<string, TrustLevel>([["zimpoen", "open"]]);
+		f.broker.trustOf = (project) => levels.get(project.id) ?? project.trust;
+		const merge = { project: "zimpoen", credId: "gh", action: "merge", params: { pr: "3" } };
+		await f.call(merge, "t1");
+		expect(f.execs).toHaveLength(1);
+
+		levels.set("zimpoen", "normal");
+		const card = (await f.call(merge, "t2")).details as { actionId: string };
+		expect(f.execs).toHaveLength(1);
+		// The owner made it strict before approving; the policy's strictDeny now refuses the approved run.
+		levels.set("zimpoen", "strict");
+		const state = await f.approvals.decide(card.actionId, "approve", "button");
+		expect(state.status).toBe("failed");
 		expect(f.execs).toHaveLength(1);
 	});
 

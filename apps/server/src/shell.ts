@@ -18,7 +18,7 @@ export async function loadShell(config: ShellConfig, host: ShellHostCheckDeps = 
 	if (problems.length > 0) {
 		throw new Error(
 			`ZIMPOEN_SHELL=on but the sandbox is not safe to use:\n${problems.map((problem) => `  - ${problem}`).join("\n")}\n` +
-				"Fix these, or set ZIMPOEN_SHELL=off. See docs/ARCHITECTURE.md §5.8.",
+				"Fix these, or set ZIMPOEN_SHELL=off. See docs/ARCHITECTURE.md §5.9.",
 		);
 	}
 	// Containers a server that died mid-call left running: the engine would otherwise keep them until their own deadline.
