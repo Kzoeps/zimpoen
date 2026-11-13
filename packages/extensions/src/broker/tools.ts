@@ -1,7 +1,9 @@
+import { getAgentRowByConversation } from "@assistant/db";
 import type { Context } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { ActionArgs, ApprovalAction } from "../approvals/service.ts";
+import { ctoMayUseProject } from "../cto/tools.ts";
 import type { DomainDeps } from "../module.ts";
 import { currentRunRequestIds, isScheduledRunIds } from "../scheduled-run.ts";
 import { asDetails, text } from "../tool-support.ts";
@@ -31,7 +33,7 @@ export type BrokerDeps = {
 /** The approval action the server carries out when the owner approves a `cred_run` that asked. No tool has this name. */
 export const CRED_EXEC_ACTION = "cred_exec";
 
-type Deps = Pick<DomainDeps, "db" | "now" | "approvals" | "harness" | "warn" | "runRequestIds"> & {
+type Deps = Pick<DomainDeps, "db" | "now" | "approvals" | "harness" | "warn" | "runRequestIds" | "cto"> & {
 	broker: BrokerDeps;
 };
 
@@ -80,6 +82,7 @@ export function createCredExecAction(deps: Deps): ApprovalAction {
 				);
 			}
 			const resolved = resolveRequest(deps.broker.policy, request);
+			checkProjectAllowed(deps, conversationId, resolved.project.id);
 			const decision = decide(trustOf(deps.broker, resolved.project), resolved.action.sensitivity, {
 				strictDeny: resolved.action.strictDeny,
 			});
@@ -101,6 +104,20 @@ export function createCredExecAction(deps: Deps): ApprovalAction {
 			return describeRun(result);
 		},
 	};
+}
+
+/**
+ * The CTO's broker actions are limited to the projects of its repo allowlist (`ZIMPOEN_CTO_REPOS`). Checked at the call
+ * and again when an approved action runs: the conversation's agent decides, not anything the model says.
+ */
+function checkProjectAllowed(deps: Deps, conversationId: number, projectId: string): void {
+	if (deps.cto === undefined) return;
+	if (getAgentRowByConversation(deps.db, conversationId)?.id !== "cto") return;
+	if (!ctoMayUseProject(deps.cto.repos, projectId)) {
+		throw new Error(
+			`The CTO may only use broker projects for its repos (${deps.cto.repos.join(", ") || "none"}); '${projectId.slice(0, 60)}' is not one.`,
+		);
+	}
 }
 
 const trustOf = (broker: BrokerDeps, project: ProjectPolicy): TrustLevel => broker.trustOf?.(project) ?? project.trust;
@@ -195,6 +212,7 @@ export function createBrokerTools(deps: Deps): ToolRegistration[] {
 			}
 			// A bad request throws for the model to fix; nothing is recorded, so the corrected call is a new call.
 			const resolved = resolveRequest(policy, request);
+			checkProjectAllowed(deps, Number(api.conversationId), resolved.project.id);
 			const decision = decide(trustOf(deps.broker, resolved.project), resolved.action.sensitivity, {
 				strictDeny: resolved.action.strictDeny,
 			});

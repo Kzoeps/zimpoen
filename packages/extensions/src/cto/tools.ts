@@ -57,6 +57,14 @@ export function validateCodingArgs(args: CodingArgs, repos: readonly string[]): 
 	};
 }
 
+/**
+ * Whether the CTO may run broker actions on a policy project: the id is one of its repos, or the name part of an
+ * `owner/name` repo. The CTO never gets a project the owner did not name for it, even if the broker has the project.
+ */
+export function ctoMayUseProject(repos: readonly string[], projectId: string): boolean {
+	return repos.some((repo) => repo === projectId || repo.split("/").pop() === projectId);
+}
+
 const clipField = (value: string | undefined): string | undefined =>
 	value === undefined ? undefined : value.replace(/\s+/g, " ").trim().slice(0, BOARD_FIELD_MAX);
 

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
+import { type AppDb, coreMigrations, insertAgentRow, migrate, openAppDb } from "@assistant/db";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
@@ -492,7 +492,7 @@ describe("cred_run tool, review hardening", () => {
 		}
 	});
 
-	async function setup(options: { requestIds?: string[]; audit?: AuditLog } = {}) {
+	async function setup(options: { requestIds?: string[]; audit?: AuditLog; ctoRepos?: string[] } = {}) {
 		const dir = await mkdtemp(join(tmpdir(), "broker-db-"));
 		const db = openAppDb(join(dir, "app.sqlite"));
 		dbs.push({ db, dir });
@@ -516,7 +516,9 @@ describe("cred_run tool, review hardening", () => {
 			}),
 			runRequestIds: async () => options.requestIds ?? ["msg-1"],
 		};
-		const deps = { db, now: () => 1000, approvals, broker } as unknown as DomainDeps;
+		if (options.ctoRepos !== undefined) insertAgentRow(db, { id: "cto", conversationId: 7, createdAt: 1 });
+		const cto = options.ctoRepos === undefined ? {} : { cto: { repos: options.ctoRepos } };
+		const deps = { db, now: () => 1000, approvals, broker, ...cto } as unknown as DomainDeps;
 		for (const action of brokerModule.actions?.(deps) ?? []) approvals.register(action);
 		const tool = brokerModule.extension(deps).tools?.find((candidate) => candidate.name === "cred_run");
 		if (tool === undefined) throw new Error("cred_run not registered");
@@ -531,6 +533,35 @@ describe("cred_run tool, review hardening", () => {
 	const outputOf = (result: ToolExecutionResult): string =>
 		(result.output ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
 	const merge = { project: "zimpoen", credId: "gh", action: "merge", params: { pr: "9" } };
+
+	it("limits the CTO to the projects of its repo allowlist, for a call and for an approved action", async () => {
+		const f = await setup({ ctoRepos: ["org/zimpoen"] });
+		await expect(
+			f.call({ project: "sandbox", credId: "gh-sandbox", action: "pr-view", params: { pr: "1" } }, "a"),
+		).rejects.toThrow(/may only use broker projects for its repos \(org\/zimpoen\)/);
+		expect(f.execs).toHaveLength(0);
+		const asked = await f.call(merge, "b");
+		expect(outputOf(asked)).toMatch(/Approval requested/);
+		const action = brokerModule.actions?.({
+			db: f.db,
+			now: () => 1000,
+			approvals: f.approvals,
+			broker: f.broker,
+			cto: { repos: ["other"] },
+		} as unknown as DomainDeps)?.[0];
+		await expect(action?.run(merge, { actionId: "ap_x", conversationId: 7 } as never)).rejects.toThrow(/may only use/);
+		expect(f.execs).toHaveLength(0);
+	});
+
+	it("lets the PA use every project even when the CTO is limited", async () => {
+		const f = await setup({ ctoRepos: ["zimpoen"] });
+		f.db.run("UPDATE agents SET id = 'pa' WHERE id = 'cto'");
+		const result = await f.call(
+			{ project: "sandbox", credId: "gh-sandbox", action: "pr-view", params: { pr: "1" } },
+			"c",
+		);
+		expect(outputOf(result)).toContain("Exit code 0");
+	});
 
 	it("refuses when it cannot tell which request the run answers", async () => {
 		const f = await setup({ requestIds: [] });
