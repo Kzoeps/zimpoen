@@ -481,3 +481,37 @@ describe("ZIMPOEN_CRED_BROKER", () => {
 		]);
 	});
 });
+
+describe("ZIMPOEN_SHELL", () => {
+	it("is off by default", () => {
+		expect(parseConfig({ ...auth }, context).shell).toEqual({ mode: "off" });
+	});
+
+	it("when on, defaults to docker, no network and the root-owned marker", () => {
+		expect(parseConfig({ ...auth, ZIMPOEN_SHELL: "on" }, context).shell).toEqual({
+			mode: "on",
+			engine: "docker",
+			bin: "/usr/bin/docker",
+			image: "docker.io/library/debian:stable-slim",
+			network: "none",
+			egressMarker: "/run/zimpoen-shell/egress.ok",
+		});
+		expect(parseConfig({ ...auth, ZIMPOEN_SHELL: "on", ZIMPOEN_SHELL_ENGINE: "podman" }, context).shell).toMatchObject({
+			bin: "/usr/bin/podman",
+		});
+	});
+
+	it("rejects bad values and the host or default bridge network", () => {
+		expect(problemsOf({ ...auth, ZIMPOEN_SHELL: "yes" })).toEqual(["ZIMPOEN_SHELL"]);
+		expect(problemsOf({ ...auth, ZIMPOEN_SHELL: "on", ZIMPOEN_SHELL_ENGINE: "lxc" })).toEqual(["ZIMPOEN_SHELL_ENGINE"]);
+		expect(problemsOf({ ...auth, ZIMPOEN_SHELL: "on", ZIMPOEN_SHELL_BIN: "docker" })).toEqual(["ZIMPOEN_SHELL_BIN"]);
+		for (const network of ["host", "bridge", "container:abc", "a b"]) {
+			expect(problemsOf({ ...auth, ZIMPOEN_SHELL: "on", ZIMPOEN_SHELL_NETWORK: network })).toEqual([
+				"ZIMPOEN_SHELL_NETWORK",
+			]);
+		}
+		expect(problemsOf({ ...auth, ZIMPOEN_SHELL: "on", ZIMPOEN_SHELL_IMAGE: "Bad Image" })).toEqual([
+			"ZIMPOEN_SHELL_IMAGE",
+		]);
+	});
+});

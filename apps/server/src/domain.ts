@@ -19,6 +19,7 @@ import {
 	createEntryPoster,
 	createInputSubmitter,
 	createOwnerBots,
+	createShellExtension,
 	ctoModule,
 	type DailyFactsProvider,
 	type DailyService,
@@ -49,6 +50,7 @@ import {
 	type RefreshReport,
 	routinesModule,
 	type ScheduleSettings,
+	type ShellDeps,
 	splitsModule,
 	tasksModule,
 	type UsageService,
@@ -191,6 +193,8 @@ export type DomainOptions = {
 	bots?: BotsDeps;
 	/** The credential broker (unless `ZIMPOEN_CRED_BROKER=off`). Omitted: no `cred_run` tool. */
 	broker?: BrokerDeps;
+	/** The sandboxed shell (`ZIMPOEN_SHELL=on`). Omitted: no `shell_run` tool for anyone. */
+	shell?: ShellDeps;
 	/** The CTO's coding lead, allowed repos and trust (`ZIMPOEN_CTO=on`). Omitted: no CTO. */
 	cto?: CtoDeps;
 	/** Where a failure the work goes on without is said (the server's log). */
@@ -261,6 +265,7 @@ export function createDomain(options: DomainOptions): Domain {
 		...(options.warn === undefined ? {} : { warn: options.warn }),
 		...(options.bots === undefined ? {} : { bots: options.bots }),
 		...(options.broker === undefined ? {} : { broker: options.broker }),
+		...(options.shell === undefined ? {} : { shell: options.shell }),
 		...(options.cto === undefined ? {} : { cto: options.cto }),
 		// The daily jobs ask this before they spend tokens; the module is built from `deps`, so it is looked up when asked.
 		budget: { check: (agent) => usageModule.service(deps).check(agent) },
@@ -285,6 +290,9 @@ export function createDomain(options: DomainOptions): Domain {
 	const web = webModule.extension(deps);
 	// The PA and the CTO, and only unless ZIMPOEN_CRED_BROKER=off: off, nothing of the broker is installed.
 	const broker = options.broker === undefined ? [] : [brokerModule.extension(deps)];
+	// The sandboxed shell (upgrade §8): the PA, and bots whose preset has it; only with ZIMPOEN_SHELL=on. Never the Inbox.
+	const shellExtension = createShellExtension(deps);
+	const shell = options.shell === undefined ? [] : [shellExtension];
 	// Only the CTO, and only with ZIMPOEN_CTO=on.
 	const cto = options.cto === undefined ? undefined : ctoModule.extension(deps);
 	// Every agent is told what is remembered; all but the Inbox may also remember and (with approval) forget. The Inbox reads
@@ -329,6 +337,7 @@ export function createDomain(options: DomainOptions): Domain {
 			routines,
 			web,
 			...broker,
+			shellExtension,
 			...(cto === undefined ? [] : [cto]),
 			memory,
 			memoryRead,
@@ -349,6 +358,7 @@ export function createDomain(options: DomainOptions): Domain {
 			delegate,
 			routines,
 			...broker,
+			...shell,
 			guard,
 			toolSearch,
 			memory,
@@ -365,6 +375,7 @@ export function createDomain(options: DomainOptions): Domain {
 				web,
 				memory,
 				codemode,
+				shell: shellExtension,
 			};
 			return [...tools.map((preset) => byPreset[preset]), guard, toolSearch];
 		},

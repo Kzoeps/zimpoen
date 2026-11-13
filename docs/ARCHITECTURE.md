@@ -31,8 +31,9 @@ subscription OAuth is not used: its consumer terms don't allow it.
    and the workspace. Write: `<data>/workspace` only. Always denied, in any case and after resolving symlinks: `.ssh`,
    `.env*`, `auth.json`, `*.pem`, `*.key`, `.netrc`, `.npmrc`, `.aws`, `.git-credentials`, `.gnupg`, `id_*`,
    `<data>/secrets/**`. Startup rejects a read path that would expose the databases.
-5. **No shell tool** for any agent. Documents are converted by the server itself (poppler, LibreOffice) with fixed
-   arguments; no agent chooses what runs.
+5. **No shell on the host.** Documents are converted by the server itself (poppler, LibreOffice) with fixed
+   arguments; no agent chooses what runs on the host. With `ZIMPOEN_SHELL=on` (default off) the PA, and bots given the
+   `shell` preset, get `shell_run`, which runs only inside the agent's own gVisor container (§5.9). Never the Inbox.
 6. **The Inbox agent has no file tools,** because it handles untrusted email. Its only tools are `search_mail`,
    `read_mail`, `list_events`, `mark_triage`, `propose_sender_rule`, `suggest_followup`, `recall` and `current_time`. No
    `tool_search`, no approval hook, no `ask_agent`. Email text is treated as data everywhere.
@@ -136,12 +137,12 @@ display-only card. Specialists can't reach each other. The Inbox reaches the PA 
 
 | Agent | Extensions |
 |---|---|
-| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `routines`, `memory`, `tool_search`, `bots`, `broker` (unless `ZIMPOEN_CRED_BROKER=off`) |
+| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `routines`, `memory`, `tool_search`, `bots`, `broker` (unless `ZIMPOEN_CRED_BROKER=off`), `shell` (only with `ZIMPOEN_SHELL=on`) |
 | `inbox` | `inbox`, `memory-read` |
 | `health` | `health`, `approvals`, `memory`, `tool_search` |
 | `accountant` | `ledger`, `splits`, `documents`, `files`, `approvals`, `memory`, `tool_search`, code mode |
 | `cto` (only with `ZIMPOEN_CTO=on`) | `cto`, `broker` (only with `ZIMPOEN_CRED_BROKER=on`), `approvals`, `tool_search` |
-| `bot:<slug>` | the presets the PA chose (`tasks-read`, `documents`, `web`, `memory`, `codemode`), `approvals`, `tool_search` |
+| `bot:<slug>` | the presets the PA chose (`tasks-read`, `documents`, `web`, `memory`, `codemode`, `shell`), `approvals`, `tool_search` |
 
 **Bots (upgrade §4).** The PA's `create_bot`, `delete_bot` and `list_bots` (deferred) manage up to 8 specialist bots. A
 `bots_bot` row is authoritative: at every start the server gives each row a conversation (agent id `bot:<slug>`, built
@@ -388,6 +389,39 @@ herdr-lead (module `packages/extensions/src/cto/`, server side `apps/server/src/
 - **Hub and spoke:** no `ask_agent`; the PA asks it with `ask_agent cto`. The owner's messages to its thread are refused
   (403), except a bare YES answering one of its approval requests. Push, merge and deploy are `cred_run` broker
   actions (§5.7).
+
+### 5.9 Sandboxed shell (upgrade phase 4)
+
+`ZIMPOEN_SHELL=off|on`, default `off`: no tool, no container engine touched. When `on`, `shell_run({ command,
+timeoutSeconds? })` (deferred; module `packages/extensions/src/shell/`, server side `apps/server/src/shell.ts`) runs one
+command per call in a fresh container of the calling agent:
+
+- **Who:** the PA, and a bot whose `bots_bot` row has the `shell` preset (the PA must pick it; default no). The tool checks
+  the caller's agent row on every call, so the Inbox is refused even if it were wired the tool.
+- **Rule 13:** refused during a scheduled run, and when the run's origin is unknown (`runIsScheduled`).
+- **Container:** `<engine> run --rm --pull=never --runtime=runsc --read-only --cap-drop=ALL
+  --security-opt=no-new-privileges --pids-limit=128 --memory=512m --memory-swap=512m --cpus=1 --network=<net>
+  --tmpfs /tmp --user=1000:1000`, image `ZIMPOEN_SHELL_IMAGE`, then `/bin/sh -c <command>`. The only mount is the
+  agent's named volume `zimpoen-shell-<agent>` at `/workspace` (created once and chowned to 1000:1000); no host path, no
+  host environment. The host runs the engine CLI with a fixed argv and `PATH`/`LANG` only; the command string is one
+  argument that only the container's shell reads.
+- **Limits:** 60 s by default, at most 300 s; on a timeout or past 64 KB of output the CLI is killed and the container
+  force-removed. The command also runs under `timeout -s KILL <limit + 5 s>` inside the container, so it dies even if
+  the server does, and at start the server force-removes every container labelled `zimpoen.shell=1`. The image must
+  therefore have `timeout` (coreutils), `/bin/sh` and `chown`. The volume is chowned once per server process. A call is not `replay: "safe"`: a crash mid-run is reported, never run again.
+- **Network:** `ZIMPOEN_SHELL_NETWORK=none` (default) or a dedicated network filtered by `ops/shell-egress.sh` (nftables or
+  iptables; run as root, after every boot). It creates the network on bridge `zs-br0` if missing, drops everything from
+  the bridge to the host and between sandboxes, and forwarding to 10/8, 172.16/12, 192.168/16, 169.254/16, 127/8,
+  100.64/10, fc00::/7, fe80::/10 and fd7a:115c:a1e0::/48, then writes `/run/zimpoen-shell/egress.ok`. Containers on a
+  network use 1.1.1.1 and 9.9.9.9 for DNS. `host`, `bridge` and `container:*` are refused by config.
+- **Start-up check:** a probe container with the full flags must run (no `runsc` runtime or no pulled image stops the
+  server). With a network, the marker must exist, be root-owned and not group/world writable, name the network, list
+  every range above, and its bridge must be the network's. Every problem is listed and the server refuses to start.
+- **Settings:** `ZIMPOEN_SHELL_ENGINE` (`docker` default, or `podman`), `ZIMPOEN_SHELL_BIN` (default `/usr/bin/<engine>`),
+  `ZIMPOEN_SHELL_IMAGE` (default `docker.io/library/debian:stable-slim`; pull it first), `ZIMPOEN_SHELL_NETWORK`,
+  `ZIMPOEN_SHELL_EGRESS_MARKER`.
+- **Host access:** the server user needs the engine (docker group or rootless podman); that access is root-equivalent on
+  the host, and the systemd unit's sandboxing may block the engine socket. Not tested on a real host.
 
 ## 6. Web
 

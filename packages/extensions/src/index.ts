@@ -381,6 +381,7 @@ export {
 	SCHEDULED_RUN_REFUSAL,
 	type ScheduledRequest,
 } from "./scheduled-run.ts";
+export * from "./shell/index.ts";
 export {
 	type BillExtra,
 	type BillItem,

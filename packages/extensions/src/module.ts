@@ -11,6 +11,7 @@ import type { DailyFactsProvider } from "./daily/facts.ts";
 import type { PdfRenderer } from "./documents/render.ts";
 import type { InboxDeps } from "./inbox/types.ts";
 import type { ScheduleSettings } from "./schedule.ts";
+import type { ShellDeps } from "./shell/tools.ts";
 import type { WebDeps } from "./web/index.ts";
 
 /** What a domain module may ask of the server it runs in. Built once by the server and shared by every module. */
@@ -66,6 +67,8 @@ export type DomainDeps = {
 	bots?: BotsDeps;
 	/** The credential broker (unless `ZIMPOEN_CRED_BROKER=off`). Omitted: no `cred_run` tool and no broker approval action. */
 	broker?: BrokerDeps;
+	/** The sandboxed shell (`ZIMPOEN_SHELL=on`, upgrade §8). Omitted: no `shell_run` tool. */
+	shell?: ShellDeps;
 	/** The CTO's way to the coding lead (`ZIMPOEN_CTO=on`). Omitted: no `delegate_coding` or `board_status`. */
 	cto?: CtoDeps;
 	/**

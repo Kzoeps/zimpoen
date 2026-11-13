@@ -2,7 +2,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
-import type { WebDeps } from "@assistant/extensions";
+import type { ShellHostCheckDeps, WebDeps } from "@assistant/extensions";
 import {
 	type AccountantDeps,
 	type DelegateDeps,
@@ -34,6 +34,7 @@ import { createNotifier } from "./push/notifier.ts";
 import { createWebPushSender, type PushSender } from "./push/sender.ts";
 import { loadOrCreateVapidKeys } from "./push/vapid.ts";
 import { openRuntime, type Runtime } from "./runtime.ts";
+import { loadShell } from "./shell.ts";
 import { startTelegram, type TelegramSetupOptions, telegramMigrations } from "./telegram/setup.ts";
 import { createTrustSettings, trustMigrations } from "./trust-settings.ts";
 import { createWebSetup, type WebService } from "./web.ts";
@@ -75,6 +76,8 @@ export type StartServerOptions = {
 	documents?: DocumentsDeps;
 	/** Telegram's Bot API and the ffmpeg/whisper runner, played by tests. */
 	telegram?: Pick<TelegramSetupOptions, "fetch" | "base" | "run" | "pollSeconds">;
+	/** The container engine and egress marker the shell sandbox (`ZIMPOEN_SHELL=on`) checks and uses. Tests play them. */
+	shellHost?: ShellHostCheckDeps;
 	/** Replaces how the CTO runs `hc-board` and `hc` (`ZIMPOEN_CTO=on`): tests play the board. */
 	ctoExec?: CtoExec;
 };
@@ -193,6 +196,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			web: options.web ?? (await startWeb()),
 			...(brokerDeps === undefined ? {} : { broker: { ...brokerDeps, trustOf: trust.project } }),
 			...ctoOption(config, options.ctoExec),
+			...(await shellFor(config, options.shellHost)),
 			warn: (message) => logger.warn(message),
 		});
 		undo.push(() => domain.close());
@@ -816,6 +820,12 @@ async function warnIfNoOpenAiLogin(logger: ServerLogger, config: Config, runtime
 				"every message will fail until you sign in.",
 		);
 	}
+}
+
+/** The sandboxed shell when `ZIMPOEN_SHELL=on` (an unsafe host stops the start), nothing otherwise. */
+async function shellFor(config: Config, host: ShellHostCheckDeps | undefined) {
+	const shell = await loadShell(config.shell, host);
+	return shell === undefined ? {} : { shell };
 }
 
 /** The CTO's coding lead when `ZIMPOEN_CTO=on`, nothing otherwise. */

@@ -18,7 +18,7 @@ Sources: `/tmp/zimpoen-vs-durable-bots.md`, `/tmp/zimpoen-cred-vault.md`, `/tmp/
 | 2b | Broker split: `zimpoen-broker` process over a unix socket, systemd-creds | built (`ZIMPOEN_CRED_BROKER=socket`), not yet run on the host |
 | 2 | Dedicated coding VM running herdr-lead; PA hands coding work to it | design (§6) |
 | 3 | CTO bot that drives herdr-lead; push/merge/deploy follow the project's trust level | built (§7), `ZIMPOEN_CTO=off` by default; board create command unverified |
-| 4 | Sandboxed shell (gVisor container per agent, egress rules) | design sketch (§8) |
+| 4 | Sandboxed shell (gVisor container per agent, egress rules) | built, `ZIMPOEN_SHELL=off` by default (§8) |
 | 5 | Computer-use VMs | design sketch (§8) |
 
 Bots (1a) and routines (1c) have no feature flag: their tools are always installed, and each creation needs the owner's approval (bots: per the PA's trust level, set in Settings or by `ZIMPOEN_PA_TRUST`).
@@ -34,7 +34,7 @@ VM) and on the trust levels. Shell and computer use carry the most risk and come
 | 1 No outbound actions | No tool contacts anyone | Unchanged for agents. Two named exceptions, both to the owner only: (a) the Telegram bridge replies in the **one bound private chat**; (b) phase 2+: work handed to the owner's own herdr-lead. Outbound actions on third-party systems (push, merge, deploy) happen only through the broker, gated by trust level (§3). |
 | 2 Writes are local only | app.sqlite, memory, workspace | Unchanged in phase 1. Phase 3 adds broker-run actions, which are not agent writes. |
 | 3 Deletes need approval | Approve / YES, `beforeTool` hook | Generalised: **sensitive actions** need approval *as the trust level says* (§3). Deletes of owner data still always ask (they are `ask` at every level except Open, where bot deletion may run without asking but is logged). |
-| 5 No shell tool | Absolute | Phase 1 unchanged. Phase 4 rewrites to "no shell on the host; shell only inside a per-agent disposable sandbox". |
+| 5 No shell tool | Absolute | Phase 4 (built, off by default): "no shell on the host; shell only inside a per-agent disposable sandbox". |
 | 6 Inbox has no file tools | | Unchanged. A spawned bot can never get inbox tools (§4). |
 | 9 Secrets never readable by an agent | | Strengthened: secrets used by actions live with the broker (separate process, phase 2 separate user), are never returned to an agent, a model, the database or the coding VM. Telegram bot token joins `<data>/secrets/`. |
 | new 12 | | **Hub and spoke.** Only the PA talks to other agents (`ask_agent`). Spawned bots never talk to each other or to built-in specialists. |
@@ -164,8 +164,16 @@ interface CredBroker {
 
 ## 8. Phases 4–5 (sketch)
 
-- **Shell:** Docker/Podman `--runtime=runsc` per agent, workspace volume only, read-only root, limits, egress allowlist
-  copied from pi-durable-bots `ops/vm-egress.sh`; startup refuses if rules missing. No network by default.
+- **Shell (built):** `ZIMPOEN_SHELL=off|on`, default off. `shell_run` for the PA and for bots with the `shell` preset
+  (default no); never the Inbox (checked per call against the agent row). Docker/Podman `--runtime=runsc`, one fresh
+  container per call, the agent's named volume as the only mount, read-only root, `--cap-drop=ALL`,
+  `no-new-privileges`, cpu/memory/pids limits, 60 s default (300 s max) timeout, 64 KB output cap. Refused during
+  scheduled runs (rule 13). No network by default; a dedicated network needs `ops/shell-egress.sh` (blocks private,
+  link-local, loopback, ULA and tailnet ranges and the host). Startup refuses without the `runsc` runtime, or, with a
+  network, without the root-owned egress marker. Runner behind `ContainerRunner`, tested with a fake engine. Details:
+  ARCHITECTURE §5.9. Not yet run against real docker/podman, gVisor or nftables.
+  `ops/shell-egress.sh` and `ZIMPOEN_SHELL_IMAGE` belong to this shell-sandbox feature; anything else that uses them
+  (the coding VM, computer use) depends on it.
 - **Computer use:** builds on the shell sandbox plus a desktop image, viewer/takeover in the PWA, approval per task.
 
 ## 9. What is left after phase 1
