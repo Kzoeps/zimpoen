@@ -89,6 +89,8 @@ export const delegateMigrations: readonly Migration[] = [
 				DROP TABLE delegate_ask;
 				ALTER TABLE delegate_ask_new RENAME TO delegate_ask;
 				CREATE INDEX delegate_ask_open ON delegate_ask (status) WHERE status = 'waiting';
+				-- Rule 13 looks an asked agent's run up by its request id on every gated tool call.
+				CREATE INDEX delegate_ask_request ON delegate_ask (request_id);
 			`);
 		},
 	},
