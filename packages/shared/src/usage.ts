@@ -1,4 +1,4 @@
-import type { AgentId } from "./agents.ts";
+import type { AnyAgentId } from "./agents.ts";
 
 /**
  * What the agents spent (M8), as Durable counts it (`pi.usage`), sampled into per-day totals so that a day and a week can
@@ -21,7 +21,7 @@ export type UsageFigures = {
 export type UsageModelRow = UsageFigures & { model: string };
 
 export type AgentUsage = {
-	id: AgentId;
+	id: AnyAgentId;
 	name: string;
 	avatar: string;
 	/** This week so far (Monday to today, in the owner's zone). */
@@ -43,7 +43,7 @@ export type UsageDay = {
 	label: string;
 	tokens: number;
 	cost: number;
-	byAgent: Partial<Record<AgentId, number>>;
+	byAgent: Partial<Record<AnyAgentId, number>>;
 };
 
 export type UsageWeek = {
@@ -53,7 +53,7 @@ export type UsageWeek = {
 	label: string;
 	tokens: number;
 	cost: number;
-	byAgent: Partial<Record<AgentId, number>>;
+	byAgent: Partial<Record<AnyAgentId, number>>;
 };
 
 /** `GET /api/usage`. */
@@ -73,7 +73,7 @@ export type UsageResponse = {
 
 /** An agent that has reached its weekly limit: what the banner says. */
 export type BudgetAlert = {
-	agent: AgentId;
+	agent: AnyAgentId;
 	name: string;
 	used: number;
 	limit: number;

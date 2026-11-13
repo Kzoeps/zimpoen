@@ -4,10 +4,10 @@ import { addDays, atLocalTime, clip, formatLocal, safeLine } from "@assistant/ex
 import {
 	type ActivityItem,
 	type ActivityResponse,
-	type AgentId,
+	type AnyAgentId,
 	DAILY_ENTRY_KIND,
 	type DailyEntryData,
-	isAgentId,
+	isAnyAgentId,
 	REMINDER_ENTRY_KIND,
 } from "@assistant/shared";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -30,11 +30,11 @@ const PAGE_ENTRIES = 100;
 /** The most entries read from one thread for one request: a very long thread says it was cut short instead of holding the server. */
 export const MAX_SCANNED_ENTRIES = 5000;
 
-export type ActivityAgent = { id: AgentId; name: string; avatar: string };
+export type ActivityAgent = { id: AnyAgentId; name: string; avatar: string };
 
 export type ActivityQuery = {
 	/** One agent, or all of them. */
-	agent?: AgentId;
+	agent?: AnyAgentId;
 	/** The first and last local day to show, `2026-10-26`, both inclusive. */
 	from?: string;
 	to?: string;
@@ -113,7 +113,7 @@ const JOB_LABEL: Record<string, string> = {
 };
 
 /** The activity item an entry stands for, or undefined when it is not one (a chat message, a system prompt, a notice). */
-export function itemOf(entry: EntryRecord, agent: AgentId, conversationId: number): Derived | undefined {
+export function itemOf(entry: EntryRecord, agent: AnyAgentId, conversationId: number): Derived | undefined {
 	const message = entry.model?.[0];
 	if (message?.role === "toolResult") {
 		if (QUIET_TOOLS.has(message.toolName)) return undefined;
@@ -144,14 +144,14 @@ export function itemOf(entry: EntryRecord, agent: AgentId, conversationId: numbe
 }
 
 /** Where each thread was left: the oldest entry of it already shown. Decoded defensively: a cursor is only as good as the client's memory. */
-function decodeCursor(raw: string | undefined): Partial<Record<AgentId, number>> | undefined {
+function decodeCursor(raw: string | undefined): Partial<Record<AnyAgentId, number>> | undefined {
 	if (raw === undefined) return undefined;
 	try {
 		const parsed: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
-		const positions: Partial<Record<AgentId, number>> = {};
+		const positions: Partial<Record<AnyAgentId, number>> = {};
 		for (const [agent, position] of Object.entries(parsed)) {
-			if (isAgentId(agent) && Number.isSafeInteger(position) && (position as number) > 0)
+			if (isAnyAgentId(agent) && Number.isSafeInteger(position) && (position as number) > 0)
 				positions[agent] = position as number;
 		}
 		return positions;
@@ -160,11 +160,11 @@ function decodeCursor(raw: string | undefined): Partial<Record<AgentId, number>>
 	}
 }
 
-const encodeCursor = (positions: Partial<Record<AgentId, number>>): string =>
+const encodeCursor = (positions: Partial<Record<AnyAgentId, number>>): string =>
 	Buffer.from(JSON.stringify(positions), "utf8").toString("base64url");
 
 type Stream = {
-	agent: AgentId;
+	agent: AnyAgentId;
 	next(): Promise<Derived | undefined>;
 	/** The thread was read to its start or to the first day that is out of range. */
 	readonly finished: boolean;
@@ -182,7 +182,7 @@ export function createActivityReader(deps: {
 
 	/** One thread, newest first, within the day range, as a pull-based stream. */
 	async function openStream(
-		agent: AgentId,
+		agent: AnyAgentId,
 		below: number | undefined,
 		range: { fromMs: number | undefined; toMs: number | undefined },
 	): Promise<Stream | undefined> {
@@ -271,7 +271,7 @@ export function createActivityReader(deps: {
 			const heads = new Map<Stream, Derived | undefined>();
 			for (const stream of streams) heads.set(stream, await stream.next());
 			const items: Derived[] = [];
-			const taken: Partial<Record<AgentId, number>> = {};
+			const taken: Partial<Record<AnyAgentId, number>> = {};
 			while (items.length < query.limit) {
 				let best: { stream: Stream; item: Derived } | undefined;
 				for (const [stream, item] of heads) {

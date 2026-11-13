@@ -1,11 +1,11 @@
-import type { AgentId } from "./agents.ts";
+import { type AnyAgentId, isBotId } from "./agents.ts";
 
 /**
  * What the assistant remembers (M8): short lines the owner asked it to keep (`preference`) or that it learned and the
  * domain tools have no table for (`fact`), kept per agent (`scope` is the agent's id) or for every agent (`shared`).
  */
 
-export type MemoryScope = "shared" | AgentId;
+export type MemoryScope = "shared" | AnyAgentId;
 
 export type MemoryKind = "preference" | "fact";
 
@@ -34,7 +34,14 @@ export const PROFILE_SLOT_LABEL: Record<ProfileSlot, string> = {
 };
 
 export function isMemoryScope(value: unknown): value is MemoryScope {
-	return value === "shared" || value === "pa" || value === "inbox" || value === "health" || value === "accountant";
+	return (
+		value === "shared" ||
+		value === "pa" ||
+		value === "inbox" ||
+		value === "health" ||
+		value === "accountant" ||
+		(typeof value === "string" && isBotId(value))
+	);
 }
 
 export function isMemoryKind(value: unknown): value is MemoryKind {
@@ -45,7 +52,7 @@ export function isMemoryKind(value: unknown): value is MemoryKind {
  * Where an agent-written line came from: the agent, its conversation and the moment it wrote or proposed the line. A
  * preference an agent proposed was approved by the owner later (`createdAt` is that moment); `at` is when it was asked.
  */
-export type MemoryOrigin = { agent: AgentId; conversationId: number; at: number };
+export type MemoryOrigin = { agent: AnyAgentId; conversationId: number; at: number };
 
 export type MemoryFactView = {
 	id: string;

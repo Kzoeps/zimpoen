@@ -5,6 +5,7 @@ import { type AppDb, coreMigrations, migrate, openAppDb } from "@assistant/db";
 import type { WebDeps } from "@assistant/extensions";
 import {
 	type AccountantDeps,
+	DEFAULT_TRUST_LEVEL,
 	type DelegateDeps,
 	type DocumentsDeps,
 	type FakeGoogle,
@@ -12,11 +13,12 @@ import {
 	type SyncSettings,
 } from "@assistant/extensions";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Harness, HarnessOptions, ReportInfo } from "@earendil-works/pi-durable";
+import type { Harness, HarnessOptions, ModelRef, ReportInfo } from "@earendil-works/pi-durable";
 import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
 import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import { serve } from "@hono/node-server";
 import { buildAgents, countParkedTasks, type EnsureAgentsResult, ensureAgents, listUnrunnableTasks } from "./agents.ts";
+import { type BotRuntime, createBotRuntime } from "./bots.ts";
 import { type Config, DEFAULT_OWNER_NAME } from "./config.ts";
 import type { DevProviderOptions } from "./dev-model.ts";
 import { documentsDeps } from "./documents.ts";
@@ -145,8 +147,21 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			undo.push(() => webService?.close());
 			return webService;
 		};
+		// Bots are made by the approval service or a tool, which the domain owns, through what only exists once Durable is
+		// open: the runtime is bound below, before anything can run.
+		let botRuntime: BotRuntime | undefined;
+		const requireBotRuntime = (): BotRuntime => {
+			if (botRuntime === undefined)
+				throw new Error("A bot was created or deleted before the server finished starting.");
+			return botRuntime;
+		};
 		const domain = createDomain({
 			db,
+			bots: {
+				trustLevel: config.paTrust ?? DEFAULT_TRUST_LEVEL,
+				spawn: (spec) => requireBotRuntime().spawn(spec),
+				retire: (slug) => requireBotRuntime().retire(slug),
+			},
 			timezone: config.profile.timezone,
 			now,
 			notify: notifier.notify,
@@ -196,13 +211,20 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			accountant: domain.accountantExtensions,
 			inbox: domain.inboxExtensions,
 		});
-		const agents = await ensureAgents(harness, db, {
-			agents: agentDefs,
+		const ensureOptions = {
 			shared: runtime.shared,
 			modelMode: config.modelMode,
-			isModelAvailable: (ref) => models.getModel(ref.provider, ref.modelId) !== undefined,
-		});
+			isModelAvailable: (ref: ModelRef) => models.getModel(ref.provider, ref.modelId) !== undefined,
+		};
+		const agents = await ensureAgents(harness, db, { agents: agentDefs, ...ensureOptions });
 		logAgents(logger, agents);
+		botRuntime = createBotRuntime({ harness, db, domain, agents: agentDefs, ensure: ensureOptions, now });
+		const bots = await botRuntime.start();
+		if (bots.ensured.length > 0) logger.info(`[bots] ${bots.ensured.length} bot(s): ${bots.ensured.join(", ")}`);
+		if (bots.archived.length > 0)
+			logger.info(`[bots] archived the conversations of deleted bots: ${bots.archived.join(", ")}`);
+		if (config.paTrust === "open")
+			logger.warn("[bots] ZIMPOEN_PA_TRUST=open: the PA creates and deletes bots without asking.");
 		await warnIfNoOpenAiLogin(logger, config, runtime);
 		logModelCatalog(logger, config, runtime);
 		await warnAboutParkedTasks(logger, harness);

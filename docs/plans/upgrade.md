@@ -63,13 +63,21 @@ function decide(level: TrustLevel, s: Sensitivity): "allow" | "ask" | "deny" {
 - `agents` table gains bot rows; `AgentId` stays a typed union for built-ins plus `bot:<slug>` ids for spawned bots.
 - PA tools: `create_bot({ slug, name, avatar, soul, tools[] })`, `delete_bot({ slug })`, `list_bots()`.
   - `soul` is written by the PA, capped (6 000 chars), stored in `bots_bot`.
-  - `tools` come from a fixed allowlist of existing extension presets (e.g. `tasks-read`, `memory`, `web`, `documents`,
-    `codemode`, `time`). Never `inbox`, `files` write, `approvals` admin, `delegate`, `bots`, `routines`.
+  - `tools` come from a fixed allowlist: `tasks-read` (list_tasks, current_time), `documents`, `web`, `memory`,
+    `codemode`. Never `inbox`, `files`, `approvals` admin, `delegate`, `bots`, `routines`, and for now no domain write
+    preset (`tasks`, `health`, `ledger`, `splits`). Accepted risk: a bot with `web` reads untrusted text, but what it can
+    write is only its own memory scope and the PDFs and document numbers `documents` makes.
   - Cap: 8 bots.
   - Approval follows the PA's trust level (default Normal: ask once on create and once on delete).
   - Refused during scheduled runs (rule 13).
 - Hub and spoke: `ask_agent` accepts bot ids; bots get no `ask_agent`.
-- Deleting a bot archives its conversation (kept in durable.sqlite) and removes its row; nothing else references it.
+- Deleting a bot aborts its run and tasks, archives its conversation (kept in durable.sqlite), removes its rows, and
+  clears its memory scope and weekly limit, so a later bot with the same slug starts clean.
+- Built: the trust level is `ZIMPOEN_PA_TRUST` (open / normal / strict, default normal; strict equals normal for bots
+  until a policy can deny). Durable gives a tool no request id, so rule 13 reads the conversation's placed inputs and
+  parses their request ids with the one parser in `packages/extensions/src/scheduled-run.ts` (`routine:<id>:<slot>`, or
+  `<daily job id>:<date>` with job ids taken from `DAILY_JOBS`). Bots and routines share it. An approval the owner gives
+  while a routine runs is carried out: the owner, not the run, decided it.
 
 ## 5. Phase 1b–1d
 

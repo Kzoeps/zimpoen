@@ -29,7 +29,9 @@ import {
 	type AccountantDeps,
 	type AskedInput,
 	approvalsModule,
+	type BotsDeps,
 	type BudgetGate,
+	botsModule,
 	closingYesWindow,
 	closingYesWindowOnAsk,
 	collectMigrations,
@@ -156,6 +158,8 @@ export type FixtureOptions = {
 	web?: WebDeps;
 	/** The weekly token limits the daily jobs ask. Default: none (nothing degrades); the usage module's own service is `fixture.usage`. */
 	budget?: BudgetGate;
+	/** How bots are made and retired, and the PA's trust level. Default: none, and the bot tools say bots are not set up. */
+	bots?: BotsDeps;
 };
 
 export type Fixture = {
@@ -229,6 +233,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		usageModule,
 		webModule,
 		routinesModule,
+		botsModule,
 	];
 	migrate(db, [...coreMigrations, ...collectMigrations(modules)]);
 
@@ -291,6 +296,7 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 		...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 		...(options.budget === undefined ? {} : { budget: options.budget }),
 		...(options.web === undefined ? {} : { web: options.web }),
+		...(options.bots === undefined ? {} : { bots: options.bots }),
 	};
 	for (const module of modules) for (const action of module.actions?.(deps) ?? []) approvals.register(action);
 	providers = [...modules.flatMap((module) => module.facts?.(deps) ?? []), ...(options.providers ?? [])];

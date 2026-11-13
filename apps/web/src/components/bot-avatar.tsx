@@ -1,4 +1,4 @@
-import type { AgentId } from "@assistant/shared";
+import type { AgentId, AnyAgentId } from "@assistant/shared";
 import type { CSSProperties, ReactElement } from "react";
 
 /*
@@ -60,18 +60,23 @@ const LOOKS: Record<AgentId, Look> = {
 	},
 };
 
-export function agentColor(id: AgentId): string {
-	return LOOKS[id].color;
+/** A bot the PA created has no look of its own: it wears the Health body in grey. */
+const BOT_LOOK: Look = { ...LOOKS.health, color: "#6b7280" };
+
+const lookOf = (id: AnyAgentId): Look => (id.startsWith("bot:") ? BOT_LOOK : LOOKS[id as AgentId]);
+
+export function agentColor(id: AnyAgentId): string {
+	return lookOf(id).color;
 }
 
 /** The agent's colour as a CSS variable, for the thread around it (bubbles, send button, background tint). */
-export function agentStyle(id: AgentId): CSSProperties {
-	return { "--agent": LOOKS[id].color } as CSSProperties;
+export function agentStyle(id: AnyAgentId): CSSProperties {
+	return { "--agent": lookOf(id).color } as CSSProperties;
 }
 
-export function BotAvatar({ id, size = 28, working = false }: { id: AgentId; size?: number; working?: boolean }) {
-	const look = LOOKS[id];
-	const clip = `bot-clip-${id}`;
+export function BotAvatar({ id, size = 28, working = false }: { id: AnyAgentId; size?: number; working?: boolean }) {
+	const look = lookOf(id);
+	const clip = `bot-clip-${id.replace(":", "-")}`;
 	const eye = look.sharingan === true ? "#e3262f" : "#ffffff";
 	return (
 		<svg

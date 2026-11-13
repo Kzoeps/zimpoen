@@ -1,4 +1,4 @@
-import { defineExtension, section } from "@earendil-works/pi-durable";
+import { defineExtension, type Extension, section } from "@earendil-works/pi-durable";
 import type { DomainDeps, DomainModule } from "../module.ts";
 import { formatLocal } from "../time.ts";
 import { createTaskFacts } from "./facts.ts";
@@ -9,6 +9,11 @@ import * as store from "./store.ts";
 import { createDeleteTaskAction, createTaskTools } from "./tools.ts";
 
 export const TASKS_EXTENSION_NAME = "tasks";
+/** The bots' view of the owner's tasks (PLAN upgrade §4): read, never change. */
+export const TASKS_READ_EXTENSION_NAME = "tasks-read";
+
+/** The tools a read-only task extension carries: listing, and the clock to read due dates against. */
+const READ_ONLY_TASK_TOOLS: ReadonlySet<string> = new Set(["list_tasks", "current_time"]);
 
 /** How many upcoming due dates the prompt section lists. */
 const NEXT_DUE_LISTED = 3;
@@ -27,7 +32,7 @@ const SENT_LISTED = 5;
  * start a run, see `post.ts`): this is how "snooze it" or "done" finds out what "it" is. It comes from the database, so it
  * is the same after a restart and needs no entry in the conversation.
  */
-export function renderTasksSection(deps: Pick<DomainDeps, "db" | "timezone">): string {
+export function renderTasksSection(deps: Pick<DomainDeps, "db" | "timezone">, readOnly = false): string {
 	const { open, next } = store.openSummary(deps.db, NEXT_DUE_LISTED);
 	if (open === 0) return "No open tasks.";
 	const lines = [`Open tasks: ${open}.`];
@@ -44,6 +49,7 @@ export function renderTasksSection(deps: Pick<DomainDeps, "db" | "timezone">): s
 			lines.push(`- ${row.id} “${row.title}”, due ${due}`);
 		}
 	}
+	if (readOnly) return lines.join("\n");
 	const { total, recent } = store.sentReminders(deps.db, SENT_LISTED);
 	if (total > 0) {
 		lines.push(
@@ -62,6 +68,8 @@ export type TasksModule = DomainModule & {
 	/** The reminder machinery, for the server's startup repair and for tests. Built from the same deps as the extension. */
 	scheduler: (deps: DomainDeps) => ReminderScheduler;
 	reminderTask: (deps: DomainDeps) => ReminderTask;
+	/** `list_tasks` and `current_time` with the task section and nothing that writes: what a bot's `tasks-read` preset gives. */
+	readOnlyExtension: (deps: DomainDeps) => Extension;
 };
 
 /**
@@ -94,6 +102,12 @@ export const tasksModule: TasksModule = {
 			tasks: [reminder],
 		});
 	},
+	readOnlyExtension: (deps) =>
+		defineExtension({
+			name: TASKS_READ_EXTENSION_NAME,
+			tools: createTaskTools(deps, piecesFor(deps).scheduler).filter((tool) => READ_ONLY_TASK_TOOLS.has(tool.name)),
+			sections: [section("tasks-read", () => renderTasksSection(deps, true))],
+		}),
 	actions: (deps) => [createDeleteTaskAction(deps, piecesFor(deps).scheduler)],
 	facts: (deps) => [createTaskFacts(deps)],
 };

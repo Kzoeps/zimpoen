@@ -79,6 +79,11 @@ export function insertAgentRow(db: AppDb, row: AgentRow): boolean {
 	return result.changes > 0;
 }
 
+/** Forget which conversation an agent has (a deleted bot: its conversation stays in durable.sqlite). Returns whether a row went. */
+export function deleteAgentRow(db: AppDb, id: string): boolean {
+	return db.run("DELETE FROM agents WHERE id = ?", id).changes > 0;
+}
+
 /** A browser's Web Push subscription: where to send and the keys that encrypt the payload for that browser. */
 export type PushSubscriptionRow = {
 	endpoint: string;

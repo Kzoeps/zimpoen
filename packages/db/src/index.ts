@@ -8,6 +8,7 @@ export {
 export {
 	type AgentRow,
 	coreMigrations,
+	deleteAgentRow,
 	deletePushSubscription,
 	getAgentRow,
 	getAgentRowByConversation,

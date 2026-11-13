@@ -3,7 +3,9 @@ import { birthdays, MemoryError, memoryStore, peopleStore, type UsageService } f
 import {
 	type ActivityResponse,
 	AGENT_IDS,
+	type AnyAgentId,
 	isAgentId,
+	isAnyAgentId,
 	type MemoryFactResponse,
 	type MemoryResponse,
 	type MemoryScope,
@@ -29,14 +31,12 @@ export type OwnerProfile = { ownerName?: string; timezone: string; currency: str
 export type OwnerDeps = {
 	db: AppDb;
 	/** Who the agents are, for the pages that name them. */
-	agents: readonly { id: (typeof AGENT_IDS)[number]; name: string; avatar: string }[];
+	agents: readonly { id: AnyAgentId; name: string; avatar: string }[];
 	profile: OwnerProfile;
 	usage: UsageService;
 	activity: ActivityReader;
 	now?: () => number;
 };
-
-const ALL_SCOPES: readonly MemoryScope[] = ["shared", ...AGENT_IDS];
 
 /**
  * The owner's pages (M8): the profile and the memory editor, the activity log, the usage dashboard and the weekly limits.
@@ -101,7 +101,11 @@ export function createOwnerApp(deps: OwnerDeps): Hono {
 		const body: MemoryResponse = {
 			facts: rows.map(memoryStore.toView),
 			total,
-			counts: memoryStore.countsByScope(db, ALL_SCOPES),
+			counts: memoryStore.countsByScope(db, [
+				"shared",
+				...AGENT_IDS,
+				...deps.agents.map((agent) => agent.id).filter((id) => !isAgentId(id)),
+			] satisfies MemoryScope[]),
 		};
 		return c.json(body);
 	});
@@ -131,7 +135,7 @@ export function createOwnerApp(deps: OwnerDeps): Hono {
 		const query = parseActivityQuery(c);
 		const body: ActivityResponse = await deps.activity.read({
 			limit: query.limit,
-			...(query.agent === undefined || !isAgentId(query.agent) ? {} : { agent: query.agent }),
+			...(query.agent === undefined || !isAnyAgentId(query.agent) ? {} : { agent: query.agent }),
 			...(query.from === undefined ? {} : { from: query.from }),
 			...(query.to === undefined ? {} : { to: query.to }),
 			...(query.cursor === undefined ? {} : { cursor: query.cursor }),
@@ -146,7 +150,8 @@ export function createOwnerApp(deps: OwnerDeps): Hono {
 
 	app.put("/settings/budget/:agent", async (c) => {
 		const agent = c.req.param("agent");
-		if (!isAgentId(agent)) throw notFound(`There is no agent '${agent.slice(0, 20)}'. GET /api/agents lists them.`);
+		if (!deps.agents.some((known) => known.id === agent))
+			throw notFound(`There is no agent '${agent.slice(0, 20)}'. GET /api/agents lists them.`);
 		const { weeklyTokens } = parseUpdateBudget(await readJsonObject(c));
 		deps.usage.setLimit(agent, weeklyTokens);
 		const body: UsageResponse = await deps.usage.report(deps.agents);

@@ -74,6 +74,7 @@ describe("migrations and agents", () => {
 			"approvals",
 			"tool-search",
 			"memory",
+			"bots",
 		]);
 		const other = server.db.get<{ conversation_id: number }>("SELECT conversation_id FROM agents WHERE id = 'health'");
 		const healthDoc = await server.harness.snapshot(AgentDoc, other?.conversation_id as ConversationId, ctx);

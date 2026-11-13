@@ -15,6 +15,22 @@ export {
 	type RecoveryReport,
 } from "./approvals/index.ts";
 export {
+	BOT_PRESETS,
+	BOTS_EXTENSION_NAME,
+	type BotPreset,
+	type BotSpec,
+	BotSpecError,
+	type BotsDeps,
+	botsModule,
+	botsStore,
+	CREATE_BOT_ACTION,
+	cleanBotSpec,
+	DELETE_BOT_ACTION,
+	isBotPreset,
+	MAX_BOTS,
+	MAX_SOUL_CHARS,
+} from "./bots/index.ts";
+export {
 	boundCodemodeSource,
 	type CodemodeLimits,
 	createBoundedCodemodeExtension,
@@ -333,6 +349,7 @@ export {
 	type ReminderScheduler,
 	renderTasksSection,
 	TASKS_EXTENSION_NAME,
+	TASKS_READ_EXTENSION_NAME,
 	taskStore,
 	tasksModule,
 	toCardItem,
@@ -351,6 +368,15 @@ export {
 	weekdayName,
 } from "./time.ts";
 export { type ReconcileReport as TimerReconcileReport, TIMER_TASK_OPTIONS, type TimerScheduler } from "./timers.ts";
+export {
+	DEFAULT_TRUST_LEVEL,
+	decide as decideTrust,
+	isTrustLevel,
+	type Sensitivity,
+	TRUST_LEVELS,
+	type TrustDecision,
+	type TrustLevel,
+} from "./trust.ts";
 export {
 	type AgentIdentity,
 	ALERT_SAMPLE_MAX_AGE_MS,

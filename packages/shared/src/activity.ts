@@ -1,4 +1,4 @@
-import type { AgentId } from "./agents.ts";
+import type { AnyAgentId } from "./agents.ts";
 
 /**
  * What the agents did (M8): a read-only list worked out from the threads (the tools they called, and what the timers
@@ -8,7 +8,7 @@ import type { AgentId } from "./agents.ts";
 export type ActivityItem = {
 	/** Stable within the thread: `<agent>:<entry>:<n>`. */
 	id: string;
-	agent: AgentId;
+	agent: AnyAgentId;
 	/** When it happened, epoch ms, and the same moment for people in the owner's zone. */
 	at: number;
 	atText: string;
@@ -38,4 +38,4 @@ export type ActivityResponse = {
 export const DEFAULT_ACTIVITY_PAGE = 50;
 export const MAX_ACTIVITY_PAGE = 100;
 
-export type ActivityAgentFilter = AgentId | "all";
+export type ActivityAgentFilter = AnyAgentId | "all";

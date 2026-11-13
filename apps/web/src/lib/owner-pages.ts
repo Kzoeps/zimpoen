@@ -1,6 +1,6 @@
 import type {
 	ActivityAgentFilter,
-	AgentId,
+	AnyAgentId,
 	MemoryFactView,
 	MemoryKind,
 	MemoryScope,
@@ -108,5 +108,5 @@ export const cacheShare = (figures: UsageFigures): number =>
 	figures.tokens === 0 ? 0 : Math.round(((figures.cacheRead + figures.cacheWrite) / figures.tokens) * 100);
 
 /** `Assistant` for `pa`, from the list the server gave. */
-export const agentName = (agents: ReadonlyArray<{ id: AgentId; name: string }>, id: AgentId): string =>
+export const agentName = (agents: ReadonlyArray<{ id: AnyAgentId; name: string }>, id: AnyAgentId): string =>
 	agents.find((agent) => agent.id === id)?.name ?? id;
