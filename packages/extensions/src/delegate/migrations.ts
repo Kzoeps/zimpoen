@@ -28,4 +28,32 @@ export const delegateMigrations: readonly Migration[] = [
 			`);
 		},
 	},
+	{
+		id: "delegate/002_bot_agents",
+		up: (db) => {
+			// ask_agent may ask a bot the PA created ('bot:<slug>', PLAN upgrade §4). SQLite cannot change a CHECK, so the table
+			// is rebuilt without the fixed list of agents; the tool checks the agent instead.
+			db.exec(`
+				CREATE TABLE delegate_ask_new (
+					id TEXT PRIMARY KEY,
+					source_call_id TEXT NOT NULL UNIQUE,
+					conversation_id INTEGER NOT NULL,
+					agent TEXT NOT NULL CHECK (agent IN ('inbox', 'health', 'accountant') OR agent LIKE 'bot:%'),
+					question TEXT NOT NULL,
+					request_id TEXT NOT NULL,
+					status TEXT NOT NULL CHECK (status IN ('waiting', 'answered', 'failed')),
+					answer TEXT,
+					late INTEGER NOT NULL DEFAULT 0,
+					posted_at INTEGER,
+					created_at INTEGER NOT NULL,
+					settled_at INTEGER
+				) STRICT;
+				INSERT INTO delegate_ask_new SELECT id, source_call_id, conversation_id, agent, question, request_id, status, answer,
+					late, posted_at, created_at, settled_at FROM delegate_ask;
+				DROP TABLE delegate_ask;
+				ALTER TABLE delegate_ask_new RENAME TO delegate_ask;
+				CREATE INDEX delegate_ask_open ON delegate_ask (status) WHERE status = 'waiting';
+			`);
+		},
+	},
 ];
