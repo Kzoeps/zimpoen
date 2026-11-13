@@ -38,6 +38,15 @@ function calls(): string[] {
 	}
 }
 
+/** A directory with one fake tool, to put before the recording stubs on PATH. */
+function fakeTool(name: string, body: string): string {
+	const dir = mkdtempSync(join(sandbox, `fake-${name}-`));
+	writeFileSync(join(dir, name), `#!/bin/sh\necho "${name} $*" >> "${callLog}"\n${body}\n`);
+	chmodSync(join(dir, name), 0o755);
+	return dir;
+}
+const asRoot = fakeTool("id", 'if [ "$1" = "-u" ]; then echo 0; else /usr/bin/id "$@"; fi');
+
 function run(rel: string, args: string[], env: Record<string, string> = {}, input = "") {
 	writeFileSync(callLog, "");
 	const r = spawnSync("bash", [join(OPS, rel), ...args], {
@@ -130,10 +139,21 @@ describe("coding VM egress rules", () => {
 	});
 
 	it("--check fails closed when the table is missing, and names the fix", () => {
-		const r = run("coding-vm/egress.sh", ["--check"], env); // the nft stub exits 97: no table
+		// the nft stub exits 97: no table
+		const r = run("coding-vm/egress.sh", ["--check"], { ...env, PATH: `${asRoot}:${stubDir}:/usr/bin:/bin` });
 		expect(r.code).toBe(1);
 		expect(r.err).toMatch(/not loaded.*--apply.*Refusing/);
 	});
+
+	it.skipIf(process.getuid?.() === 0)(
+		"--check run unprivileged says it needs root instead of claiming no table",
+		() => {
+			const r = run("coding-vm/egress.sh", ["--check"], env);
+			expect(r.code).toBe(1);
+			expect(r.err).toMatch(/must run as root.*ExecStartPre=\+/);
+			expect(r.calls).toEqual([]);
+		},
+	);
 
 	it("--check passes only for a table loaded for this relay", () => {
 		const fakeNft = join(sandbox, "nft-listing");
@@ -143,7 +163,7 @@ describe("coding VM egress rules", () => {
 		const check = (relay: string) => {
 			writeFileSync(join(fakeNft, "nft"), `#!/bin/sh\ncat <<'EOF'\n${listing(relay)}EOF\n`);
 			chmodSync(join(fakeNft, "nft"), 0o755);
-			return run("coding-vm/egress.sh", ["--check"], { ...env, PATH: `${fakeNft}:${stubDir}:/usr/bin:/bin` });
+			return run("coding-vm/egress.sh", ["--check"], { ...env, PATH: `${asRoot}:${fakeNft}:${stubDir}:/usr/bin:/bin` });
 		};
 		expect(check("100.64.0.10:7443").code).toBe(0);
 		const other = check("100.64.0.99:7443");
@@ -158,7 +178,7 @@ describe("coding VM provisioning (static, and refusals that stop before any chan
 
 	it("herdr-lead refuses to start without the egress rules", () => {
 		expect(lead).toMatch(/^Requires=zimpoen-vm-egress\.service$/m);
-		expect(lead).toMatch(/^ExecStartPre=\/usr\/local\/lib\/zimpoen-vm\/egress\.sh --check$/m);
+		expect(lead).toMatch(/^ExecStartPre=\+\/usr\/local\/lib\/zimpoen-vm\/egress\.sh --check$/m);
 		expect(lead).toMatch(/^User=CHANGE_ME$/m);
 		expect(read("coding-vm/systemd/zimpoen-vm-egress.service")).toMatch(
 			/^ExecStart=\/usr\/local\/lib\/zimpoen-vm\/egress\.sh --apply$/m,
@@ -279,15 +299,13 @@ describe("host-side push", () => {
 			.join("\n");
 		expect(code).not.toMatch(/--force|\s\+refs\//);
 		expect(push).toContain('"refs/heads/$BRANCH:refs/heads/$BRANCH"');
-		expect(push).toContain('GIT_ASKPASS="$WORK/askpass"');
 		expect(push).toContain("core.hooksPath=/dev/null");
-		// The token variable appears only where it is read, exported, checked and given to askpass.
-		const uses = push.split("\n").filter((l) => l.includes("ZIMPOEN_PUSH_TOKEN") && !l.trim().startsWith("#"));
-		expect(uses).toHaveLength(4);
-		for (const l of uses)
-			expect(l).toMatch(
-				/read -r ZIMPOEN_PUSH_TOKEN|export ZIMPOEN_PUSH_TOKEN|\$\{ZIMPOEN_PUSH_TOKEN:-\}|printf '%s\\n' "\$ZIMPOEN_PUSH_TOKEN"/,
-			);
+		// Never exported: ssh and the bundle steps don't inherit it; only the push command gets it in its environment.
+		expect(code).not.toMatch(/export\s+(TOKEN|ZIMPOEN_PUSH_TOKEN)/);
+		const handed = code.split("\n").filter((l) => l.includes('ZIMPOEN_PUSH_TOKEN="$TOKEN"'));
+		expect(handed).toHaveLength(1);
+		expect(handed[0]).toMatch(/GIT_ASKPASS="\$WORK\/askpass" g -C "\$WORK\/repo\.git" push /);
+		expect(code.split("\n").filter((l) => l.includes("$TOKEN"))).toHaveLength(1);
 	});
 });
 
@@ -316,7 +334,54 @@ describe("computer-use desktop", () => {
 		]) {
 			expect(r.out).toContain(flag);
 		}
-		expect(r.out).not.toMatch(/--volume|-v |--mount|--privileged|0\.0\.0\.0/);
+		expect(r.out).not.toMatch(/--volume|-v |--mount|--privileged|0\.0\.0\.0|--env/);
+		expect(r.out).toContain("enable_icc=false");
+		expect(r.out).toMatch(/start --attach --interactive .*passwords on stdin/);
+	});
+
+	// A fake docker: the network's enable_icc option is $1; no container exists yet; anything else is recorded and fails.
+	const fakeDocker = (icc: string) =>
+		fakeTool(
+			"docker",
+			`case "$1 $2" in "network inspect") echo "${icc}" ;; "container inspect") exit 1 ;; *) exit 97 ;; esac`,
+		);
+	const live = (icc: string, stdin: string) => {
+		const r = run("computer-use/run-desktop.sh", ok, { PATH: `${fakeDocker(icc)}:${stubDir}:/usr/bin:/bin` }, stdin);
+		return { ...r, created: r.calls.some((c) => / (create|run|start) /.test(` ${c} `)) };
+	};
+
+	it.each([["true"], [""], ["<no value>"]])(
+		"refuses a network where containers reach each other (enable_icc=%s)",
+		(icc) => {
+			const r = live(icc, "aaaaaaaa1\nbbbbbbbb2\n");
+			expect(r.code).toBe(1);
+			expect(r.err).toMatch(/lets containers reach each other.*enable_icc=false/);
+			expect(r.created).toBe(false);
+		},
+	);
+
+	it.each([
+		["passwords sharing their first 8 characters", "abcdefgh-takeover\nabcdefgh-view\n", /differ in their first 8/],
+		["a short password", "abc\nbbbbbbbb2\n", /8\+ random characters/],
+		["no passwords", "", /8\+ random characters/],
+	])("refuses %s before creating anything", (_name, stdin, message) => {
+		const r = live("false", stdin);
+		expect(r.code).toBe(1);
+		expect(r.err).toMatch(message);
+		expect(r.created).toBe(false);
+	});
+
+	it("passes passwords on stdin, never the environment, and stops by container id", () => {
+		const script = read("computer-use/run-desktop.sh")
+			.split("\n")
+			.filter((l) => !l.trim().startsWith("#"))
+			.join("\n");
+		expect(script).not.toMatch(/--env|ZCU_VNC/);
+		expect(script).toMatch(
+			/printf '%s\\n%s\\n' "\$TAKEOVER" "\$VIEW" \| "\$ENGINE" start --attach --interactive "\$ID"/,
+		);
+		expect(script).toMatch(/"\$ENGINE" stop "\$ID"/);
+		expect(script).not.toMatch(/stop "\$NAME"/);
 	});
 
 	it.each([
@@ -340,11 +405,24 @@ describe("computer-use desktop", () => {
 		expect(dockerfile).toMatch(/x11vnc novnc websockify chromium xdotool/);
 	});
 
-	it("the entrypoint drops the viewer passwords from the environment and keeps VNC on loopback", () => {
+	it("the entrypoint reads the viewer passwords from stdin, not the environment, and keeps VNC on loopback", () => {
 		const entry = read("computer-use/entrypoint.sh");
-		expect(entry).toContain("unset ZCU_VNC_TAKEOVER ZCU_VNC_VIEW");
+		expect(entry).not.toContain("ZCU_VNC");
+		expect(entry).toContain("IFS= read -r takeover");
+		expect(entry).toContain("exec </dev/null");
 		expect(entry).toContain("__BEGIN_VIEWONLY__");
+		expect(entry).toMatch(/-passwdfile rm:\/tmp\/vnc-passwords/);
 		expect(entry).toMatch(/x11vnc [^\n]*-localhost/);
-		expect(entry.indexOf("unset ZCU_VNC")).toBeLessThan(entry.indexOf("Xvfb :1"));
+		expect(entry.indexOf("read -r view")).toBeLessThan(entry.indexOf("Xvfb :1"));
+	});
+
+	it("the entrypoint refuses passwords that VNC would treat as the same", () => {
+		const r = spawnSync("bash", [join(OPS, "computer-use/entrypoint.sh")], {
+			input: "abcdefgh-1\nabcdefgh-2\n",
+			encoding: "utf8",
+			env: { PATH: `${stubDir}:/usr/bin:/bin` },
+		});
+		expect(r.status).toBe(1);
+		expect(r.stderr).toMatch(/first 8 characters/);
 	});
 });

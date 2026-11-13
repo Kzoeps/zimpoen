@@ -11,7 +11,7 @@ Files: `ops/coding-vm/`. None of it has been run against a real VM yet (see "Not
 | `provision.sh` | VM, root | Installs everything, loads the firewall, creates the lead's user, installs the units |
 | `egress.sh` | VM, root | Prints, loads (`--apply`) or checks (`--check`) the nftables egress rules |
 | `systemd/zimpoen-vm-egress.service` | VM | Loads the rules at boot, before the network |
-| `systemd/herdr-lead.service` | VM | Runs herdr-lead; `ExecStartPre=egress.sh --check` refuses to start without the rules |
+| `systemd/herdr-lead.service` | VM | Runs herdr-lead; `ExecStartPre=+egress.sh --check` (as root: listing nftables needs `CAP_NET_ADMIN`) refuses to start without the rules |
 | `host-push.sh` | zimpoen host | Copies a branch out as a git bundle and pushes it with a token read from stdin |
 | `vm.env.example`, `test-values.env.example` | | Settings and the test-values file |
 

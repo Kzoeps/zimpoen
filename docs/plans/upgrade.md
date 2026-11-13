@@ -146,7 +146,9 @@ interface CredBroker {
 - **Computer use:** builds on the shell sandbox plus a desktop image, viewer/takeover in the PWA, approval per task.
   Image and host run script in `ops/computer-use/` ([docs/computer-use.md](../computer-use.md)): same gVisor flags,
   filtered network required, viewer on 127.0.0.1 only, view-only and takeover passwords per task, one desktop per
-  approved task. Tool, approval action and PWA viewer are not built.
+  approved task. Tool, approval action and PWA viewer are not built. Depends on the shell-sandbox feature
+  (`ops/shell-egress.sh`, `ZIMPOEN_SHELL_IMAGE`), which must land first; the network must also have inter-container
+  traffic off.
 
 ## 9. What is left after phase 1
 

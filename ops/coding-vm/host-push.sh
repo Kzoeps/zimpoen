@@ -60,10 +60,10 @@ esac
 [[ "$REMOTE" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git$ ]] ||
 	die "--remote must be https://github.com/<owner>/<repo>.git, got '$REMOTE'."
 
-# The token: one line on stdin. Kept in this shell only and handed to git through GIT_ASKPASS's environment.
-IFS= read -r ZIMPOEN_PUSH_TOKEN || true
-[ -n "${ZIMPOEN_PUSH_TOKEN:-}" ] || die "no token on stdin. The broker passes the minted token on stdin."
-export ZIMPOEN_PUSH_TOKEN
+# The token: one line on stdin. A plain (unexported) shell variable: ssh and the bundle steps never see it; only the
+# final push gets it, in its own environment, for GIT_ASKPASS.
+IFS= read -r TOKEN || true
+[ -n "${TOKEN:-}" ] || die "no token on stdin. The broker passes the minted token on stdin."
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -101,6 +101,6 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 # No '+' in the refspec and no --force: a non-fast-forward is refused by the remote.
-GIT_ASKPASS="$WORK/askpass" g -C "$WORK/repo.git" push --quiet --no-verify "$REMOTE" "refs/heads/$BRANCH:refs/heads/$BRANCH" ||
+ZIMPOEN_PUSH_TOKEN="$TOKEN" GIT_ASKPASS="$WORK/askpass" g -C "$WORK/repo.git" push --quiet --no-verify "$REMOTE" "refs/heads/$BRANCH:refs/heads/$BRANCH" ||
 	die "push of '$BRANCH' to $REMOTE failed (non-fast-forward, expired token, or no access)."
 echo "host-push.sh: pushed $BRANCH to $REMOTE."

@@ -1,7 +1,9 @@
 # ops/computer-use/Dockerfile — the computer-use desktop (upgrade plan §8, phase 5).
 #
-# It builds on the shell sandbox's image (ZIMPOEN_SHELL_IMAGE, default debian:stable-slim) and runs under the same
-# hardening: gVisor (--runtime=runsc), read-only root, no capabilities, no new privileges, limits, the filtered network.
+# It builds on the shell sandbox's image and runs under the same hardening. Depends on the shell-sandbox feature (phase 4,
+# not on this branch): BASE_IMAGE should be its ZIMPOEN_SHELL_IMAGE (default debian:stable-slim) and the network its
+# ops/shell-egress.sh network. Hardening: gVisor (--runtime=runsc), read-only root, no capabilities, no new privileges,
+# limits, the filtered network.
 # ops/computer-use/run-desktop.sh holds those flags; never `docker run` this image by hand without them.
 #
 #   docker build -t zimpoen-desktop:local ops/computer-use

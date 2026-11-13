@@ -165,6 +165,7 @@ case "$MODE" in
 		;;
 	check)
 		command -v nft >/dev/null || die "nft is not installed, so no egress rules are loaded. Refusing."
+		[ "$(id -u)" -eq 0 ] || die "--check must run as root (listing nftables needs CAP_NET_ADMIN; in a unit use ExecStartPre=+). Refusing."
 		listing="$(nft list table inet "$TABLE" 2>/dev/null)" ||
 			die "table inet $TABLE is not loaded. Run 'egress.sh --apply' (zimpoen-vm-egress.service). Refusing."
 		grep -qF "$MARKER relay=$RELAY_IP:$RELAY_PORT" <<<"$listing" ||

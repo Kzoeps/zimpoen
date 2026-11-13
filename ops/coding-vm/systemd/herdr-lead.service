@@ -14,8 +14,9 @@ WorkingDirectory=~
 EnvironmentFile=/etc/zimpoen-vm/egress.env
 # Test values only (provision.sh refuses credential-shaped values).
 EnvironmentFile=/home/CHANGE_ME/.config/zimpoen-vm/test-values.env
-# No rules, no lead: the check fails closed when the table is missing or is for another relay.
-ExecStartPre=/usr/local/lib/zimpoen-vm/egress.sh --check
+# No rules, no lead: the check fails closed when the table is missing or is for another relay. "+" runs it as root:
+# listing nftables needs CAP_NET_ADMIN, which the lead's user does not have.
+ExecStartPre=+/usr/local/lib/zimpoen-vm/egress.sh --check
 ExecStart=/usr/local/bin/herdr-lead
 Restart=on-failure
 RestartSec=10
