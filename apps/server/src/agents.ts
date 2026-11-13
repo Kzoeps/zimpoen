@@ -531,8 +531,8 @@ async function reconcileAgent(
 }
 
 /**
- * Retire an agent's conversation without erasing it (a deleted bot, PLAN upgrade §4): its key is rewritten so that no later
- * start adopts it, then its `agents` row goes. Safe to call again, and for an agent that has no row.
+ * Retire an agent's conversation without erasing it (a deleted bot, PLAN upgrade §4): its run and tasks are aborted, its
+ * key is rewritten so that no later start adopts it, then its `agents` row goes. Safe to call again, and for an agent that has no row.
  */
 export async function archiveAgent(
 	harness: Harness,
@@ -544,7 +544,11 @@ export async function archiveAgent(
 	const row = getAgentRow(db, agentId);
 	if (row === undefined) return false;
 	const id = asConversationId(row.conversationId);
-	if ((await harness.conversation(id, context)) !== undefined) {
+	const conversation = await harness.conversation(id, context);
+	if (conversation !== undefined) {
+		// Stop what it is doing first, background tasks included: a run left going on an archived conversation could
+		// still call tools. Tools that look the agent up (memory) refuse once the row below is gone.
+		await conversation.abort(context, { background: true });
 		await harness.commit(async (tx) => {
 			(await tx.doc(AgentKeyDoc, id)).agentId = `archived:${agentId}:${now()}`;
 		}, context);

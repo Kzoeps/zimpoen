@@ -1,7 +1,8 @@
-import { botsStore } from "@assistant/extensions";
+import { BOT_PRESETS, botsStore } from "@assistant/extensions";
 import type { AgentsResponse } from "@assistant/shared";
-import { AgentDoc, type ConversationId } from "@earendil-works/pi-durable";
+import { AgentDoc, type ConversationId, LiveDoc } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
+import { archiveAgent } from "../src/agents.ts";
 import { base, ctx, type Harness, START, setup } from "./domain-support.ts";
 import { removeAllFixtures } from "./support.ts";
 
@@ -63,5 +64,35 @@ describe("bots through the whole server", () => {
 		const second = conversationOf(server.db, "bot:research");
 		expect(second).toBeDefined();
 		expect(second).not.toBe(first);
+	});
+});
+
+describe("bot agents and retiring", () => {
+	it("never gives a bot delegate, bots, inbox, files, routines or a domain write module, whatever presets it has", async () => {
+		const h = await open();
+		const server = await h.start();
+		const names = server.domain.botExtensions(BOT_PRESETS).map((extension) => extension.name);
+		for (const forbidden of ["delegate", "bots", "inbox", "files", "routines", "daily", "tasks", "ledger", "health"]) {
+			expect(names).not.toContain(forbidden);
+		}
+		expect(names).toContain("tasks-read");
+	});
+
+	it("stops a busy bot's run before archiving its conversation", async () => {
+		const h = await open();
+		const server = await h.start();
+		botsStore.insertBot(server.db, { ...RESEARCH, approvedVia: "owner", callId: "call-1", now: START });
+		await server.close();
+		h.servers.splice(0);
+		const again = await h.start();
+		const id = conversationOf(again.db, "bot:research") as ConversationId;
+		const conversation = await again.harness.conversation(id, ctx);
+		await conversation?.submit({ type: "input", content: "think about something long" }, ctx);
+
+		expect(await archiveAgent(again.harness, again.db, "bot:research")).toBe(true);
+		expect((await again.harness.snapshot(LiveDoc, id, ctx))?.run).toBeUndefined();
+		expect(conversationOf(again.db, "bot:research")).toBeUndefined();
+		// Twice is fine.
+		expect(await archiveAgent(again.harness, again.db, "bot:research")).toBe(false);
 	});
 });
