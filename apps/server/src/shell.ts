@@ -1,4 +1,10 @@
-import { checkShellHost, createEngineRunner, type ShellDeps, type ShellHostCheckDeps } from "@assistant/extensions";
+import {
+	checkShellHost,
+	createEngineRunner,
+	reapContainers,
+	type ShellDeps,
+	type ShellHostCheckDeps,
+} from "@assistant/extensions";
 import type { ShellConfig } from "./config.ts";
 
 /**
@@ -15,5 +21,7 @@ export async function loadShell(config: ShellConfig, host: ShellHostCheckDeps = 
 				"Fix these, or set ZIMPOEN_SHELL=off. See docs/ARCHITECTURE.md §5.8.",
 		);
 	}
+	// Containers a server that died mid-call left running: the engine would otherwise keep them until their own deadline.
+	await reapContainers(config, host.exec);
 	return { runner: createEngineRunner(config, host.exec) };
 }

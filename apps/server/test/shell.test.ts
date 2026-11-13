@@ -53,6 +53,8 @@ describe("ZIMPOEN_SHELL through the whole server", () => {
 		const fake = engine({ exitCode: 0, output: "", timedOut: false, truncated: false });
 		const server = await h.start(undefined, { shellHost: { exec: fake.exec } });
 		expect(fake.calls[0]?.args).toContain("--runtime=runsc");
+		// Leftover containers of a server that died mid-call are reaped at start.
+		expect(fake.calls[1]?.args).toEqual(["ps", "--all", "--quiet", "--filter", "label=zimpoen.shell=1"]);
 		expect(await extensionsOf(h, "pa")).toContain("shell");
 		for (const agent of ["inbox", "health", "accountant"]) expect(await extensionsOf(h, agent)).not.toContain("shell");
 		expect(server.domain.inboxExtensions.map((extension) => extension.name)).not.toContain("shell");

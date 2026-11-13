@@ -113,10 +113,34 @@ export function buildRunArgv(config: ShellSandboxConfig, req: ShellRunRequest): 
 		`--env=HOME=${SHELL_WORKDIR}`,
 		"--hostname=sandbox",
 		config.image,
+		// The deadline inside the container too: if the server dies mid-call, the engine still kills the command.
+		"timeout",
+		"-s",
+		"KILL",
+		String(innerTimeoutSeconds(req.timeoutMs)),
 		"/bin/sh",
 		"-c",
 		req.command,
 	];
+}
+
+/** A little later than the host's own kill, so the host normally reports the timeout. */
+export const innerTimeoutSeconds = (timeoutMs: number): number => Math.ceil(timeoutMs / 1000) + 5;
+
+/**
+ * Remove every sandbox container left over (by label), for instance by a server that died mid-call. Run at start, before
+ * any call. Returns how many were removed; throws when the engine cannot list them.
+ */
+export async function reapContainers(config: ShellSandboxConfig, exec: ExecFn = execProgram): Promise<number> {
+	const run = (args: string[]) =>
+		exec({ file: config.bin, args, env: ENGINE_ENV, timeoutMs: ADMIN_TIMEOUT_MS, maxBytes: 64 * 1024 });
+	const list = await run(["ps", "--all", "--quiet", "--filter", "label=zimpoen.shell=1"]);
+	if (list.exitCode !== 0) throw new Error(`Could not list leftover sandbox containers: ${list.output.trim()}`);
+	const ids = list.output.split(/\s+/).filter((id) => /^[0-9a-f]{6,64}$/.test(id));
+	if (ids.length === 0) return 0;
+	const removed = await run(["rm", "--force", ...ids]);
+	if (removed.exitCode !== 0) throw new Error(`Could not remove leftover sandbox containers: ${removed.output.trim()}`);
+	return ids.length;
 }
 
 /** The engine CLI sees only this: no server secrets, no proxy settings. */
@@ -142,22 +166,22 @@ export function createEngineRunner(config: ShellSandboxConfig, exec: ExecFn = ex
 			const create = await admin(["volume", "create", "--label=zimpoen.shell=1", volume]);
 			if (create.exitCode !== 0)
 				throw new Error(`Could not create the sandbox volume ${volume}: ${create.output.trim()}`);
-			const chown = await admin([
-				"run",
-				...hardeningFlags({ ...config, network: "none" }),
-				"--cap-add=CHOWN",
-				"--user=0:0",
-				"--mount",
-				`type=volume,src=${volume},dst=${SHELL_WORKDIR}`,
-				config.image,
-				"chown",
-				SHELL_USER,
-				SHELL_WORKDIR,
-			]);
-			if (chown.exitCode !== 0) {
-				throw new Error(`Could not prepare the sandbox volume ${volume}: ${chown.output.trim()}`);
-			}
 		}
+		// Chowned once per process, whether or not the volume existed: a chown that failed earlier (or a volume the
+		// engine recreated root-owned) is fixed on the next call instead of leaving /workspace unwritable for good.
+		const chown = await admin([
+			"run",
+			...hardeningFlags({ ...config, network: "none" }),
+			"--cap-add=CHOWN",
+			"--user=0:0",
+			"--mount",
+			`type=volume,src=${volume},dst=${SHELL_WORKDIR}`,
+			config.image,
+			"chown",
+			SHELL_USER,
+			SHELL_WORKDIR,
+		]);
+		if (chown.exitCode !== 0) throw new Error(`Could not prepare the sandbox volume ${volume}: ${chown.output.trim()}`);
 		ready.add(volume);
 	};
 

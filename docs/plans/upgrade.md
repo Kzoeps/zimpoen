@@ -143,6 +143,8 @@ interface CredBroker {
   link-local, loopback, ULA and tailnet ranges and the host). Startup refuses without the `runsc` runtime, or, with a
   network, without the root-owned egress marker. Runner behind `ContainerRunner`, tested with a fake engine. Details:
   ARCHITECTURE §5.8. Not yet run against real docker/podman, gVisor or nftables.
+  `ops/shell-egress.sh` and `ZIMPOEN_SHELL_IMAGE` belong to this shell-sandbox feature; anything else that uses them
+  (the coding VM, computer use) depends on it.
 - **Computer use:** builds on the shell sandbox plus a desktop image, viewer/takeover in the PWA, approval per task.
 
 ## 9. What is left after phase 1

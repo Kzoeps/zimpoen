@@ -367,7 +367,9 @@ command per call in a fresh container of the calling agent:
   host environment. The host runs the engine CLI with a fixed argv and `PATH`/`LANG` only; the command string is one
   argument that only the container's shell reads.
 - **Limits:** 60 s by default, at most 300 s; on a timeout or past 64 KB of output the CLI is killed and the container
-  force-removed. A call is not `replay: "safe"`: a crash mid-run is reported, never run again.
+  force-removed. The command also runs under `timeout -s KILL <limit + 5 s>` inside the container, so it dies even if
+  the server does, and at start the server force-removes every container labelled `zimpoen.shell=1`. The image must
+  therefore have `timeout` (coreutils), `/bin/sh` and `chown`. The volume is chowned once per server process. A call is not `replay: "safe"`: a crash mid-run is reported, never run again.
 - **Network:** `ZIMPOEN_SHELL_NETWORK=none` (default) or a dedicated network filtered by `ops/shell-egress.sh` (nftables or
   iptables; run as root, after every boot). It creates the network on bridge `zs-br0` if missing, drops everything from
   the bridge to the host and between sandboxes, and forwarding to 10/8, 172.16/12, 192.168/16, 169.254/16, 127/8,

@@ -11,6 +11,8 @@ export {
 	containerName,
 	createEngineRunner,
 	hardeningFlags,
+	innerTimeoutSeconds,
+	reapContainers,
 	SHELL_LIMITS,
 	SHELL_USER,
 	SHELL_WORKDIR,

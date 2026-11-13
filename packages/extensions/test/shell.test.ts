@@ -12,6 +12,7 @@ import {
 	createEngineRunner,
 	createShellExtension,
 	type EgressMarker,
+	reapContainers,
 	SHELL_LIMITS,
 	type ShellHostConfig,
 	type ShellRunRequest,
@@ -67,7 +68,16 @@ describe("sandbox argv", () => {
 	});
 
 	it("passes the command as one argument to /bin/sh -c inside the container", () => {
-		expect(argv.slice(-4)).toEqual([CONFIG.image, "/bin/sh", "-c", "echo $HOME; rm -rf /"]);
+		expect(argv.slice(-8)).toEqual([
+			CONFIG.image,
+			"timeout",
+			"-s",
+			"KILL",
+			"6",
+			"/bin/sh",
+			"-c",
+			"echo $HOME; rm -rf /",
+		]);
 		expect(argv[0]).toBe("/usr/bin/docker");
 	});
 
@@ -106,10 +116,50 @@ describe("engine runner", () => {
 		expect(calls[3]?.timeoutMs).toBe(5000);
 	});
 
+	it("chowns an existing volume too, and retries a chown that failed", async () => {
+		let chownFails = true;
+		const { calls, exec } = fakeExec((args) => {
+			if (args[0] === "run" && args.includes("chown") && chownFails) {
+				chownFails = false;
+				return { ...ok("image not pulled"), exitCode: 125 };
+			}
+			return ok();
+		});
+		const runner = createEngineRunner(CONFIG, exec);
+		const req: ShellRunRequest = { agentId: "pa", command: "id", timeoutMs: 1000, callId: "c1" };
+		await expect(runner.run(req)).rejects.toThrow("Could not prepare the sandbox volume");
+		await runner.run(req);
+		const chowns = calls.filter((call) => call.args.includes("chown"));
+		expect(chowns).toHaveLength(2);
+		expect(calls.filter((call) => call.args[1] === "create")).toEqual([]);
+	});
+
+	it("builds no container for an id that is not an agent's", async () => {
+		const { calls, exec } = fakeExec();
+		await expect(
+			createEngineRunner(CONFIG, exec).run({ agentId: "inbox", command: "id", timeoutMs: 1000, callId: "c1" }),
+		).rejects.toThrow("cannot have a shell sandbox");
+		expect(calls).toEqual([]);
+	});
+
+	it("reaps leftover sandbox containers by label", async () => {
+		const { calls, exec } = fakeExec((args) => (args[0] === "ps" ? ok("abc123def456\n0123456789ab\n") : ok()));
+		expect(await reapContainers(CONFIG, exec)).toBe(2);
+		expect(calls.map((call) => call.args)).toEqual([
+			["ps", "--all", "--quiet", "--filter", "label=zimpoen.shell=1"],
+			["rm", "--force", "abc123def456", "0123456789ab"],
+		]);
+		const none = fakeExec((args) => (args[0] === "ps" ? ok("") : ok()));
+		expect(await reapContainers(CONFIG, none.exec)).toBe(0);
+		expect(none.calls).toHaveLength(1);
+	});
+
 	it("removes a timed-out container and caps output", async () => {
 		const big = "x".repeat(SHELL_LIMITS.maxOutputBytes + 50);
 		const { calls, exec } = fakeExec((args) =>
-			args[0] === "run" ? { exitCode: 137, output: big, timedOut: true, truncated: true } : ok(),
+			args[0] === "run" && !args.includes("chown")
+				? { exitCode: 137, output: big, timedOut: true, truncated: true }
+				: ok(),
 		);
 		const result = await createEngineRunner(CONFIG, exec).run({
 			agentId: "pa",
@@ -187,7 +237,7 @@ describe("shell_run tool", () => {
 
 	const CONV = { pa: 1, inbox: 2, health: 3, "bot:coder": 4, "bot:reader": 5, ghost: 6 } as const;
 
-	function setup(options: { requestIds?: string[]; shell?: boolean } = {}) {
+	function setup(options: { requestIds?: string[]; shell?: boolean; fail?: boolean } = {}) {
 		const db = openAppDb(":memory:");
 		dbs.push(db);
 		migrate(db, [...coreMigrations, ...delegateModule.migrations, ...botsModule.migrations]);
@@ -201,6 +251,7 @@ describe("shell_run tool", () => {
 		const runner: ContainerRunner = {
 			run: async (req) => {
 				runs.push(req);
+				if (options.fail === true) throw new Error("Could not create the sandbox volume zimpoen-shell-pa: boom");
 				return { exitCode: 0, output: "done", timedOut: false, truncated: false };
 			},
 		};
@@ -234,6 +285,11 @@ describe("shell_run tool", () => {
 		const f = setup();
 		expect(await f.call(CONV.pa, { command: "ls" })).toContain("Exit code 0");
 		expect(f.runs).toEqual([{ agentId: "pa", command: "ls", timeoutMs: 60_000, callId: "call-1" }]);
+	});
+
+	it("surfaces a runner failure as a tool error", async () => {
+		const f = setup({ fail: true });
+		await expect(f.call(CONV.pa, { command: "ls" })).rejects.toThrow("Could not create the sandbox volume");
 	});
 
 	it("never runs for the Inbox, even if it were wired the tool", async () => {
