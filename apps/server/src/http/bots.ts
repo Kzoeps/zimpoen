@@ -8,7 +8,7 @@ import {
 	MAX_SOUL_CHARS,
 	type OwnerBots,
 } from "@assistant/extensions";
-import { type BotsResponse, type BotView, botIdOf } from "@assistant/shared";
+import { type BotsResponse, type BotView, botIdOf, type TrustSettingView } from "@assistant/shared";
 import { Hono } from "hono";
 import { type TrustSettings, UnknownTrustProject } from "../trust-settings.ts";
 import { ApiError, invalidRequest, notFound } from "./errors.ts";
@@ -17,7 +17,12 @@ import { parseCreateBot, parseUpdateTrust, readJsonObject } from "./validation.t
 export type BotsAppDeps = {
 	bots: OwnerBots;
 	trust: TrustSettings;
-	logger?: Partial<Pick<Console, "info">>;
+	/**
+	 * Says something in the PA's thread, display-only (no model tokens). Used for a trust level change, so the thread shows
+	 * what the owner changed. Absent in tests of other routes.
+	 */
+	note?: (text: string) => Promise<void>;
+	logger?: Partial<Pick<Console, "info" | "warn">>;
 };
 
 /**
@@ -76,9 +81,24 @@ export function createBotsApp(deps: BotsAppDeps): Hono {
 
 	app.get("/settings/trust", (c) => c.json(deps.trust.view()));
 
+	/** The change is saved before this runs: a thread that cannot take the note must not undo it, so a failure is logged. */
+	async function announce(subject: string, before: TrustSettingView, after: TrustSettingView): Promise<void> {
+		if (before.level === after.level) return;
+		const how = after.overridden ? "set in Settings" : `back to its default, set in Settings`;
+		try {
+			await deps.note?.(`Trust level of ${subject} changed from ${before.level} to ${after.level} (${how}).`);
+		} catch (error) {
+			deps.logger?.warn?.(
+				`[trust] the trust level of ${subject} changed, but the note in the PA's thread could not be posted: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+
 	app.put("/settings/trust/pa", async (c) => {
 		const { level } = parseUpdateTrust(await readJsonObject(c));
+		const before = deps.trust.view().pa;
 		const view = deps.trust.setPa(level);
+		await announce("the PA", before, view.pa);
 		deps.logger?.info?.(`[trust] the PA's trust level is now ${view.pa.level} (set in Settings).`);
 		return c.json(view);
 	});
@@ -87,8 +107,10 @@ export function createBotsApp(deps: BotsAppDeps): Hono {
 		const { level } = parseUpdateTrust(await readJsonObject(c));
 		const id = c.req.param("id");
 		try {
+			const before = deps.trust.view().projects.find((known) => known.id === id);
 			const view = deps.trust.setProject(id, level);
 			const project = view.projects.find((known) => known.id === id);
+			if (before !== undefined && project !== undefined) await announce(`project ${id}`, before, project);
 			deps.logger?.info?.(`[trust] project ${id} is now ${project?.level} (set in Settings).`);
 			return c.json(view);
 		} catch (error) {

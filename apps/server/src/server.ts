@@ -36,7 +36,7 @@ import { loadOrCreateVapidKeys } from "./push/vapid.ts";
 import { openRuntime, type Runtime } from "./runtime.ts";
 import { loadShell } from "./shell.ts";
 import { startTelegram, type TelegramSetupOptions, telegramMigrations } from "./telegram/setup.ts";
-import { createTrustSettings, trustMigrations } from "./trust-settings.ts";
+import { createTrustSettings, postTrustNote, trustMigrations } from "./trust-settings.ts";
 import { createWebSetup, type WebService } from "./web.ts";
 
 export type ServerLogger = Pick<Console, "info" | "warn" | "error">;
@@ -286,7 +286,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			daily: domain.daily,
 			inbox: domain.inbox,
 			usage: domain.usage,
-			bots: { bots: domain.bots, trust },
+			bots: { bots: domain.bots, trust, note: (text) => postTrustNote(db, harness, text) },
 			profile: {
 				...(config.profile.ownerName === DEFAULT_OWNER_NAME ? {} : { ownerName: config.profile.ownerName }),
 				timezone: config.profile.timezone,

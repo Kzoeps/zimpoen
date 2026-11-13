@@ -6,7 +6,7 @@ import { AgentDoc, type ConversationId, LiveDoc } from "@earendil-works/pi-durab
 import { afterEach, describe, expect, it } from "vitest";
 import { archiveAgent } from "../src/agents.ts";
 import type { RunningServer } from "../src/server.ts";
-import { base, ctx, type Harness, START, setup } from "./domain-support.ts";
+import { base, ctx, type Harness, ofKind, START, setup } from "./domain-support.ts";
 import { removeAllFixtures } from "./support.ts";
 
 const harnesses: Harness[] = [];
@@ -218,6 +218,16 @@ describe("trust levels in Settings", () => {
 
 		const reset = await call<TrustSettingsResponse>(server, "PUT", "/api/settings/trust/pa", { level: null });
 		expect(reset.body.pa).toStrictEqual({ level: "strict", defaultLevel: "strict", overridden: false });
+		// A change that changes nothing says nothing.
+		await call(server, "PUT", "/api/settings/trust/pa", { level: null });
+
+		// Each real change left a display-only note in the PA's thread.
+		const notes = (await ofKind(server, "app.notice")).map((entry) => (entry.data as { text: string }).text);
+		expect(notes).toStrictEqual([
+			"Trust level of the PA changed from strict to open (set in Settings).",
+			"Trust level of project bank changed from strict to normal (set in Settings).",
+			"Trust level of the PA changed from open to strict (back to its default, set in Settings).",
+		]);
 
 		const unknown = await call<ApiErrorBody>(server, "PUT", "/api/settings/trust/projects/nope", { level: "open" });
 		expect(unknown.status).toBe(404);

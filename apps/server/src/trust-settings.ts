@@ -1,6 +1,19 @@
-import type { AppDb, Migration } from "@assistant/db";
-import { DEFAULT_TRUST_LEVEL, isTrustLevel, type ProjectPolicy, type TrustLevel } from "@assistant/extensions";
-import type { ProjectTrustView, TrustSettingsResponse, TrustSettingView } from "@assistant/shared";
+import { randomUUID } from "node:crypto";
+import { type AppDb, getAgentRow, type Migration } from "@assistant/db";
+import {
+	createEntryPoster,
+	DEFAULT_TRUST_LEVEL,
+	isTrustLevel,
+	type ProjectPolicy,
+	type TrustLevel,
+} from "@assistant/extensions";
+import {
+	NOTICE_ENTRY_KIND,
+	type ProjectTrustView,
+	type TrustSettingsResponse,
+	type TrustSettingView,
+} from "@assistant/shared";
+import type { Harness } from "@earendil-works/pi-durable";
 
 /**
  * The owner's trust levels (PLAN upgrade §3), as set in Settings: one for the PA (bot creation and deletion) and one per
@@ -103,4 +116,15 @@ export function createTrustSettings(options: {
 			return view();
 		},
 	};
+}
+
+/** Write a display-only note into the PA's thread. Throws when the PA has no conversation yet. */
+export async function postTrustNote(db: AppDb, harness: Harness, text: string): Promise<void> {
+	const pa = getAgentRow(db, "pa");
+	if (pa === undefined) throw new Error("the PA has no conversation yet");
+	await createEntryPoster(() => harness)(pa.conversationId, {
+		kind: NOTICE_ENTRY_KIND,
+		data: { text, level: "info" },
+		requestId: `trust:${randomUUID()}`,
+	});
 }
