@@ -320,6 +320,11 @@ export function deleteFact(db: AppDb, id: string): boolean {
  * Set (a string) or clear (`null`) one of the preferences the profile page owns: a shared preference with a slot, one
  * row per slot, written by the owner. Returns the row, or undefined once cleared.
  */
+/** Forget everything kept for one scope (a deleted bot's lines). Returns how many lines went. */
+export function deleteScope(db: AppDb, scope: MemoryScope): number {
+	return db.run("DELETE FROM memory_fact WHERE scope = ?", scope).changes;
+}
+
 export function setSlot(db: AppDb, slot: ProfileSlot, text: string | null, now: number): FactRow | undefined {
 	return db.transaction(() => {
 		const current = db.get<DbRow>(`SELECT ${COLUMNS} FROM memory_fact WHERE slot = ?`, slot);

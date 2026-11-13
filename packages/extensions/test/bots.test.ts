@@ -1,15 +1,20 @@
 import { deleteAgentRow, getAgentRow, insertAgentRow } from "@assistant/db";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	BOT_PRESETS,
 	type BotSpec,
 	type BotsDeps,
+	botsModule,
 	botsStore,
+	CREATE_BOT_ACTION,
 	cleanBotSpec,
 	DELETE_BOT_ACTION,
 	decideTrust,
 	isScheduledRequestId,
 	MAX_BOTS,
+	memoryStore,
 	type TrustLevel,
+	tasksModule,
 } from "../src/index.ts";
 import { ctx, type Fixture, openFixture, say, textOf, toolCall, waitFor } from "./support.ts";
 
@@ -77,7 +82,19 @@ describe("trust levels", () => {
 
 describe("bot specs", () => {
 	it("refuses presets outside the allowlist, a long soul and slugs of built-in agents", () => {
-		for (const tool of ["inbox", "delegate", "files", "bots", "routines", "approvals", "daily"]) {
+		for (const tool of [
+			"inbox",
+			"delegate",
+			"files",
+			"bots",
+			"routines",
+			"approvals",
+			"daily",
+			"tasks",
+			"ledger",
+			"health",
+			"splits",
+		]) {
 			expect(() => cleanBotSpec({ ...RESEARCH, tools: [tool] })).toThrow(/cannot have/);
 		}
 		expect(() => cleanBotSpec({ ...RESEARCH, soul: "x".repeat(6001) })).toThrow(/at most 6000/);
@@ -159,7 +176,7 @@ describe("create_bot and delete_bot", () => {
 describe("rule 13: no bot changes during scheduled runs", () => {
 	it("knows the request ids of scheduled runs", () => {
 		for (const id of [
-			"routine:r_1:2026-10-25T07",
+			"routine:r_1a:2026-10-25T07:00:00.000Z",
 			"briefing:2026-10-25",
 			"wrapup:2026-10-25",
 			"digest_midday:2026-10-25",
@@ -174,7 +191,7 @@ describe("rule 13: no bot changes during scheduled runs", () => {
 		f.faux.setResponses([toolCall("create_bot", RESEARCH, "call-sched"), say("I could not.")]);
 		const { submissionId } = await f.deps.ask(Number(f.conversation.id), {
 			content: "Weekly: tidy up your bots.",
-			requestId: "routine:r_1:2026-10-25T08",
+			requestId: "routine:r_1a:2026-10-25T08:00:00.000Z",
 		});
 		const submission = await f.harness.submission(submissionId as never, ctx);
 		await submission?.wait(ctx);
@@ -223,5 +240,85 @@ describe("ask_agent and bots (hub and spoke)", () => {
 			() => f.db.get<{ status: string }>("SELECT status FROM delegate_ask WHERE id = 'q_1'")?.status === "failed",
 			"the ask to settle",
 		);
+	});
+});
+
+describe("review follow-ups", () => {
+	it("finishes an open-mode create or delete that a crash interrupted, instead of refusing it", async () => {
+		const { f, spawned, retired } = await open("open");
+		// The process stopped after the row was written and before the call's answer was.
+		botsStore.beginCall(f.db, "call-crash", "create_bot", f.clock.now);
+		botsStore.insertBot(f.db, {
+			...cleanBotSpec(RESEARCH),
+			approvedVia: "open",
+			callId: "call-crash",
+			now: f.clock.now,
+		});
+		const created = await f.callTool("create_bot", RESEARCH, "call-crash");
+		expect(textOf(created)).toContain("Created the bot Research");
+		expect(spawned).toHaveLength(1);
+
+		botsStore.beginCall(f.db, "call-del", "delete_bot", f.clock.now);
+		botsStore.deleteBot(f.db, "research");
+		const deleted = await f.callTool("delete_bot", { slug: "research" }, "call-del");
+		expect(textOf(deleted)).toContain("There is no bot bot:research any more");
+		expect(retired).toStrictEqual(["research"]);
+		// A delete from another call still says there is nothing to delete.
+		await expect(f.callTool("delete_bot", { slug: "research" }, "call-other")).rejects.toThrow("There is no bot");
+	});
+
+	it("runs an approved create twice without a second row, and refuses a request without its call id", async () => {
+		const { f, spawned } = await open("normal");
+		const create = (botsModule.actions?.(f.deps) ?? []).find((action) => action.tool === CREATE_BOT_ACTION);
+		if (create === undefined) throw new Error("no create action");
+		const args = { ...cleanBotSpec(RESEARCH), callId: "call-approved" };
+		await create.run(args);
+		await create.run(args);
+		expect(botsStore.listBots(f.db)).toHaveLength(1);
+		expect(spawned).toHaveLength(2);
+		await expect((async () => create.run(cleanBotSpec({ ...RESEARCH, slug: "other" })))()).rejects.toThrow("damaged");
+		await expect((async () => create.run({ ...args, callId: "call-else" }))()).rejects.toThrow("another request");
+	});
+
+	it("refuses delete_bot in a scheduled run", async () => {
+		const { f } = await open("open", { isScheduledRun: async () => true });
+		botsStore.insertBot(f.db, { ...cleanBotSpec(RESEARCH), approvedVia: "open", callId: "c", now: f.clock.now });
+		await expect(f.callTool("delete_bot", { slug: "research" }, "call-sched")).rejects.toThrow("rule 13");
+		expect(botsStore.getBot(f.db, "research")).toBeDefined();
+	});
+
+	it("offers no preset that names delegate, bots, inbox, files or a module that writes domain data", () => {
+		for (const name of ["delegate", "bots", "inbox", "files", "routines", "tasks", "ledger", "health", "splits"]) {
+			expect(BOT_PRESETS as readonly string[]).not.toContain(name);
+		}
+	});
+
+	it("drops a stored preset that is no longer offered", async () => {
+		const { f } = await open("open");
+		f.db.run(
+			`INSERT INTO bots_bot (slug, name, avatar, soul, tools, approved_via, source_call_id, created_at)
+			 VALUES ('old', 'Old', '🤖', 'x', '["ledger","web"]', 'owner', 'c', 0)`,
+		);
+		expect(botsStore.getBot(f.db, "old")?.tools).toStrictEqual(["web"]);
+	});
+
+	it("clears the bot's memory and weekly limit when it is deleted", async () => {
+		const { f } = await open("open");
+		await f.callTool("create_bot", RESEARCH, "call-create");
+		memoryStore.insertFact(
+			f.db,
+			{ scope: "bot:research", kind: "fact", text: "Likes arXiv.", source: "agent", createdAt: f.clock.now },
+			"call-fact",
+		);
+		f.db.run("INSERT INTO usage_budget (agent_id, weekly_tokens, updated_at) VALUES ('bot:research', 1000, 0)");
+		await f.callTool("delete_bot", { slug: "research" }, "call-delete");
+		expect(memoryStore.listFacts(f.db, { scopes: ["bot:research"], limit: 10 }).total).toBe(0);
+		expect(f.db.get("SELECT 1 FROM usage_budget WHERE agent_id = 'bot:research'")).toBeUndefined();
+	});
+
+	it("gives a tasks-read bot list_tasks and the clock, nothing that writes", async () => {
+		const { f } = await open();
+		const names = (tasksModule.readOnlyExtension(f.deps).tools ?? []).map((tool) => tool.name).sort();
+		expect(names).toStrictEqual(["current_time", "list_tasks"]);
 	});
 });

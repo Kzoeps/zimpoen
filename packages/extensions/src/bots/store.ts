@@ -76,13 +76,28 @@ export function deleteBot(db: AppDb, slug: string): boolean {
 	return db.run("DELETE FROM bots_bot WHERE slug = ?", slug).changes > 0;
 }
 
+/**
+ * A call's answer once it finished; `""` while an open-mode create or delete it started is not known to be done (a crash
+ * in between: the replay finishes the same work instead of refusing it).
+ */
 export function findCall(db: AppDb, callId: string): string | undefined {
 	return db.get<{ output: string }>("SELECT output FROM bots_call WHERE call_id = ?", callId)?.output;
 }
 
+/** Note that a call started work that must finish even if the process stops: its answer is `""` until {@link recordCall}. */
+export function beginCall(db: AppDb, callId: string, tool: string, now: number): void {
+	db.run(
+		"INSERT INTO bots_call (call_id, tool, output, created_at) VALUES (?, ?, '', ?) ON CONFLICT (call_id) DO NOTHING",
+		callId,
+		tool,
+		now,
+	);
+}
+
 export function recordCall(db: AppDb, callId: string, tool: string, output: string, now: number): void {
 	db.run(
-		"INSERT INTO bots_call (call_id, tool, output, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (call_id) DO NOTHING",
+		`INSERT INTO bots_call (call_id, tool, output, created_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT (call_id) DO UPDATE SET output = excluded.output WHERE bots_call.output = ''`,
 		callId,
 		tool,
 		output,

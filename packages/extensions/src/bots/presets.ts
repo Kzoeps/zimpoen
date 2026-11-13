@@ -3,9 +3,11 @@ import { BOT_SLUG_PATTERN } from "@assistant/shared";
 /**
  * What a bot may be given (PLAN upgrade §4): names of existing extensions, nothing else. Never `inbox` (untrusted mail,
  * rule 6), `files`, `delegate` (rule 12: bots talk to nobody), `bots`, `daily`, `routines` or the approvals admin. Every
- * bot also gets the approval hook and `tool_search`, so a preset's guarded deletes stay guarded.
+ * bot also gets the approval hook and `tool_search`, so a preset's guarded deletes stay guarded. No preset writes the
+ * owner's domain data (tasks are read-only; health, ledger and splits are not offered), which is what makes a bot with `web`
+ * acceptable: what a page talks it into can reach only its own memory scope and the PDFs and numbers `documents` makes.
  */
-export const BOT_PRESETS = ["tasks", "health", "ledger", "splits", "documents", "web", "memory", "codemode"] as const;
+export const BOT_PRESETS = ["tasks-read", "documents", "web", "memory", "codemode"] as const;
 
 export type BotPreset = (typeof BOT_PRESETS)[number];
 

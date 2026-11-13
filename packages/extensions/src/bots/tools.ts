@@ -2,10 +2,12 @@ import { botIdOf } from "@assistant/shared";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import type { ActionArgs, ApprovalAction } from "../approvals/service.ts";
+import * as memoryStore from "../memory/store.ts";
 import type { DomainDeps } from "../module.ts";
-import { isScheduledRun } from "../scheduled-run.ts";
+import { isScheduledRun, SCHEDULED_RUN_REFUSAL } from "../scheduled-run.ts";
 import { asDetails, text } from "../tool-support.ts";
 import { decide, type TrustLevel } from "../trust.ts";
+import * as usageStore from "../usage/store.ts";
 import { BOT_PRESETS, type BotSpec, BotSpecError, cleanSpec, MAX_BOTS, MAX_SOUL_CHARS } from "./presets.ts";
 import * as store from "./store.ts";
 
@@ -32,9 +34,11 @@ function requireBots(deps: Deps): BotsDeps {
 	return deps.bots;
 }
 
-function specFromArgs(args: ActionArgs): BotSpec {
-	const { slug, name, avatar, soul, tools } = args;
+function specFromArgs(args: ActionArgs): { spec: BotSpec; callId: string } {
+	const { slug, name, avatar, soul, tools, callId } = args;
 	if (
+		typeof callId !== "string" ||
+		callId === "" ||
 		typeof slug !== "string" ||
 		typeof name !== "string" ||
 		typeof avatar !== "string" ||
@@ -44,7 +48,7 @@ function specFromArgs(args: ActionArgs): BotSpec {
 	) {
 		throw new Error("This request is damaged: it does not say which bot to create. Ask the assistant to ask again.");
 	}
-	return cleanSpec({ slug, name, avatar, soul, tools });
+	return { spec: cleanSpec({ slug, name, avatar, soul, tools }), callId };
 }
 
 /** Create the bot: the row first (authoritative), then its conversation. Safe to run twice. */
@@ -70,6 +74,9 @@ async function deleteBot(deps: Deps, slug: string): Promise<string> {
 	const known = store.getBot(deps.db, slug);
 	store.deleteBot(deps.db, slug);
 	await bots.retire(slug);
+	// A later bot with the same slug starts clean: nothing the old one kept, and no weekly limit set for it.
+	memoryStore.deleteScope(deps.db, botIdOf(slug));
+	usageStore.setLimit(deps.db, botIdOf(slug), null, deps.now());
 	return known === undefined
 		? `There is no bot ${botIdOf(slug)} any more.`
 		: `Deleted the bot ${known.name} (${botIdOf(slug)}). Its conversation is archived, not erased.`;
@@ -82,7 +89,10 @@ export function createBotActions(deps: Deps): ApprovalAction[] {
 			tool: CREATE_BOT_ACTION,
 			proposeTool: "create_bot",
 			target: (args) => `bot:${String(args.slug)}`,
-			run: (args) => createBot(deps, specFromArgs(args), "owner", String(args.callId ?? "")),
+			run: (args) => {
+				const { spec, callId } = specFromArgs(args);
+				return createBot(deps, spec, "owner", callId);
+			},
 		},
 		{
 			tool: DELETE_BOT_ACTION,
@@ -93,9 +103,6 @@ export function createBotActions(deps: Deps): ApprovalAction[] {
 	];
 }
 
-const SCHEDULED_REFUSAL =
-	"Refused: bots cannot be created or deleted during a scheduled run (a daily job or a routine). Tell the owner, and do it when they ask you directly.";
-
 /** `create_bot`, `delete_bot` and `list_bots`: the PA's alone (PLAN upgrade §4). */
 export function createBotTools(deps: Deps) {
 	const { db } = deps;
@@ -104,15 +111,19 @@ export function createBotTools(deps: Deps) {
 	async function lifecycle(
 		tool: string,
 		api: ToolExecutionApi,
-		act: () => Promise<{ output: string; details?: ReturnType<typeof asDetails> }>,
+		act: (resumed: boolean) => Promise<{ output: string; details?: ReturnType<typeof asDetails> }>,
 	) {
 		const earlier = store.findCall(db, api.callId);
-		if (earlier !== undefined) return { output: text(earlier) };
+		if (earlier !== undefined && earlier !== "") return { output: text(earlier) };
+		// `""`: this call began an open-mode change and the process stopped before it answered. Rule 13 passed then.
+		const resumed = earlier === "";
 		const bots = requireBots(deps);
-		const conversationId = Number(api.conversationId);
-		const scheduled = await (bots.isScheduledRun ?? ((id) => isScheduledRun(deps.harness(), id)))(conversationId);
-		if (scheduled) throw new Error(SCHEDULED_REFUSAL);
-		const result = await act();
+		if (!resumed) {
+			const conversationId = Number(api.conversationId);
+			const scheduled = await (bots.isScheduledRun ?? ((id) => isScheduledRun(deps.harness(), id)))(conversationId);
+			if (scheduled) throw new Error(SCHEDULED_RUN_REFUSAL);
+		}
+		const result = await act(resumed);
 		store.recordCall(db, api.callId, tool, result.output, api.now());
 		return { output: text(result.output), ...(result.details === undefined ? {} : { details: result.details }) };
 	}
@@ -165,18 +176,20 @@ export function createBotTools(deps: Deps) {
 					if (error instanceof BotSpecError) throw new Error(error.message);
 					throw error;
 				}
-				if (store.getBot(db, spec.slug) !== undefined) {
+				const existing = store.getBot(db, spec.slug);
+				if (existing !== undefined && existing.callId !== api.callId) {
 					throw new Error(
 						`There is already a bot ${botIdOf(spec.slug)}. Choose another slug, or delete that one first.`,
 					);
 				}
-				if (store.countBots(db) >= MAX_BOTS) {
+				if (existing === undefined && store.countBots(db) >= MAX_BOTS) {
 					throw new Error(`There are already ${MAX_BOTS} bots, the most there can be. Delete one first.`);
 				}
 				const verdict = decide(requireBots(deps).trustLevel, "bot_lifecycle");
 				if (verdict === "deny") throw new Error("The owner's trust setting does not allow creating bots.");
 				if (verdict === "allow") {
 					deps.warn?.(`[bots] creating ${botIdOf(spec.slug)} without asking: the PA's trust level is open.`);
+					store.beginCall(db, api.callId, "create_bot", api.now());
 					return { output: await createBot(deps, spec, "open", api.callId) };
 				}
 				return askOwner(
@@ -196,14 +209,17 @@ export function createBotTools(deps: Deps) {
 		replay: "safe",
 		deferred: true,
 		execute: (args, api) =>
-			lifecycle("delete_bot", api, async () => {
+			lifecycle("delete_bot", api, async (resumed) => {
 				const slug = args.slug.trim().toLowerCase().replace(/^bot:/, "");
 				const bot = store.getBot(db, slug);
+				// A replay of a delete this call already began: finish it (every step is idempotent).
+				if (bot === undefined && resumed) return { output: await deleteBot(deps, slug) };
 				if (bot === undefined) throw new Error(`There is no bot '${slug.slice(0, 40)}'. list_bots shows them.`);
 				const verdict = decide(requireBots(deps).trustLevel, "bot_lifecycle");
 				if (verdict === "deny") throw new Error("The owner's trust setting does not allow deleting bots.");
 				if (verdict === "allow") {
 					deps.warn?.(`[bots] deleting ${botIdOf(slug)} without asking: the PA's trust level is open.`);
+					store.beginCall(db, api.callId, "delete_bot", api.now());
 					return { output: await deleteBot(deps, slug) };
 				}
 				return askOwner(
