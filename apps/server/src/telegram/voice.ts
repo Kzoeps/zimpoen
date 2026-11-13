@@ -28,10 +28,24 @@ export const MAX_TRANSCRIPT_CHARS = 8000;
 export const TRANSCRIPT_LABEL = "[Voice note transcript]";
 
 export class VoiceError extends Error {
-	constructor(message: string) {
+	/** What the program said (its stderr), for the server log only; never sent to the chat. */
+	readonly detail: string;
+	constructor(message: string, detail = "") {
 		super(message);
 		this.name = "VoiceError";
+		this.detail = detail;
 	}
+}
+
+function stderrOf(error: unknown): string {
+	const stderr = (error as { stderr?: unknown }).stderr;
+	const text =
+		typeof stderr === "string" && stderr.trim() !== ""
+			? stderr
+			: error instanceof Error
+				? error.message
+				: String(error);
+	return text.replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
 export const execRunner: Runner = (file, args, options) =>
@@ -46,7 +60,8 @@ export const execRunner: Runner = (file, args, options) =>
 				env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
 				...(options.signal === undefined ? {} : { signal: options.signal }),
 			},
-			(error, stdout) => (error ? reject(error) : resolve({ stdout: String(stdout) })),
+			(error, stdout, stderr) =>
+				error ? reject(Object.assign(error, { stderr: String(stderr) })) : resolve({ stdout: String(stdout) }),
 		);
 	});
 
@@ -74,6 +89,12 @@ export function createTranscriber(options: {
 						"-loglevel",
 						"error",
 						"-y",
+						// Fixed input format and protocols: ffmpeg must not probe a crafted file into a playlist that reads other local
+						// files or URLs. Telegram voice notes are always Ogg/Opus.
+						"-protocol_whitelist",
+						"file",
+						"-f",
+						"ogg",
 						"-i",
 						input,
 						"-t",
@@ -90,8 +111,8 @@ export function createTranscriber(options: {
 					],
 					{ timeoutMs: 60_000, ...(signal === undefined ? {} : { signal }) },
 				);
-			} catch {
-				throw new VoiceError("The voice note could not be converted (is ffmpeg installed?).");
+			} catch (error) {
+				throw new VoiceError("The voice note could not be converted (is ffmpeg installed?).", stderrOf(error));
 			}
 			let stdout: string;
 			try {
@@ -100,9 +121,10 @@ export function createTranscriber(options: {
 					["-m", options.whisper.model, "-f", wav, "--no-timestamps", "--no-prints", "--language", "auto"],
 					{ timeoutMs: 5 * 60_000, ...(signal === undefined ? {} : { signal }) },
 				));
-			} catch {
+			} catch (error) {
 				throw new VoiceError(
 					"whisper.cpp could not transcribe the voice note. Check ZIMPOEN_WHISPER_BIN and ZIMPOEN_WHISPER_MODEL.",
+					stderrOf(error),
 				);
 			}
 			return stdout.replace(/\s+/g, " ").trim().slice(0, MAX_TRANSCRIPT_CHARS);

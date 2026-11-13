@@ -27,7 +27,9 @@ export type TelegramBridgeOptions = {
 	logger?: BridgeLogger;
 	/** Seconds one getUpdates call waits for news. */
 	pollSeconds?: number;
-	/** Waits between failed polls; tests pass a fast one. */
+	/** First wait before resending a reply that failed (doubles each time). Default 2 s. */
+	retryMs?: number;
+	/** Waits between failed polls and sends; tests pass a fast one. */
 	sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 };
 
@@ -44,6 +46,8 @@ export type TelegramBridge = {
 /** The longest message passed on to the PA, as the web composer allows. */
 const MAX_CONTENT_CHARS = 20_000;
 const MAX_BACKOFF_MS = 60_000;
+/** Tries to send one reply before leaving it for the next start. */
+const DELIVERY_ATTEMPTS = 5;
 
 const defaultSleep = (ms: number, signal: AbortSignal): Promise<void> =>
 	new Promise((resolve) => {
@@ -65,6 +69,7 @@ export function createTelegramBridge(options: TelegramBridgeOptions): TelegramBr
 	const logger = options.logger ?? console;
 	const pollSeconds = options.pollSeconds ?? 30;
 	const sleep = options.sleep ?? defaultSleep;
+	const retryMs = options.retryMs ?? 2000;
 	const stop = new AbortController();
 	let loop: Promise<void> | undefined;
 
@@ -82,17 +87,42 @@ export function createTelegramBridge(options: TelegramBridgeOptions): TelegramBr
 		for (const piece of chunk(text)) await client.sendMessage(chatId, piece);
 	}
 
-	/** Send the reply to `row` once its run ends, at most once. */
+	/**
+	 * Send the reply to `row` once its run ends. A send that failed before any piece went out is released and retried
+	 * with backoff (then left `waiting` for the next start); once a piece went out, the row stays claimed, so a crash or
+	 * failure mid-reply never sends the start twice.
+	 */
 	async function deliver(row: Omit<store.ReplyRow, "status">): Promise<void> {
+		let text: string;
 		try {
-			const text = await pa.reply(row.submissionId);
-			if (stop.signal.aborted || !store.claimReply(db, row.updateId)) return;
-			await say(row.chatId, text.trim() === "" ? "(The assistant finished without a written reply.)" : text);
-			store.markSent(db, row.updateId);
+			text = await pa.reply(row.submissionId);
 		} catch (error) {
 			// Closing ends the wait; the row stays `waiting` and the next start delivers it.
-			if (stop.signal.aborted) return;
-			logger.warn(`[telegram] could not send the reply to update ${row.updateId}: ${reason(error)}`);
+			if (!stop.signal.aborted) logger.warn(`[telegram] no reply for update ${row.updateId}: ${reason(error)}`);
+			return;
+		}
+		const pieces = chunk(text.trim() === "" ? "(The assistant finished without a written reply.)" : text);
+		for (let attempt = 0; attempt < DELIVERY_ATTEMPTS; attempt++) {
+			if (stop.signal.aborted || !store.claimReply(db, row.updateId)) return;
+			let sent = 0;
+			try {
+				for (const piece of pieces) {
+					await client.sendMessage(row.chatId, piece);
+					sent++;
+				}
+				store.markSent(db, row.updateId);
+				return;
+			} catch (error) {
+				if (sent > 0) {
+					logger.warn(`[telegram] reply to update ${row.updateId} broke off after ${sent} piece(s): ${reason(error)}`);
+					return;
+				}
+				store.releaseReply(db, row.updateId);
+				logger.warn(
+					`[telegram] could not send the reply to update ${row.updateId} (attempt ${attempt + 1}): ${reason(error)}`,
+				);
+				await sleep(retryMs * 2 ** attempt, stop.signal);
+			}
 		}
 	}
 
@@ -105,7 +135,11 @@ export function createTelegramBridge(options: TelegramBridgeOptions): TelegramBr
 	}
 
 	async function contentOf(message: TelegramMessage, chatId: number): Promise<string | undefined> {
-		const voice = message.voice ?? message.audio;
+		if (message.audio !== undefined) {
+			await say(chatId, "Send it as a voice note (hold the mic button); audio files are not transcribed.");
+			return undefined;
+		}
+		const voice = message.voice;
 		if (voice !== undefined) {
 			if (options.transcribe === undefined) {
 				await say(chatId, "Voice notes are off. Set ZIMPOEN_WHISPER_BIN and ZIMPOEN_WHISPER_MODEL and restart.");
@@ -126,12 +160,20 @@ export function createTelegramBridge(options: TelegramBridgeOptions): TelegramBr
 			} catch (error) {
 				if (stop.signal.aborted) throw error;
 				await say(chatId, error instanceof VoiceError ? error.message : "The voice note could not be fetched.");
-				logger.warn(`[telegram] voice note failed: ${reason(error)}`);
+				logger.warn(
+					`[telegram] voice note failed: ${reason(error)}${error instanceof VoiceError && error.detail ? ` (${error.detail})` : ""}`,
+				);
 				return undefined;
 			}
 		}
 		const text = message.text?.trim();
 		if (text === undefined || text === "") return undefined;
+		if (text.length > MAX_CONTENT_CHARS) {
+			await say(
+				chatId,
+				`That message was longer than ${MAX_CONTENT_CHARS} characters; only the first ${MAX_CONTENT_CHARS} were passed on.`,
+			);
+		}
 		return text.slice(0, MAX_CONTENT_CHARS);
 	}
 
@@ -158,6 +200,15 @@ export function createTelegramBridge(options: TelegramBridgeOptions): TelegramBr
 		void deliver(row);
 	}
 
+	/** Tell the bound owner (only) that their message was not passed on, so they can resend it. Never throws. */
+	async function tellFailed(update: TelegramUpdate): Promise<void> {
+		const bound = store.getBoundChat(db);
+		if (bound === undefined || update.message?.chat.id !== bound) return;
+		await say(bound, "Sorry, I could not pass that on to Zimpoen. Please send it again.").catch((error: unknown) =>
+			logger.warn(`[telegram] could not say so: ${reason(error)}`),
+		);
+	}
+
 	async function poll(): Promise<void> {
 		let backoff = 1000;
 		while (!stop.signal.aborted) {
@@ -180,6 +231,7 @@ export function createTelegramBridge(options: TelegramBridgeOptions): TelegramBr
 					if (stop.signal.aborted) return;
 					// The update is passed over rather than retried forever; the owner sees no reply and can resend.
 					logger.error(`[telegram] update ${update.update_id} failed: ${reason(error)}`);
+					await tellFailed(update);
 				}
 				store.setOffset(db, update.update_id + 1);
 			}

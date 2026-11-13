@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AppDb, migrate, openAppDb } from "@assistant/db";
@@ -8,7 +8,7 @@ import { createTelegramBridge, type PaGateway } from "../src/telegram/bridge.ts"
 import { chunk, type TelegramClient, type TelegramUpdate } from "../src/telegram/client.ts";
 import { readTelegramToken } from "../src/telegram/setup.ts";
 import { telegramMigrations } from "../src/telegram/store.ts";
-import { createTranscriber, type Runner, TRANSCRIPT_LABEL } from "../src/telegram/voice.ts";
+import { createTranscriber, type Runner, TRANSCRIPT_LABEL, VoiceError } from "../src/telegram/voice.ts";
 import { setup } from "./domain-support.ts";
 import { removeAllFixtures, waitFor } from "./support.ts";
 
@@ -171,6 +171,9 @@ describe("telegram messages", () => {
 		release("late"); // the run ended after shutdown: nothing is sent by the closed bridge
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		expect(sent.map((s) => s.text)).not.toContain("late");
+		expect(db.get<{ status: string }>("SELECT status FROM telegram_reply WHERE update_id = 21")?.status).toBe(
+			"waiting",
+		);
 
 		offsets = [];
 		const second = createTelegramBridge({
@@ -186,6 +189,87 @@ describe("telegram messages", () => {
 	});
 });
 
+describe("telegram failures", () => {
+	it("retries a reply whose send failed before any piece went out", async () => {
+		const db = await tempDb();
+		const { client, sent } = fakeClient();
+		const { pa } = fakePa("hello back");
+		const send = client.sendMessage;
+		let failures = 2;
+		client.sendMessage = async (chatId, text) => {
+			if (text === "hello back" && failures-- > 0) throw new Error("429");
+			await send(chatId, text);
+		};
+		const bridge = createTelegramBridge({ db, client, pa, logger: quiet, retryMs: 1, sleep: async () => {} });
+		await bridge.handle(message(1, OWNER, { text: `/start ${bridge.startCode()}` }));
+		await bridge.handle(message(2, OWNER, { text: "hi" }));
+		await waitFor(() => sent.some((s) => s.text === "hello back"), { what: "the retried reply" });
+		expect(sent.filter((s) => s.text === "hello back")).toHaveLength(1);
+		expect(db.get<{ status: string }>("SELECT status FROM telegram_reply")?.status).toBe("sent");
+	});
+
+	it("tells the owner when a message could not be passed on, and polls on", async () => {
+		const db = await tempDb();
+		const { client, sent } = fakeClient();
+		const batches: TelegramUpdate[][] = [];
+		const offsets: number[] = [];
+		client.getUpdates = async (offset, _t, signal) => {
+			offsets.push(offset);
+			const next = batches.shift();
+			if (next !== undefined) return next;
+			await new Promise((resolve) => signal?.addEventListener("abort", resolve));
+			return [];
+		};
+		const pa: PaGateway = {
+			send: async () => {
+				throw new Error("The PA has no conversation yet.");
+			},
+			reply: async () => "",
+		};
+		const bridge = createTelegramBridge({ db, client, pa, logger: quiet });
+		batches.push([message(1, OWNER, { text: `/start ${bridge.startCode()}` }), message(2, OWNER, { text: "hi" })]);
+		bridge.start();
+		await waitFor(() => offsets.length === 2, { what: "the next poll" });
+		await bridge.close();
+		expect(sent.at(-1)?.text).toMatch(/send it again/);
+		expect(offsets).toEqual([0, 3]);
+	});
+
+	it("a redelivered update after a crash before its reply row reaches the PA once and replies once", async () => {
+		const db = await tempDb();
+		const { client, sent } = fakeClient();
+		const requests = new Map<string, number>();
+		const pa: PaGateway = {
+			// Durable dedups by requestId: the same id returns the same submission.
+			async send(_content, requestId) {
+				if (!requests.has(requestId)) requests.set(requestId, requests.size + 1);
+				return { submissionId: requests.get(requestId) as number, approved: false };
+			},
+			reply: async (id) => `reply ${id}`,
+		};
+		const crashing = createTelegramBridge({ db, client, pa, logger: quiet });
+		await crashing.handle(message(1, OWNER, { text: `/start ${crashing.startCode()}` }));
+		// The crash: send happened, but no reply row was written and the offset was not saved.
+		await pa.send("hi", "tg:2");
+		expect(db.get("SELECT * FROM telegram_reply")).toBeUndefined();
+
+		const restarted = createTelegramBridge({ db, client, pa, logger: quiet });
+		await restarted.handle(message(2, OWNER, { text: "hi" }));
+		await waitFor(() => sent.some((s) => s.text === "reply 1"), { what: "the reply" });
+		expect(requests.size).toBe(1);
+		expect(sent.filter((s) => s.text === "reply 1")).toHaveLength(1);
+	});
+
+	it("says when a long message was cut, and asks for audio files as voice notes", async () => {
+		const { bridge, sent, sends } = await boundBridge();
+		await bridge.handle(message(3, OWNER, { text: "x".repeat(20_001) }));
+		expect(sends[0]?.content).toHaveLength(20_000);
+		expect(sent[0]?.text).toMatch(/only the first 20000/);
+		await bridge.handle(message(4, OWNER, { audio: { file_id: "f", duration: 3 } }));
+		expect(sends).toHaveLength(1);
+	});
+});
+
 describe("telegram voice", () => {
 	it("runs ffmpeg then whisper-cli with fixed argv and returns the trimmed text", async () => {
 		const calls: Array<{ file: string; args: readonly string[] }> = [];
@@ -197,7 +281,22 @@ describe("telegram voice", () => {
 		expect(await transcribe(new Uint8Array([1]))).toBe("Hello there.");
 		expect(calls.map((c) => c.file)).toEqual(["ffmpeg", "/opt/whisper-cli"]);
 		expect(calls[0]?.args).toEqual(expect.arrayContaining(["-ar", "16000", "-ac", "1"]));
+		expect(calls[0]?.args.slice(4, 9)).toEqual(["-protocol_whitelist", "file", "-f", "ogg", "-i"]);
 		expect(calls[1]?.args.slice(0, 2)).toEqual(["-m", "/opt/ggml-base.bin"]);
+	});
+});
+
+describe("telegram voice errors", () => {
+	it("keeps whisper's stderr for the log, not the error text", async () => {
+		const run: Runner = async (file) => {
+			if (file === "ffmpeg") return { stdout: "" };
+			throw Object.assign(new Error("exit 127"), { stderr: "libcuda.so: cannot open shared object file" });
+		};
+		const transcribe = createTranscriber({ whisper: { bin: "/w", model: "/m" }, run });
+		const error = await transcribe(new Uint8Array([1])).catch((e: unknown) => e);
+		expect(error).toBeInstanceOf(VoiceError);
+		expect((error as VoiceError).message).not.toMatch(/libcuda/);
+		expect((error as VoiceError).detail).toMatch(/libcuda/);
 	});
 });
 
@@ -223,7 +322,13 @@ describe("telegram config", () => {
 		await writeFile(path, JSON.stringify({ token: "nope" }));
 		await expect(readTelegramToken(path)).rejects.toThrow(/no bot token/);
 		await writeFile(path, JSON.stringify({ token: "123:abcdefghijklmnopqrstuvwxyz" }));
-		expect(await readTelegramToken(path)).toBe("123:abcdefghijklmnopqrstuvwxyz");
+		await chmod(path, 0o644);
+		const warnings: string[] = [];
+		expect(await readTelegramToken(path, { warn: (line: string) => void warnings.push(line) })).toBe(
+			"123:abcdefghijklmnopqrstuvwxyz",
+		);
+		expect((await stat(path)).mode & 0o777).toBe(0o600);
+		expect(warnings[0]).toMatch(/0600/);
 	});
 });
 

@@ -96,6 +96,11 @@ export function claimReply(db: AppDb, updateId: number): boolean {
 	);
 }
 
+/** Undo a claim whose send failed before any piece went out, so it can be tried again. */
+export function releaseReply(db: AppDb, updateId: number): void {
+	db.run("UPDATE telegram_reply SET status = 'waiting' WHERE update_id = ? AND status = 'sending'", updateId);
+}
+
 export function markSent(db: AppDb, updateId: number): void {
 	db.run("UPDATE telegram_reply SET status = 'sent' WHERE update_id = ?", updateId);
 }

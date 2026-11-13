@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { chmod, readFile, stat } from "node:fs/promises";
 import { type AppDb, getAgentRow } from "@assistant/db";
 import { type ApprovalService, answerTextOf } from "@assistant/extensions";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -12,13 +12,18 @@ import { createTranscriber, type Runner } from "./voice.ts";
 export { telegramMigrations } from "./store.ts";
 
 /** Read `<data>/secrets/telegram.json`. Throws a message that says what to put there. */
-export async function readTelegramToken(path: string): Promise<string> {
+export async function readTelegramToken(path: string, logger?: Pick<Console, "warn">): Promise<string> {
 	const hint = `Put {"token": "<bot token from @BotFather>"} in ${path} (mode 0600), or set ZIMPOEN_TELEGRAM=off.`;
 	let raw: string;
 	try {
 		raw = await readFile(path, "utf8");
 	} catch {
 		throw new Error(`ZIMPOEN_TELEGRAM=on but ${path} cannot be read. ${hint}`);
+	}
+	// PLAN rule 9: secret files are 0600. A loosely copied one is tightened, as the other secret readers do.
+	if (((await stat(path)).mode & 0o077) !== 0) {
+		await chmod(path, 0o600);
+		logger?.warn(`[telegram] ${path} was readable by other users; restricted it to its owner (0600).`);
 	}
 	let token: unknown;
 	try {
@@ -80,7 +85,7 @@ export async function startTelegram(
 	options: TelegramSetupOptions,
 ): Promise<TelegramBridge | undefined> {
 	if (!config.telegram.enabled) return undefined;
-	const token = await readTelegramToken(config.paths.telegram);
+	const token = await readTelegramToken(config.paths.telegram, options.logger);
 	const whisper = config.telegram.whisper;
 	const bridge = createTelegramBridge({
 		db: options.db,
