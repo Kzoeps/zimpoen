@@ -145,5 +145,14 @@ describe("CTO agent through the whole server", () => {
 		expect(stored?.extensions).toStrictEqual(["profile", "cto", "approvals", "tool-search"]);
 		expect(stored?.instructions).toContain("only through the PA");
 		expect(h.logs.join("\n")).toContain("[cto] on: repos zimpoen, trust normal");
+
+		// Hub and spoke: the owner's message to the CTO's own thread is refused; the PA is the way in.
+		const sent = await fetch(`${base(server)}/api/conversations/${cto?.conversationId}/messages`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ content: "build it", requestId: "owner-1" }),
+		});
+		expect(sent.status).toBe(403);
+		expect(((await sent.json()) as { error: { message: string } }).error.message).toContain("through the assistant");
 	});
 });

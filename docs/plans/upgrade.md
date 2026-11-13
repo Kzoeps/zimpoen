@@ -152,6 +152,9 @@ interface CredBroker {
 - Rule 13: refused in a scheduled run unless `ZIMPOEN_CTO_TRUST=open`. `isScheduledRequest` now also treats an
   `ask:<call id>` input (the question in the asked agent's thread) as scheduled when the PA asked from a scheduled run,
   or when its `delegate_ask` row is missing. This also applies to bots.
+- Hub and spoke for owner input: `POST /conversations/:id/messages` refuses (403) a message to the CTO's thread; a bare
+  YES there still answers its approval requests. The CTO stays visible in the sidebar so its cards and approvals can be read.
+- Depends on herdr-lead adding `hc-board create --key …` before `ZIMPOEN_CTO=on` is usable on a real host.
 - `board_status` reads only cards the CTO opened; board text is clipped and labelled as information.
 - Push/merge/deploy stay `cred_run` broker actions (unchanged): `merge_main`/`deploy_prod` ask under Normal. The approval
   card lands in the CTO's thread; the PA is told to relay it.

@@ -364,7 +364,8 @@ herdr-lead (module `packages/extensions/src/cto/`, server side `apps/server/src/
 - **Rule 8:** `cto_card` keyed by tool call id; the board call carries the same id as `--key`.
 - **Rule 13:** `delegate_coding` refuses in a scheduled run (including an `ask_agent` question the PA asked from one)
   unless the CTO's trust is `open`.
-- **Hub and spoke:** no `ask_agent`; the PA asks it with `ask_agent cto`. Push, merge and deploy are `cred_run` broker
+- **Hub and spoke:** no `ask_agent`; the PA asks it with `ask_agent cto`. The owner's messages to its thread are refused
+  (403), except a bare YES answering one of its approval requests. Push, merge and deploy are `cred_run` broker
   actions (§5.7).
 
 ## 6. Web
