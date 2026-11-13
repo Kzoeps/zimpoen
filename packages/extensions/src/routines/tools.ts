@@ -4,7 +4,7 @@ import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { ActionArgs, ApprovalAction } from "../approvals/service.ts";
 import { TIME_OF_DAY } from "../daily/occurrence.ts";
 import type { DomainDeps } from "../module.ts";
-import { isScheduledRun, SCHEDULED_RUN_REFUSAL } from "../scheduled-run.ts";
+import { runIsScheduled, SCHEDULED_RUN_REFUSAL } from "../scheduled-run.ts";
 import { formatLocal } from "../time.ts";
 import type { TimerScheduler } from "../timers.ts";
 import { asDetails, oneLine, text } from "../tool-support.ts";
@@ -31,7 +31,7 @@ const MAX_MESSAGE_CHARS = 4000;
 const CREATE_TOOL = "create_routine";
 const PROPOSE_TOOL = "propose_routine";
 
-type Deps = Pick<DomainDeps, "db" | "timezone" | "harness" | "approvals">;
+type Deps = Pick<DomainDeps, "db" | "timezone" | "harness" | "approvals" | "runRequestIds">;
 
 /** One routine as the model reads it. */
 export function describeRoutine(row: store.RoutineRow, timezone: string): string {
@@ -156,9 +156,7 @@ export function createRoutineTools(deps: Deps, scheduler: () => TimerScheduler):
 	const { db, timezone } = deps;
 
 	const refusal = async (conversationId: number) =>
-		(await isScheduledRun(deps.harness(), conversationId))
-			? { output: text(SCHEDULED_RUN_REFUSAL), isError: true }
-			: undefined;
+		(await runIsScheduled(deps, conversationId)) ? { output: text(SCHEDULED_RUN_REFUSAL), isError: true } : undefined;
 
 	const scheduleParams = {
 		title: Type.String({

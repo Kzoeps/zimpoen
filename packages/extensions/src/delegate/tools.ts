@@ -24,10 +24,11 @@ import {
 import { getBot } from "../bots/store.ts";
 import { clip, safeText } from "../inbox/text.ts";
 import { conversationIdOf, DEFAULT_ASK_TIMEOUT_MS, type DomainDeps } from "../module.ts";
+import { AGENT_ANSWER_REQUEST_PREFIX, runIsScheduled } from "../scheduled-run.ts";
 import { asDetails, oneLine, text } from "../tool-support.ts";
 import * as store from "./store.ts";
 
-type Deps = Pick<DomainDeps, "db" | "now" | "harness" | "post" | "ask" | "notify" | "delegate">;
+type Deps = Pick<DomainDeps, "db" | "now" | "harness" | "post" | "ask" | "notify" | "delegate" | "runRequestIds">;
 
 /** How a question starts in the other agent's thread. The specialists' instructions name these words. */
 export const ASK_HEAD = "Question from the assistant (the PA)";
@@ -108,7 +109,7 @@ export function createDelegateService(deps: Deps): DelegateService {
 				await deps.post(row.conversationId, {
 					kind: LATE_ANSWER_ENTRY_KIND,
 					data: data as unknown as JsonValue,
-					requestId: `agent-answer:${row.id}`,
+					requestId: `${AGENT_ANSWER_REQUEST_PREFIX}${row.id}`,
 				});
 				await deps.notify({
 					title: "Zimpoen",
@@ -124,7 +125,7 @@ export function createDelegateService(deps: Deps): DelegateService {
 				await deps.post(row.conversationId, {
 					kind: NOTICE_ENTRY_KIND,
 					data: data as unknown as JsonValue,
-					requestId: `agent-answer:${row.id}`,
+					requestId: `${AGENT_ANSWER_REQUEST_PREFIX}${row.id}`,
 				});
 			}
 			store.markPosted(db, row.id, deps.now());
@@ -211,6 +212,9 @@ export function createDelegateTools(deps: Deps, service: DelegateService): ToolR
 			const target = getAgentRow(db, agent)?.conversationId;
 			if (target === undefined) throw new Error(`The ${agentName(db, agent)} has no conversation yet.`);
 
+			// Rule 13: an ask from a scheduled (or unknown) run marks its answer's run as scheduled, so the answer cannot be used
+			// to do what the scheduled run itself may not. A replayed call keeps the first row's value.
+			const scheduled = await runIsScheduled(deps, Number(api.conversationId));
 			const row = store.insertAsk(db, {
 				id: newAskId(),
 				callId: api.callId,
@@ -218,6 +222,7 @@ export function createDelegateTools(deps: Deps, service: DelegateService): ToolR
 				agent,
 				question,
 				requestId: `ask:${api.callId}`,
+				scheduled,
 				now: api.now(),
 			});
 			if (row.status !== "waiting") return finished(row);

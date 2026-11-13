@@ -350,8 +350,10 @@ export {
 	currentRunRequestIds,
 	isScheduledRequestId,
 	isScheduledRun,
+	isScheduledRunIds,
 	parseScheduledRequestId,
 	ROUTINE_REQUEST_PREFIX,
+	runIsScheduled,
 	SCHEDULED_RUN_REFUSAL,
 	type ScheduledRequest,
 } from "./scheduled-run.ts";

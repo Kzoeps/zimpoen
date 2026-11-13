@@ -1,3 +1,4 @@
+import type { AppDb } from "@assistant/db";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Harness } from "@earendil-works/pi-durable";
 import { DAILY_JOBS } from "./daily/jobs.ts";
@@ -53,15 +54,52 @@ export async function currentRunRequestIds(harness: Harness, conversationId: num
 		.map((submission) => submission.requestId ?? "");
 }
 
+/** Request id prefix of a run that posts an `ask_agent` answer into the asking thread: `agent-answer:<ask id>`. */
+export const AGENT_ANSWER_REQUEST_PREFIX = "agent-answer:";
+
 /**
- * Rule 13: whether the conversation is running for a scheduled run right now, i.e. one of the inputs placed in its
- * active run is a routine or daily request. Tools that create self-propagating things (routines, bots, broker actions)
- * call this and refuse when it is true, so a routine can never create or cancel routines.
+ * Whether one request id belongs to a scheduled run: a routine or daily request, or the answer to an `ask_agent` question
+ * that was asked inside a scheduled run (the `delegate_ask` row says so). An answer whose ask row is gone counts as
+ * scheduled: refusing is the safe side.
+ */
+export function isScheduledRequest(db: AppDb, requestId: string): boolean {
+	if (isScheduledRequestId(requestId)) return true;
+	if (!requestId.startsWith(AGENT_ANSWER_REQUEST_PREFIX)) return false;
+	const row = db.get<{ scheduled: number }>(
+		"SELECT scheduled FROM delegate_ask WHERE id = ?",
+		requestId.slice(AGENT_ANSWER_REQUEST_PREFIX.length),
+	);
+	return row === undefined || row.scheduled === 1;
+}
+
+/**
+ * Rule 13 over a run's request ids (from {@link currentRunRequestIds}): true when any is scheduled, and true when there are
+ * none, since then nobody can tell what started the run. The one check every guarded tool uses.
+ */
+export const isScheduledRunIds = (db: AppDb, requestIds: readonly string[]): boolean =>
+	requestIds.length === 0 || requestIds.some((id) => isScheduledRequest(db, id));
+
+/**
+ * Rule 13: whether the conversation is running for a scheduled run right now, or cannot be told apart from one. Tools that
+ * create self-propagating things (routines, bots, broker actions) refuse when it is true, so a routine can never create or
+ * cancel routines, directly or through an `ask_agent` answer.
  *
  * Conservative on purpose: an owner message steered into a scheduled run counts as scheduled too.
  */
-export async function isScheduledRun(harness: Harness, conversationId: number): Promise<boolean> {
-	return (await currentRunRequestIds(harness, conversationId)).some(isScheduledRequestId);
+export async function isScheduledRun(harness: Harness, db: AppDb, conversationId: number): Promise<boolean> {
+	return isScheduledRunIds(db, await currentRunRequestIds(harness, conversationId));
+}
+
+/**
+ * Rule 13 for a tool: {@link isScheduledRunIds} over the run's request ids, read through `deps.runRequestIds` when set.
+ * Bots, routines, the broker and `ask_agent` all decide through this, so they agree on an unknown run (refused).
+ */
+export async function runIsScheduled(
+	deps: { db: AppDb; harness: () => Harness; runRequestIds?: (conversationId: number) => Promise<readonly string[]> },
+	conversationId: number,
+): Promise<boolean> {
+	const ids = await (deps.runRequestIds ?? ((id) => currentRunRequestIds(deps.harness(), id)))(conversationId);
+	return isScheduledRunIds(deps.db, ids);
 }
 
 /** The refusal text tools return under rule 13. */

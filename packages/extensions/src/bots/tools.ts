@@ -4,7 +4,7 @@ import { defineTool, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import type { ActionArgs, ApprovalAction } from "../approvals/service.ts";
 import * as memoryStore from "../memory/store.ts";
 import type { DomainDeps } from "../module.ts";
-import { isScheduledRun, SCHEDULED_RUN_REFUSAL } from "../scheduled-run.ts";
+import { runIsScheduled, SCHEDULED_RUN_REFUSAL } from "../scheduled-run.ts";
 import { asDetails, text } from "../tool-support.ts";
 import { decide, type TrustLevel } from "../trust.ts";
 import * as usageStore from "../usage/store.ts";
@@ -19,11 +19,11 @@ export type BotsDeps = {
 	spawn(bot: BotSpec): Promise<void>;
 	/** Archive the bot's conversation (kept in durable.sqlite) and remove its `agents` row. Idempotent. */
 	retire(slug: string): Promise<void>;
-	/** Rule 13 check, replaceable in tests. Default: {@link isScheduledRun} over the Harness. */
+	/** Rule 13 check, replaceable in tests. Default: {@link runIsScheduled}. */
 	isScheduledRun?: (conversationId: number) => Promise<boolean>;
 };
 
-type Deps = Pick<DomainDeps, "db" | "now" | "harness" | "approvals" | "bots" | "warn">;
+type Deps = Pick<DomainDeps, "db" | "now" | "harness" | "approvals" | "bots" | "warn" | "runRequestIds">;
 
 /** Approval action names: not tools the model can call. The server runs them when the owner approves. */
 export const CREATE_BOT_ACTION = "spawn_bot";
@@ -120,7 +120,7 @@ export function createBotTools(deps: Deps) {
 		const bots = requireBots(deps);
 		if (!resumed) {
 			const conversationId = Number(api.conversationId);
-			const scheduled = await (bots.isScheduledRun ?? ((id) => isScheduledRun(deps.harness(), id)))(conversationId);
+			const scheduled = await (bots.isScheduledRun ?? ((id) => runIsScheduled(deps, id)))(conversationId);
 			if (scheduled) throw new Error(SCHEDULED_RUN_REFUSAL);
 		}
 		const result = await act(resumed);

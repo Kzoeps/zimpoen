@@ -13,6 +13,8 @@ export type AskRow = {
 	status: "waiting" | "answered" | "failed";
 	answer?: string;
 	late: boolean;
+	/** Asked inside a scheduled run: the answer's run is scheduled too (rule 13). */
+	scheduled: boolean;
 	postedAt?: number;
 	createdAt: number;
 	settledAt?: number;
@@ -28,13 +30,14 @@ type AskDbRow = {
 	status: "waiting" | "answered" | "failed";
 	answer: string | null;
 	late: number;
+	scheduled: number;
 	posted_at: number | null;
 	created_at: number;
 	settled_at: number | null;
 };
 
 const COLUMNS =
-	"id, source_call_id, conversation_id, agent, question, request_id, status, answer, late, posted_at, created_at, settled_at";
+	"id, source_call_id, conversation_id, agent, question, request_id, status, answer, late, scheduled, posted_at, created_at, settled_at";
 
 function askFrom(row: AskDbRow): AskRow {
 	return {
@@ -46,6 +49,7 @@ function askFrom(row: AskDbRow): AskRow {
 		requestId: row.request_id,
 		status: row.status,
 		late: row.late === 1,
+		scheduled: row.scheduled === 1,
 		createdAt: row.created_at,
 		...(row.answer === null ? {} : { answer: row.answer }),
 		...(row.posted_at === null ? {} : { postedAt: row.posted_at }),
@@ -73,18 +77,20 @@ export function insertAsk(
 		agent: AskedAgent;
 		question: string;
 		requestId: string;
+		scheduled: boolean;
 		now: number;
 	},
 ): AskRow {
 	db.run(
-		`INSERT INTO delegate_ask (id, source_call_id, conversation_id, agent, question, request_id, status, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, 'waiting', ?) ON CONFLICT (source_call_id) DO NOTHING`,
+		`INSERT INTO delegate_ask (id, source_call_id, conversation_id, agent, question, request_id, status, scheduled, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, 'waiting', ?, ?) ON CONFLICT (source_call_id) DO NOTHING`,
 		input.id,
 		input.callId,
 		input.conversationId,
 		input.agent,
 		input.question,
 		input.requestId,
+		input.scheduled ? 1 : 0,
 		input.now,
 	);
 	const row = findByCall(db, input.callId);

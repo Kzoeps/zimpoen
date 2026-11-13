@@ -520,7 +520,7 @@ describe("cred_run tool, review hardening", () => {
 			{ project: "sandbox", credId: "gh-sandbox", action: "pr-view", params: { pr: "1" } },
 			"x",
 		);
-		expect(outputOf(result)).toMatch(/could not tell/);
+		expect(outputOf(result)).toMatch(/origin is unknown/);
 		expect(f.execs).toHaveLength(0);
 	});
 

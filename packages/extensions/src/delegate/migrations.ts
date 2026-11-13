@@ -56,4 +56,12 @@ export const delegateMigrations: readonly Migration[] = [
 			`);
 		},
 	},
+	{
+		id: "delegate/003_scheduled",
+		up: (db) => {
+			// Rule 13: an ask made inside a scheduled run (routine, daily job, or another scheduled answer) keeps that origin, so
+			// the run that posts its answer into the PA's thread is treated as scheduled too.
+			db.exec("ALTER TABLE delegate_ask ADD COLUMN scheduled INTEGER NOT NULL DEFAULT 0 CHECK (scheduled IN (0, 1));");
+		},
+	},
 ];

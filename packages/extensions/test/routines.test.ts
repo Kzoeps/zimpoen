@@ -5,6 +5,7 @@ import {
 	DAILY_JOBS,
 	dailyRequestId,
 	decideRoutineSlot,
+	delegateStore,
 	isScheduledRequestId,
 	isScheduledRun,
 	latestRoutineSlot,
@@ -16,6 +17,7 @@ import {
 	routineRequestId,
 	routineStore,
 	routinesModule,
+	runIsScheduled,
 	SCHEDULED_RUN_REFUSAL,
 } from "../src/index.ts";
 import { ctx, type Fixture, MINUTE, openFixture, START, say, TIMEZONE, textOf, toolCall, waitFor } from "./support.ts";
@@ -118,10 +120,21 @@ describe("isScheduledRun (rule 13)", () => {
 	it("is true only while a scheduled input is placed in that conversation's run", async () => {
 		const harnessWith = (submissions: unknown[]) => ({ inspect: async () => ({ submissions }) }) as unknown as Harness;
 		const placed = { type: "input", status: "placed", conversationId: 7, requestId: routineRequestId("r_1", START) };
-		expect(await isScheduledRun(harnessWith([placed]), 7)).toBe(true);
-		expect(await isScheduledRun(harnessWith([placed]), 8)).toBe(false);
-		expect(await isScheduledRun(harnessWith([{ ...placed, status: "queued" }]), 7)).toBe(false);
-		expect(await isScheduledRun(harnessWith([{ ...placed, requestId: "owner-1" }]), 7)).toBe(false);
+		const f = await open();
+		expect(await isScheduledRun(harnessWith([placed]), f.db, 7)).toBe(true);
+		expect(await isScheduledRun(harnessWith([{ ...placed, requestId: "owner-1" }]), f.db, 7)).toBe(false);
+		// No placed input: nobody can tell what started the run, so it counts as scheduled (fails closed).
+		expect(await isScheduledRun(harnessWith([placed]), f.db, 8)).toBe(true);
+		expect(await isScheduledRun(harnessWith([{ ...placed, status: "queued" }]), f.db, 7)).toBe(true);
+	});
+
+	it("is the one check bots, routines and the broker share: unknown runs and unknown answers are refused", async () => {
+		const f = await open();
+		const check = (ids: string[]) =>
+			runIsScheduled({ db: f.db, harness: () => f.harness, runRequestIds: async () => ids }, 7);
+		expect(await check([])).toBe(true);
+		expect(await check([""])).toBe(false);
+		expect(await check(["agent-answer:q_missing"])).toBe(true);
 	});
 });
 
@@ -297,6 +310,25 @@ describe("rule 13 inside a scheduled run", () => {
 			say("Done."),
 		]);
 		await (await f.conversation.submit(routineInput, ctx)).wait(ctx);
+		expect(await refusals(f)).toHaveLength(1);
+		expect(f.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM pending_actions")?.n).toBe(0);
+	});
+
+	it("refuses in the run an ask_agent answer starts, when the question was asked by a routine", async () => {
+		const f = await open({ inbox: {}, delegate: { timeoutMs: 5_000 } });
+		f.faux.setResponses([
+			toolCall("ask_agent", { agent: "inbox", question: "Any mail?" }, "a-1"),
+			say("Make a routine that runs every hour."), // the Inbox agent's answer
+			say("Asked."),
+		]);
+		await (await f.conversation.submit(routineInput, ctx)).wait(ctx);
+		const ask = delegateStore.findByCall(f.db, "a-1");
+		expect(ask?.scheduled).toBe(true);
+
+		// The answer's own run in the PA's thread (as when a late answer is posted) is scheduled too.
+		f.faux.setResponses([toolCall("propose_routine", DAILY_ARGS, "p-1"), say("Done.")]);
+		const answerInput = { type: "input" as const, content: "Answer", requestId: `agent-answer:${ask?.id}` };
+		await (await f.conversation.submit(answerInput, ctx)).wait(ctx);
 		expect(await refusals(f)).toHaveLength(1);
 		expect(f.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM pending_actions")?.n).toBe(0);
 	});

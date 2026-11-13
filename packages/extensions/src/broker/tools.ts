@@ -3,7 +3,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { ActionArgs, ApprovalAction } from "../approvals/service.ts";
 import type { DomainDeps } from "../module.ts";
-import { currentRunRequestIds, isScheduledRequestId } from "../scheduled-run.ts";
+import { currentRunRequestIds, isScheduledRunIds } from "../scheduled-run.ts";
 import { asDetails, text } from "../tool-support.ts";
 import { decide } from "../trust.ts";
 import type { AuditEvent, AuditLog } from "./audit.ts";
@@ -26,7 +26,9 @@ export type BrokerDeps = {
 /** The approval action the server carries out when the owner approves a `cred_run` that asked. No tool has this name. */
 export const CRED_EXEC_ACTION = "cred_exec";
 
-type Deps = Pick<DomainDeps, "db" | "now" | "approvals" | "harness" | "warn"> & { broker: BrokerDeps };
+type Deps = Pick<DomainDeps, "db" | "now" | "approvals" | "harness" | "warn" | "runRequestIds"> & {
+	broker: BrokerDeps;
+};
 
 type CredArgs = { project: string; credId: string; action: string; params: Record<string, string> };
 
@@ -107,7 +109,8 @@ export function createBrokerTools(deps: Deps): ToolRegistration[] {
 	const { policy, audit } = deps.broker;
 	// Fail closed: no placed input found means "cannot tell", which the tool refuses (rule 13).
 	const runRequestIds =
-		deps.broker.runRequestIds ?? ((api) => currentRunRequestIds(deps.harness(), Number(api.conversationId)));
+		deps.broker.runRequestIds ??
+		((api) => (deps.runRequestIds ?? ((id) => currentRunRequestIds(deps.harness(), id)))(Number(api.conversationId)));
 	const projects = [...policy.projects.values()].map((p) => `${p.id} (${p.trust})`).join(", ") || "none";
 	const actions = [...policy.actions.values()]
 		.map((a) => `${a.id}${a.params.size > 0 ? ` {${[...a.params.keys()].join(", ")}}` : ""} [${a.sensitivity}]`)
@@ -177,12 +180,9 @@ export function createBrokerTools(deps: Deps): ToolRegistration[] {
 			};
 
 			const requestIds = await runRequestIds(api, context);
-			if (requestIds.length === 0) {
-				return refuse("could not tell which request this run answers, so broker actions are refused. Ask the owner.");
-			}
-			if (requestIds.some(isScheduledRequestId)) {
+			if (isScheduledRunIds(db, requestIds)) {
 				return refuse(
-					"broker actions never run during a scheduled run (routine or daily job). Ask the owner in a normal conversation.",
+					"broker actions never run during a scheduled run (routine or daily job), or when the run's origin is unknown. Ask the owner in a normal conversation.",
 				);
 			}
 			// A bad request throws for the model to fix; nothing is recorded, so the corrected call is a new call.

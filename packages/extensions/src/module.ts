@@ -65,6 +65,11 @@ export type DomainDeps = {
 	bots?: BotsDeps;
 	/** The credential broker (`ZIMPOEN_CRED_BROKER=on`). Omitted: no `cred_run` tool and no broker approval action. */
 	broker?: BrokerDeps;
+	/**
+	 * The request ids of the inputs placed in a conversation's current run, for rule 13. Omitted: read from the Harness
+	 * ({@link currentRunRequestIds}). Tests replace it to run a tool as if inside an owner's message.
+	 */
+	runRequestIds?: (conversationId: number) => Promise<readonly string[]>;
 	/** Say that something failed which the work goes on without (the server logs it). Omitted: nothing is said. Never throws. */
 	warn?: (message: string) => void;
 };

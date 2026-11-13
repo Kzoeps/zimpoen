@@ -92,9 +92,14 @@ export type ApprovalService = {
 	 * waiting, and nothing else was said since it was created (a "yes" typed after another exchange may be an answer to
 	 * a different question). Returns the submission of the outcome notice, or undefined when the message is not taken
 	 * here, in which case it goes to the model like any other, and from then on no YES approves the requests that were
-	 * waiting (the buttons still do). Resending the same `requestId` returns the same notice.
+	 * waiting (the buttons still do). Resending the same `requestId` returns the same notice. `summary` is the approved
+	 * action's summary, so a channel that does not show the card (Telegram) can say what was approved.
 	 */
-	tryYes(conversationId: number, text: string, requestId: string): Promise<{ submissionId: number } | undefined>;
+	tryYes(
+		conversationId: number,
+		text: string,
+		requestId: string,
+	): Promise<{ submissionId: number; summary: string } | undefined>;
 	/**
 	 * Something other than the approval itself has just appeared in the conversation, so a bare "yes" may be the answer
 	 * to that and not to the request that is waiting: no YES approves the requests that are waiting now (the buttons
@@ -247,7 +252,7 @@ export function createApprovalService(deps: Deps): ApprovalService {
 				if (earlier !== undefined) {
 					// A retry of a message that already approved something: answer with the same notice, never the model.
 					const submissionId = earlier.noticeSubmissionId ?? (await announce(store.requireAction(db, earlier.id)));
-					return submissionId === undefined ? undefined : { submissionId };
+					return submissionId === undefined ? undefined : { submissionId, summary: earlier.summary };
 				}
 				store.expirePending(db, now());
 				const waiting = store.waitingIn(db, conversationId, now());
@@ -255,7 +260,7 @@ export function createApprovalService(deps: Deps): ApprovalService {
 				if (waiting.length === 1 && only?.yesOk) {
 					await decide(only.id, "approve", "yes", requestId);
 					const submissionId = store.requireAction(db, only.id).noticeSubmissionId;
-					if (submissionId !== undefined) return { submissionId };
+					if (submissionId !== undefined) return { submissionId, summary: only.summary };
 				}
 			}
 			store.closeYesWindow(db, conversationId);

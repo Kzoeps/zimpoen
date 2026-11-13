@@ -72,6 +72,7 @@ import {
 	type WebDeps,
 	webModule,
 } from "../src/index.ts";
+import { currentRunRequestIds } from "../src/scheduled-run.ts";
 
 export const ctx = BACKGROUND_CONTEXT;
 
@@ -278,8 +279,12 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 					...(options.inbox.sync === undefined ? {} : { sync: options.inbox.sync }),
 				};
 	let providers: readonly DailyFactsProvider[] = [];
+	// A tool called directly by a test (callTool) runs outside any Durable run; it stands for a call in an owner's message.
+	let directCalls = 0;
 	const deps: DomainDeps = {
 		db,
+		runRequestIds: async (conversationId) =>
+			directCalls > 0 ? [""] : await currentRunRequestIds(getHarness(), conversationId),
 		timezone: options.timezone ?? TIMEZONE,
 		now,
 		harness: getHarness,
@@ -385,7 +390,12 @@ export async function openFixture(options: FixtureOptions = {}): Promise<Fixture
 				now: () => clock.now,
 				env: options.env?.({ conversationId: conversation.id } as EnvTarget),
 			} as unknown as ToolExecutionApi;
-			return await tool.execute(args as never, api, ctx);
+			directCalls += 1;
+			try {
+				return await tool.execute(args as never, api, ctx);
+			} finally {
+				directCalls -= 1;
+			}
 		},
 		entries: async () => {
 			const page = await conversation.entries({ order: "ascending" }, 500, undefined, ctx);
