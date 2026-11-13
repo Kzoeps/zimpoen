@@ -31,6 +31,7 @@ import { createNotifier } from "./push/notifier.ts";
 import { createWebPushSender, type PushSender } from "./push/sender.ts";
 import { loadOrCreateVapidKeys } from "./push/vapid.ts";
 import { openRuntime, type Runtime } from "./runtime.ts";
+import { startTelegram, type TelegramSetupOptions, telegramMigrations } from "./telegram/setup.ts";
 import { createWebSetup, type WebService } from "./web.ts";
 
 export type ServerLogger = Pick<Console, "info" | "warn" | "error">;
@@ -68,6 +69,8 @@ export type StartServerOptions = {
 	delegate?: DelegateDeps;
 	/** Replaces the Chromium PDF setup, so tests can render without a browser. */
 	documents?: DocumentsDeps;
+	/** Telegram's Bot API and the ffmpeg/whisper runner, played by tests. */
+	telegram?: Pick<TelegramSetupOptions, "fetch" | "base" | "run" | "pollSeconds">;
 };
 
 /** How often sleeping tasks that came due are woken. A reminder is at most this late after a suspend or a clock step. */
@@ -164,7 +167,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			warn: (message) => logger.warn(message),
 		});
 		undo.push(() => domain.close());
-		const migrations = migrate(db, [...coreMigrations, ...domain.migrations]);
+		const migrations = migrate(db, [...coreMigrations, ...domain.migrations, ...telegramMigrations]);
 		if (migrations.applied.length > 0) logger.info(`[db] applied migrations: ${migrations.applied.join(", ")}`);
 		// A Jev key that is there and no good is told in Settings (the triage badge) as well as in the log.
 		if (triage.problem === undefined) inboxStore.clearState(db, "triage_error");
@@ -245,6 +248,15 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			hosts,
 			logger,
 		}).fetch;
+		const telegram = await startTelegram(config, {
+			harness,
+			db,
+			approvals: domain.approvals,
+			logger,
+			now,
+			...options.telegram,
+		});
+		undo.push(() => telegram?.close());
 		logger.info(`[http] listening on http://${config.http.host}:${port} (model: ${config.modelMode})`);
 		logger.info(`[http] answers to Host: ${hosts.list().join(", ")}`);
 
@@ -259,6 +271,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			close: () => {
 				stopMaintenance();
 				closing ??= (async () => {
+					await telegram?.close().catch((error: unknown) => logger.warn("[telegram] could not stop:", error));
 					await webService
 						?.close()
 						.catch((error: unknown) => logger.warn("[web] could not stop the web tools:", error));

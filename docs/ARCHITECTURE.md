@@ -39,7 +39,8 @@ subscription OAuth is not used: its consumer terms don't allow it.
 7. **Arithmetic is code, never the model:** splits, balances, totals, document numbers.
 8. **Every tool write to `app.sqlite` is idempotent by tool call id** (`source_call_id UNIQUE`, or a per-module `*_call`
    table), because Durable may replay a tool after a crash.
-9. **Secrets** (`credentials.json`, `vapid.json`, `google-oauth.json`, `google-accounts.json`, `jev.json`, `search.json`) live in
+9. **Secrets** (`credentials.json`, `vapid.json`, `google-oauth.json`, `google-accounts.json`, `jev.json`, `search.json`,
+   `telegram.json`) live in
    `<data>/secrets/` (0700, files 0600) and are never readable by an agent.
 10. **Server and web bind to `127.0.0.1` only.** Tailscale Serve is the only way in.
 11. **The web is read, public only.** The PA and the Accountant have `web_search`, `fetch_content`,
@@ -268,6 +269,24 @@ reconnecting just gets a fresh snapshot. At most 8 streams are open.
 - With `ASSISTANT_AUTH=on`, the peer must be loopback and `Tailscale-User-Login` must equal `ASSISTANT_OWNER_LOGIN`.
 - JSON bodies are capped at 256 KB.
 
+### 5.5a Telegram bridge
+
+`apps/server/src/telegram/`, off unless `ZIMPOEN_TELEGRAM=on` (off starts nothing). The bot token is
+`<data>/secrets/telegram.json` (`{ "token": "..." }`). A long poll (`getUpdates`, offset in `telegram_state`) reads
+updates. While unbound, the server logs a one-time code; `/start <code>` from a private chat binds that chat, and every
+other chat is ignored without an answer. Owner text goes to the PA as an input with request id `tg:<update_id>` (an exact
+YES goes through `tryYes`, §5.6); when the run ends, its final text is sent back in 4096-char pieces, at most once
+(`telegram_reply`, resumed after a restart). Voice notes (≤ 5 min, ≤ 10 MB) are converted by `ffmpeg` to 16 kHz mono WAV
+and transcribed by whisper.cpp's `whisper-cli` with fixed argv (`ZIMPOEN_WHISPER_BIN`, `ZIMPOEN_WHISPER_MODEL`, both or
+neither); only `[Voice note transcript] …` reaches the thread. No agent has a Telegram tool.
+
+- A Telegram YES approves the one waiting request (rule 3, same `tryYes` window as the web) without the approval card
+  being shown in Telegram: the owner approves from the chat context alone. Check the card in the web app when unsure.
+- Voice notes are transcribed inside the poll loop, so text sent during a transcription (up to ~6 min) waits for it.
+- A reply is retried with backoff when its first piece fails to send; once a piece went out it is never resent. A message
+  that could not be passed on gets a "please send it again" answer. Text over 20 000 characters is cut, with a note.
+- Open: the start code is printed to the server log and does not expire until a chat binds.
+
 ### 5.6 Approvals
 
 `pending_actions` holds one row per request: tool, target (`task:t_ab12`), args, status
@@ -318,6 +337,7 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 | documents | `document_series`, `document_numbers`, `documents_made`; the retired invoice module's `invoice_profile`, `invoice_issued`, `invoices_call` are kept |
 | inbox | `inbox_account`, `inbox_message` + FTS5, `inbox_event`, `inbox_rule`, `inbox_suggestion`, `inbox_digest`, `inbox_read_failure`, `inbox_state`, `inbox_call` |
 | delegate | `delegate_ask` |
+| telegram (server, not a module) | `telegram_state` (poll offset, bound chat, one-time start code), `telegram_reply` |
 
 Conventions:
 
