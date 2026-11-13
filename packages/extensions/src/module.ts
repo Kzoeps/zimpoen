@@ -4,6 +4,7 @@ import type { JsonValue } from "@earendil-works/chord";
 import type { ConversationId, Extension, Harness } from "@earendil-works/pi-durable";
 import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import type { ApprovalAction, ApprovalService } from "./approvals/service.ts";
+import type { BotsDeps } from "./bots/tools.ts";
 import type { DailyFactsProvider } from "./daily/facts.ts";
 import type { PdfRenderer } from "./documents/render.ts";
 import type { InboxDeps } from "./inbox/types.ts";
@@ -59,6 +60,8 @@ export type DomainDeps = {
 	delegate?: DelegateDeps;
 	/** The weekly token limits (M8). Omitted: no agent has one, and every daily job asks the model as it always did. */
 	budget?: BudgetGate;
+	/** How the PA's bots are made and retired, and the PA's trust level. Omitted: the bot tools say bots are not set up. */
+	bots?: BotsDeps;
 	/** Say that something failed which the work goes on without (the server logs it). Omitted: nothing is said. Never throws. */
 	warn?: (message: string) => void;
 };

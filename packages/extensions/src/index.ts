@@ -15,6 +15,22 @@ export {
 	type RecoveryReport,
 } from "./approvals/index.ts";
 export {
+	BOT_PRESETS,
+	BOTS_EXTENSION_NAME,
+	type BotPreset,
+	type BotSpec,
+	BotSpecError,
+	type BotsDeps,
+	botsModule,
+	botsStore,
+	CREATE_BOT_ACTION,
+	cleanBotSpec,
+	DELETE_BOT_ACTION,
+	isBotPreset,
+	MAX_BOTS,
+	MAX_SOUL_CHARS,
+} from "./bots/index.ts";
+export {
 	boundCodemodeSource,
 	type CodemodeLimits,
 	createBoundedCodemodeExtension,
@@ -283,6 +299,7 @@ export {
 export { closingYesWindow, closingYesWindowOnAsk, createEntryPoster, createInputSubmitter } from "./post.ts";
 export { createProfileExtension, PROFILE_EXTENSION_NAME, type ProfileFacts, renderProfile } from "./profile.ts";
 export { DEFAULT_SCHEDULE, MAX_SCHEDULE_MINUTES, type ScheduleSettings, scheduleOf } from "./schedule.ts";
+export { isScheduledRequestId, isScheduledRun, SCHEDULED_REQUEST_PREFIXES } from "./scheduled-run.ts";
 export {
 	type BillExtra,
 	type BillItem,
@@ -323,6 +340,15 @@ export {
 	weekdayName,
 } from "./time.ts";
 export { type ReconcileReport as TimerReconcileReport, TIMER_TASK_OPTIONS, type TimerScheduler } from "./timers.ts";
+export {
+	DEFAULT_TRUST_LEVEL,
+	decide as decideTrust,
+	isTrustLevel,
+	type Sensitivity,
+	TRUST_LEVELS,
+	type TrustDecision,
+	type TrustLevel,
+} from "./trust.ts";
 export {
 	type AgentIdentity,
 	ALERT_SAMPLE_MAX_AGE_MS,
