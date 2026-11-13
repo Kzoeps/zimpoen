@@ -1,7 +1,7 @@
 import { type AppDb, getAgentRowByConversation } from "@assistant/db";
 import {
-	type AgentId,
-	isAgentId,
+	type AnyAgentId,
+	isAnyAgentId,
 	isMemoryScope,
 	type MemoryCard,
 	type MemoryListCard,
@@ -18,9 +18,9 @@ import * as store from "./store.ts";
 type Deps = Pick<DomainDeps, "db" | "now" | "approvals">;
 
 /** The agent whose conversation this is: the scope of what it remembers. A conversation that is no agent's has none. */
-export function agentOfConversation(db: AppDb, conversationId: number): AgentId | undefined {
+export function agentOfConversation(db: AppDb, conversationId: number): AnyAgentId | undefined {
 	const id = getAgentRowByConversation(db, conversationId)?.id;
-	return id !== undefined && isAgentId(id) ? id : undefined;
+	return id !== undefined && isAnyAgentId(id) ? id : undefined;
 }
 
 const scopeName = (scope: MemoryScope): string => (scope === "shared" ? "every agent" : `the ${scope} agent`);
@@ -90,7 +90,7 @@ export const PREFERENCE_ACTION = "save_preference";
 type PreferenceProposal = {
 	text: string;
 	scope: MemoryScope;
-	agent: AgentId;
+	agent: AnyAgentId;
 	conversationId: number;
 	proposedAt: number;
 	/** The proposing tool call: the request's idempotency key, and the key of the line it makes. */
@@ -103,7 +103,7 @@ function readProposal(args: ActionArgs): PreferenceProposal {
 		typeof text !== "string" ||
 		!isMemoryScope(scope) ||
 		typeof agent !== "string" ||
-		!isAgentId(agent) ||
+		!isAnyAgentId(agent) ||
 		typeof conversationId !== "number" ||
 		typeof proposedAt !== "number" ||
 		typeof callId !== "string"
@@ -147,7 +147,7 @@ export function createMemoryTools(deps: Deps) {
 	const { db, approvals } = deps;
 
 	const proposePreference = (
-		agent: AgentId,
+		agent: AnyAgentId,
 		args: { text: string; scope?: "own" | "shared" },
 		api: ToolExecutionApi,
 	) => {

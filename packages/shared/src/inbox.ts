@@ -5,7 +5,7 @@
  * Everything here is plain JSON. Text that came from an email (a subject, a sender, a snippet) is untrusted: the server
  * cuts it to one line and a fixed length before it reaches a card, a tool result or a prompt, and the web renders it as text.
  */
-import type { AgentId } from "./agents.ts";
+import type { AgentId, BotId } from "./agents.ts";
 
 /** What a mail is, as far as the owner's attention goes. `important`, `needs_reply` and `follow_up` are what a digest is about. */
 export const TRIAGE_CATEGORIES = [
@@ -108,7 +108,7 @@ export type SuggestionToolCard = { type: "suggestion_sent"; suggestion: Suggesti
 /** What the PA's `ask_agent` got back (or: is still waiting for). */
 export type AgentAnswerCard = {
 	type: "agent_answer";
-	agent: Exclude<AgentId, "pa">;
+	agent: Exclude<AgentId, "pa"> | BotId;
 	question: string;
 	/** `pending`: the agent is still working; its answer arrives as a card of its own. */
 	status: "answered" | "pending" | "failed";
@@ -165,7 +165,7 @@ export type DelegatedEntryData = { from: AgentId; question: string; firedAt: num
 export const LATE_ANSWER_ENTRY_KIND = "app.agent-answer";
 
 export type LateAnswerEntryData = {
-	agent: Exclude<AgentId, "pa">;
+	agent: Exclude<AgentId, "pa"> | BotId;
 	question: string;
 	answer: string;
 	firedAt: number;

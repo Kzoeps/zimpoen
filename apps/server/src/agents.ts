@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { type AppDb, getAgentRow, getAgentRowByConversation, insertAgentRow } from "@assistant/db";
-import type { AgentId, AgentSummary, ParkedTask } from "@assistant/shared";
+import type { AgentSummary, AnyAgentId, ParkedTask } from "@assistant/shared";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
@@ -18,7 +18,7 @@ import type { ModelMode } from "./config.ts";
 import { FAUX_MODEL_ID, FAUX_PROVIDER_ID } from "./dev-model.ts";
 
 export type AgentDef = {
-	id: AgentId;
+	id: AnyAgentId;
 	name: string;
 	/** An emoji. */
 	avatar: string;
@@ -363,13 +363,13 @@ const AgentKeyDoc = defineDoc<{ agentId: string }>({
 });
 
 export type EnsureAgentsResult = {
-	created: AgentId[];
+	created: AnyAgentId[];
 	/** Conversations that already existed in `durable.sqlite` but had no row in `app.sqlite` (a crash between the two). */
-	adopted: AgentId[];
+	adopted: AnyAgentId[];
 	/** Existing conversations whose code-owned settings (extensions, instructions) were brought up to date. */
-	updated: AgentId[];
-	unchanged: AgentId[];
-	unavailableModels: { agentId: AgentId; model: ModelRef }[];
+	updated: AnyAgentId[];
+	unchanged: AnyAgentId[];
+	unavailableModels: { agentId: AnyAgentId; model: ModelRef }[];
 };
 
 /**

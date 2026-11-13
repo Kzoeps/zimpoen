@@ -1,7 +1,7 @@
 import { listAgentRows } from "@assistant/db";
 import type {
-	AgentId,
 	AgentUsage,
+	AnyAgentId,
 	BudgetAlert,
 	UsageDay,
 	UsageFigures,
@@ -18,7 +18,7 @@ import * as store from "./store.ts";
 type Deps = Pick<DomainDeps, "db" | "now" | "timezone" | "harness"> & Partial<Pick<DomainDeps, "warn">>;
 
 /** Who an agent is, for the pages that name it. The module does not know the agents; the server does. */
-export type AgentIdentity = { id: AgentId; name: string; avatar: string };
+export type AgentIdentity = { id: AnyAgentId; name: string; avatar: string };
 
 /** How old a sample may be for the banner, which every open tab asks for every few seconds. */
 export const ALERT_SAMPLE_MAX_AGE_MS = 30_000;

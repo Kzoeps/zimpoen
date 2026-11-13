@@ -1,6 +1,6 @@
 "use client";
 
-import type { ActivityItem, ActivityResponse, AgentId } from "@assistant/shared";
+import type { ActivityItem, ActivityResponse, AnyAgentId } from "@assistant/shared";
 import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, fetchActivity } from "../lib/api.ts";
@@ -48,7 +48,7 @@ export function ActivityView() {
 		void load(filters, false);
 	}, [filters, load]);
 
-	const named = (id: AgentId) => agents?.find((agent) => agent.id === id);
+	const named = (id: AnyAgentId) => agents?.find((agent) => agent.id === id);
 
 	return (
 		<div className="settings">

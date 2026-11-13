@@ -1,5 +1,6 @@
 import {
 	type AgentId,
+	type BotId,
 	type DailyJobId,
 	type FileCard,
 	type FollowupCard,
@@ -75,6 +76,10 @@ export const ASKED_AGENT_LABEL: Record<Exclude<AgentId, "pa">, string> = {
 	health: "the Health agent",
 	accountant: "the Accountant",
 };
+
+/** How a sentence names an agent that was asked: a built-in one by its label, a bot by its slug. */
+export const askedAgentLabel = (agent: Exclude<AgentId, "pa"> | BotId): string =>
+	agent.startsWith("bot:") ? `the ${agent.slice(4)} bot` : ASKED_AGENT_LABEL[agent as Exclude<AgentId, "pa">];
 
 export const FILE_EVENT_LABEL: Record<FileCard["event"], string> = {
 	described: "File described",
@@ -179,12 +184,12 @@ export function cardSummary(card: UiCard): string {
 		case "suggestion_sent":
 			return `Suggested to the assistant: ${card.suggestion.title}`;
 		case "agent_answer":
-			return `${card.status === "answered" ? "Answer from" : "Asked"} ${ASKED_AGENT_LABEL[card.agent]}: ${card.question}`;
+			return `${card.status === "answered" ? "Answer from" : "Asked"} ${askedAgentLabel(card.agent)}: ${card.question}`;
 		case "suggestion":
 			return `The Inbox suggests: ${card.data.title}`;
 		case "delegated":
 			return `Asked by the assistant: ${card.data.question}`;
 		case "late_answer":
-			return `Answer from ${ASKED_AGENT_LABEL[card.data.agent]}: ${card.data.question}`;
+			return `Answer from ${askedAgentLabel(card.data.agent)}: ${card.data.question}`;
 	}
 }

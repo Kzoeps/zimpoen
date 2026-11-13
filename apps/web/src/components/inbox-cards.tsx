@@ -13,7 +13,7 @@ import type {
 	TriageCategory,
 } from "@assistant/shared";
 import type { ReactNode } from "react";
-import { ASKED_AGENT_LABEL, TRIAGE_LABEL } from "../lib/card-text.ts";
+import { askedAgentLabel, TRIAGE_LABEL } from "../lib/card-text.ts";
 import type { SuggestionCardState } from "../lib/ui-messages.ts";
 
 /**
@@ -270,7 +270,7 @@ export function DelegatedView({ data }: { data: DelegatedEntryData }) {
 
 /** What `ask_agent` returned to the PA: the answer, or that the agent is still working. */
 export function AgentAnswerView({ card }: { card: AgentAnswerCard }) {
-	const who = ASKED_AGENT_LABEL[card.agent];
+	const who = askedAgentLabel(card.agent);
 	return (
 		<section className="card card--delegated" aria-label={`Question to ${who}`}>
 			<header className="card__head">
@@ -288,7 +288,7 @@ export function AgentAnswerView({ card }: { card: AgentAnswerCard }) {
 
 /** In the PA's thread: the answer of an agent the PA had stopped waiting for. */
 export function LateAnswerView({ data }: { data: LateAnswerEntryData }) {
-	const who = ASKED_AGENT_LABEL[data.agent];
+	const who = askedAgentLabel(data.agent);
 	return (
 		<section className="card card--delegated" aria-label={`Answer from ${who}`}>
 			<header className="card__head">

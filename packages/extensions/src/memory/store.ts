@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { AppDb } from "@assistant/db";
 import {
 	canPin,
-	isAgentId,
+	isAnyAgentId,
 	isMemoryScope,
 	MAX_MEMORY_CHARS,
 	type MemoryFactView,
@@ -67,7 +67,7 @@ function factFrom(row: DbRow): FactRow {
 			: {}),
 		source: row.source,
 		...(row.origin_agent !== null &&
-		isAgentId(row.origin_agent) &&
+		isAnyAgentId(row.origin_agent) &&
 		row.origin_conversation !== null &&
 		row.origin_at !== null
 			? { origin: { agent: row.origin_agent, conversationId: row.origin_conversation, at: row.origin_at } }

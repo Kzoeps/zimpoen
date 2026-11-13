@@ -4,7 +4,7 @@ import {
 	DEFAULT_ACTIVITY_PAGE,
 	DEFAULT_HISTORY_PAGE,
 	type DisconnectGoogleRequest,
-	isAgentId,
+	isAnyAgentId,
 	isMemoryKind,
 	isMemoryScope,
 	isThinkingLevel,
@@ -266,8 +266,10 @@ export type ActivityRequest = { agent?: string; from?: string; to?: string; curs
 /** `GET /api/activity?agent=&from=&to=&cursor=&limit=`. An agent that is not one is a 400, not an empty list. */
 export function parseActivityQuery(c: Context): ActivityRequest {
 	const agent = c.req.query("agent");
-	if (agent !== undefined && agent !== "all" && !isAgentId(agent)) {
-		throw invalidRequest(`'agent' must be one of pa, inbox, health, accountant or all, got '${agent.slice(0, 20)}'.`);
+	if (agent !== undefined && agent !== "all" && !isAnyAgentId(agent)) {
+		throw invalidRequest(
+			`'agent' must be one of pa, inbox, health, accountant, a bot id (bot:<slug>) or all, got '${agent.slice(0, 20)}'.`,
+		);
 	}
 	const from = c.req.query("from");
 	const to = c.req.query("to");

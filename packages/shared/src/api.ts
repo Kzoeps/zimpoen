@@ -1,5 +1,5 @@
 import type { EntryRecord } from "@earendil-works/pi-durable";
-import type { AgentId, AgentSummary } from "./agents.ts";
+import type { AgentSummary, AnyAgentId } from "./agents.ts";
 import type { BudgetHealth } from "./usage.ts";
 
 /** Longest message the composer may send, in UTF-16 code units. */
@@ -140,7 +140,7 @@ export type ModelOption = ModelSelection & {
 
 /** One agent's model and thinking level, which the owner can change at runtime. */
 export type AgentSettings = {
-	id: AgentId;
+	id: AnyAgentId;
 	name: string;
 	avatar: string;
 	/** Absent only for a conversation that never had a model chosen. */

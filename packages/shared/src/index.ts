@@ -30,7 +30,18 @@ export {
 	DEFAULT_ACTIVITY_PAGE,
 	MAX_ACTIVITY_PAGE,
 } from "./activity.ts";
-export { AGENT_IDS, type AgentId, type AgentSummary, isAgentId } from "./agents.ts";
+export {
+	AGENT_IDS,
+	type AgentId,
+	type AgentSummary,
+	type AnyAgentId,
+	BOT_SLUG_PATTERN,
+	type BotId,
+	botIdOf,
+	isAgentId,
+	isAnyAgentId,
+	isBotId,
+} from "./agents.ts";
 export {
 	type AgentSettings,
 	type AgentSettingsResponse,

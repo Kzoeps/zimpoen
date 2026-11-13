@@ -1,6 +1,6 @@
 "use client";
 
-import { isAgentId } from "@assistant/shared";
+import { isAnyAgentId } from "@assistant/shared";
 import Link from "next/link";
 import { useChat } from "./chat-context.tsx";
 import { ThreadView } from "./thread-view.tsx";
@@ -12,7 +12,7 @@ export function AgentThread({ agentId }: { agentId: string }) {
 	if (agents === undefined) {
 		return <p className="placeholder">{error ?? "Loading…"}</p>;
 	}
-	const agent = isAgentId(agentId) ? agents.find((candidate) => candidate.id === agentId) : undefined;
+	const agent = isAnyAgentId(agentId) ? agents.find((candidate) => candidate.id === agentId) : undefined;
 	if (agent === undefined) {
 		return (
 			<p className="placeholder">
