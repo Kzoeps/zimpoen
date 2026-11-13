@@ -107,9 +107,19 @@ export type Config = {
 	 * reach the server through Tailscale Serve (`ASSISTANT_PUBLIC_HOST`); the API refuses every other `Host` header.
 	 */
 	http: { host: "127.0.0.1"; port: number; publicHosts: readonly string[] };
+	/**
+	 * The credential broker (`ZIMPOEN_CRED_BROKER`, default `off`: no tool, nothing read). When on: the owner-written policy
+	 * (`ZIMPOEN_CRED_POLICY`, default `<data>/secrets/broker/policy.json`), the secret files (`<data>/secrets/broker/creds`)
+	 * and the append-only audit log (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`).
+	 */
+	credBroker: CredBrokerConfig;
 	/** `ASSISTANT_CHROMIUM_PATH`: the Chrome or Chromium that makes PDFs. Absent: the usual install paths are tried. */
 	chromiumPath?: string;
 };
+
+export type CredBrokerConfig =
+	| { mode: "off" }
+	| { mode: "on"; policyPath: string; secretsDir: string; auditPath: string };
 
 export type ConfigProblem = { setting: string; message: string };
 
@@ -208,6 +218,7 @@ export function parseConfig(env: Env, context: ConfigContext = { cwd: process.cw
 			port: parsePort(env.ASSISTANT_PORT, problem),
 			publicHosts: parsePublicHosts(env.ASSISTANT_PUBLIC_HOST, problem),
 		},
+		credBroker: parseCredBroker(env, dataDir, problem),
 		...(nonEmpty(env.ASSISTANT_CHROMIUM_PATH) === undefined
 			? {}
 			: { chromiumPath: nonEmpty(env.ASSISTANT_CHROMIUM_PATH) }),
@@ -636,6 +647,28 @@ function parseHeight(raw: string | undefined, problem: ReportProblem): { heightC
 		return {};
 	}
 	return { heightCm: height };
+}
+
+/** `ZIMPOEN_CRED_BROKER=off|on` and its paths. Off by default: nothing about the broker is read or registered. */
+function parseCredBroker(env: Env, dataDir: string, problem: ReportProblem): CredBrokerConfig {
+	const mode = nonEmpty(env.ZIMPOEN_CRED_BROKER) ?? "off";
+	if (mode === "off") return { mode: "off" };
+	if (mode !== "on") {
+		problem("ZIMPOEN_CRED_BROKER", `'${mode}' is not valid. Use 'off' (default: no broker) or 'on'.`);
+		return { mode: "off" };
+	}
+	const pathOf = (setting: string, fallback: string): string => {
+		const raw = nonEmpty(env[setting]);
+		if (raw === undefined) return fallback;
+		if (!isAbsolute(raw)) problem(setting, `'${raw}' is not an absolute path.`);
+		return resolve(raw);
+	};
+	return {
+		mode: "on",
+		policyPath: pathOf("ZIMPOEN_CRED_POLICY", join(dataDir, "secrets", "broker", "policy.json")),
+		secretsDir: join(dataDir, "secrets", "broker", "creds"),
+		auditPath: pathOf("ZIMPOEN_CRED_AUDIT", join(dataDir, "broker-audit.jsonl")),
+	};
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

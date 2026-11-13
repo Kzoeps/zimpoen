@@ -17,6 +17,7 @@ import { createNodePhotonImages } from "@earendil-works/pi-durable/images/node";
 import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import { serve } from "@hono/node-server";
 import { buildAgents, countParkedTasks, type EnsureAgentsResult, ensureAgents, listUnrunnableTasks } from "./agents.ts";
+import { loadCredBroker } from "./broker.ts";
 import { type Config, DEFAULT_OWNER_NAME } from "./config.ts";
 import type { DevProviderOptions } from "./dev-model.ts";
 import { documentsDeps } from "./documents.ts";
@@ -161,6 +162,7 @@ export async function startServer(config: Config, options: StartServerOptions = 
 			},
 			...(options.delegate === undefined ? {} : { delegate: options.delegate }),
 			web: options.web ?? (await startWeb()),
+			...(await brokerFor(config, now)),
 			warn: (message) => logger.warn(message),
 		});
 		undo.push(() => domain.close());
@@ -753,4 +755,10 @@ async function warnIfNoOpenAiLogin(logger: ServerLogger, config: Config, runtime
 				"every message will fail until you sign in.",
 		);
 	}
+}
+
+/** The credential broker when `ZIMPOEN_CRED_BROKER=on` (a bad policy stops the start), nothing otherwise. */
+async function brokerFor(config: Config, now: () => number) {
+	const broker = await loadCredBroker(config.credBroker, now);
+	return broker === undefined ? {} : { broker };
 }

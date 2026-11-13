@@ -441,3 +441,22 @@ describe("loadConfig (file system)", () => {
 		expect(message).toContain("Point ASSISTANT_DATA_DIR at a directory this user can write");
 	});
 });
+
+describe("ZIMPOEN_CRED_BROKER", () => {
+	it("is off by default and reads nothing", () => {
+		expect(parseConfig({ ...auth }, context).credBroker).toEqual({ mode: "off" });
+	});
+
+	it("when on, defaults its paths into the data directory and rejects bad values", () => {
+		expect(parseConfig({ ...auth, ZIMPOEN_CRED_BROKER: "on" }, context).credBroker).toEqual({
+			mode: "on",
+			policyPath: "/work/assistant/data-dev/secrets/broker/policy.json",
+			secretsDir: "/work/assistant/data-dev/secrets/broker/creds",
+			auditPath: "/work/assistant/data-dev/broker-audit.jsonl",
+		});
+		expect(problemsOf({ ...auth, ZIMPOEN_CRED_BROKER: "yes" })).toEqual(["ZIMPOEN_CRED_BROKER"]);
+		expect(problemsOf({ ...auth, ZIMPOEN_CRED_BROKER: "on", ZIMPOEN_CRED_POLICY: "rel.json" })).toEqual([
+			"ZIMPOEN_CRED_POLICY",
+		]);
+	});
+});

@@ -135,7 +135,7 @@ display-only card. Specialists can't reach each other. The Inbox reaches the PA 
 
 | Agent | Extensions |
 |---|---|
-| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `memory`, `tool_search` |
+| `pa` | `tasks`, `followups`, `people`, `approvals`, `daily`, `files`, `documents`, `delegate`, `memory`, `tool_search`, `broker` (only with `ZIMPOEN_CRED_BROKER=on`) |
 | `inbox` | `inbox`, `memory-read` |
 | `health` | `health`, `approvals`, `memory`, `tool_search` |
 | `accountant` | `ledger`, `splits`, `documents`, `files`, `approvals`, `memory`, `tool_search`, code mode |
@@ -282,6 +282,27 @@ reconnecting just gets a fresh snapshot. At most 8 streams are open.
   exists for that conversation, tool and target.
 - At start, the server finishes approved requests a crash interrupted and re-posts missing outcome notices.
 
+### 5.7 Credential broker (phase 1d)
+
+`ZIMPOEN_CRED_BROKER=off|on`, default `off`: no tool, no approval action, nothing read. When `on`, the PA gets
+`cred_run({ project, credId, action, params })` (module `packages/extensions/src/broker/`, server side
+`apps/server/src/broker.ts`). It runs a fixed action from an owner-written policy with a credential the agent never sees;
+there is no `get_secret`.
+
+- **Policy** (`ZIMPOEN_CRED_POLICY`, default `<data>/secrets/broker/policy.json`), validated at start (a bad one stops the
+  server, every problem listed): `projects [{ id, trust: open|normal|strict }]`, `credentials [{ id, project, secretRef }]`,
+  `actions [{ id, argv, params: { name: regex }, inject: {type:"env",name} | {type:"stdin"}, sensitivity, maxOutputBytes,
+  timeoutMs, strictDeny? }]`. `argv[0]` is absolute; `{name}` placeholders must be declared and match their regex in full.
+- **Secrets:** one file per `secretRef` in `<data>/secrets/broker/creds/` (dir 0700, files 0600, refused otherwise).
+- **Decision:** `decide(trust, sensitivity)` in `packages/extensions/src/trust.ts` (plan §3). `allow` runs now; `ask`
+  proposes an approval (`cred_exec` target) and the server runs it on Approve/YES; `deny` refuses.
+- **Run:** `spawn` with no shell, env = `PATH`, `LANG` and the injected secret only, timeout and output cap. Output is
+  scrubbed (the secret as is, base64, URL-encoded; `gh*_`, `github_pat_`, `sk-` tokens; Postgres URL passwords).
+- **Rule 8:** `broker_call` keyed by tool call id. A replay returns the stored result; a run interrupted by a crash is
+  reported as "may have run", never run again.
+- **Audit:** append-only JSONL (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`), decisions and runs, no secret values.
+- **Scheduled runs:** refused when the current run answers a `routine:`/`daily:` request (or a daily job's `<job>:<date>`).
+
 ## 6. Web
 
 Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zustand store fed by `EventSource`.
@@ -318,6 +339,7 @@ Next.js App Router with `@assistant-ui/react` (`useExternalStoreRuntime`), a zus
 | documents | `document_series`, `document_numbers`, `documents_made`; the retired invoice module's `invoice_profile`, `invoice_issued`, `invoices_call` are kept |
 | inbox | `inbox_account`, `inbox_message` + FTS5, `inbox_event`, `inbox_rule`, `inbox_suggestion`, `inbox_digest`, `inbox_read_failure`, `inbox_state`, `inbox_call` |
 | delegate | `delegate_ask` |
+| broker | `broker_call` |
 
 Conventions:
 
