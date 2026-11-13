@@ -15,7 +15,7 @@ Sources: `/tmp/zimpoen-vs-durable-bots.md`, `/tmp/zimpoen-cred-vault.md`, `/tmp/
 | 1c | Agent-created recurring routines (slot-keyed, at most once) | built |
 | 1d | Credential broker + per-project trust levels | built, `ZIMPOEN_CRED_BROKER=off` by default |
 | 1e | Web UI: Bots page (list/create/delete) and Settings → Trust levels | built |
-| 2b | Broker split: `zimpoen-broker` process over a unix socket, systemd-creds | built (`ZIMPOEN_CRED_BROKER=socket`), not yet run on the host |
+| 2b | Broker split: separate `zimpoen-broker` process | built, then dropped: the broker stays in the server (decision below) |
 | 2 | Dedicated coding VM running herdr-lead; PA hands coding work to it | design (§6); provisioning scripts in `ops/coding-vm/`, not run |
 | 3 | CTO bot that drives herdr-lead; push/merge/deploy follow the project's trust level | built (§7), `ZIMPOEN_CTO=off` by default; board create command unverified |
 | 4 | Sandboxed shell (gVisor container per agent, egress rules) | built, `ZIMPOEN_SHELL=off` by default (§8) |
@@ -99,9 +99,9 @@ due slot runs; a slot more than 6 h late is skipped. Same DB-authoritative timer
 During a routine run, routine/bot/broker tools refuse (rule 13). Cap 20 active routines.
 Creation goes through approval (`propose_routine`, Approve/YES), and a slot whose agent is over its weekly token limit is skipped.
 
-**Credential broker (1d).** `ZIMPOEN_CRED_BROKER=off|inprocess|socket` (`on` = `inprocess`), default off: no tool
-registered, no socket. `inprocess` runs the broker inside the server; `socket` uses the separate `zimpoen-broker` process
-(§9). Both implement:
+**Credential broker (1d).** `ZIMPOEN_CRED_BROKER=off|inprocess` (`on` = `inprocess`), default off: no tool
+registered. The broker runs inside the server (§9: the separate process was dropped). Tokens are long-lived, one per
+project; no short-lived minting. It implements:
 
 ```ts
 interface CredBroker {
@@ -120,19 +120,19 @@ interface CredBroker {
 ## 6. Phase 2: coding VM with herdr-lead (design)
 
 - One Linux VM (or a separate small box) on the tailnet, running herdr-lead, `hc`, pi and git. It holds **test values
-  only**; no route to the broker socket; egress blocks the zimpoen host's loopback, LAN and tailnet except one allowed
+  only**; egress blocks the zimpoen host's loopback, LAN and tailnet except one allowed
   endpoint (the board relay).
 - zimpoen's PA gets `delegate_coding({ repo, goal, doneWhen, outOfScope })`: the server calls a fixed binary
   (`hc-board` over an authenticated relay) with argv only; idempotent by tool call id stored on the card. Reports come
   back by polling the board and post as display-only cards.
-- Git push from the VM uses a broker-minted, short-lived, repo-scoped token handed to a host-side push step on files
-  copied out, never into the VM.
-- Built (scripts only, never run; [docs/coding-vm.md](../coding-vm.md)): `ops/coding-vm/provision.sh` (pinned,
-  checksummed installs; refuses credential-shaped values), `egress.sh` (nftables: relay and DNS allowed, then the host's
+- Git push from the VM uses the project's long-lived, repo-scoped token (the broker injects it, no minting) handed to a
+  host-side push step on files copied out, never into the VM.
+- Built (scripts only, never run; [docs/coding-vm.md](../coding-vm.md)): `ops/coding-vm/provision.sh` (Node and pi
+  pinned and checksummed; herdr, hc, hc-board and herdr-lead copied from the host by `copy-tools.sh`, because the VM
+  cannot reach the host; refuses credential-shaped values), `egress.sh` (nftables: relay and DNS allowed, then the host's
   addresses, private, tailnet and link-local ranges dropped, on output and forward), a `herdr-lead` unit whose
   `ExecStartPre` refuses to start without those rules, and `host-push.sh` (bundle copied out over ssh, verified, pushed
-  from a throwaway clone with the token on stdin; never main, never force). Minting the short-lived token needs the
-  broker to grow a mint step (phase 1's broker injects a stored secret).
+  from a throwaway clone with the project's token on stdin; never main, never force).
 
 ## 7. Phase 3: CTO bot (design)
 
@@ -148,7 +148,7 @@ interface CredBroker {
   `owner/name`); optional `ZIMPOEN_CTO_TRUST` (default normal), `ZIMPOEN_CTO_BOARD_BIN` (default `hc-board`),
   `ZIMPOEN_CTO_HC_BIN` (default `hc`).
 - Agent `cto` (`CTO_AGENT` in `apps/server/src/agents.ts`), added by `buildAgents` only when on. Extensions: `cto`
-  (`delegate_coding`, `board_status`), `broker` when `ZIMPOEN_CRED_BROKER=on`, `approvals`, `tool_search`. No `ask_agent`,
+  (`delegate_coding`, `board_status`), `broker` when `ZIMPOEN_CRED_BROKER` is on (limited to the projects of its repos), `approvals`, `tool_search`. No `ask_agent`,
   memory, files or web. The PA reaches it with `ask_agent cto` (refused while off).
 - The board sits behind `CodingLead { createCard, notifyLead, readCard }` (`packages/extensions/src/cto/lead.ts`); the
   server implements it in `apps/server/src/cto.ts` with `execFile` (no shell, env = `PATH`, `HOME`, `LANG`,
@@ -166,37 +166,32 @@ interface CredBroker {
 - Depends on herdr-lead adding `hc-board create --key …` before `ZIMPOEN_CTO=on` is usable on a real host.
 - `board_status` reads only cards the CTO opened; board text is clipped and labelled as information.
 - Push/merge/deploy stay `cred_run` broker actions (unchanged): `merge_main`/`deploy_prod` ask under Normal. The approval
-  card lands in the CTO's thread; the PA is told to relay it.
+  card lands in the CTO's thread and stays there (not mirrored); the PA is told to relay it.
 
 ## 8. Phases 4–5 (sketch)
 
 - **Shell (built):** `ZIMPOEN_SHELL=off|on`, default off. `shell_run` for the PA and for bots with the `shell` preset
-  (default no); never the Inbox (checked per call against the agent row). Docker/Podman `--runtime=runsc`, one fresh
+  (default no); never the Inbox (checked per call against the agent row). Rootless Podman (default) or Docker, `--runtime=runsc`, one fresh
   container per call, the agent's named volume as the only mount, read-only root, `--cap-drop=ALL`,
   `no-new-privileges`, cpu/memory/pids limits, 60 s default (300 s max) timeout, 64 KB output cap. Refused during
   scheduled runs (rule 13). No network by default; a dedicated network needs `ops/shell-egress.sh` (blocks private,
   link-local, loopback, ULA and tailnet ranges and the host). Startup refuses without the `runsc` runtime, or, with a
   network, without the root-owned egress marker. Runner behind `ContainerRunner`, tested with a fake engine. Details:
-  ARCHITECTURE §5.9. Not yet run against real docker/podman, gVisor or nftables.
+  ARCHITECTURE §5.9. Egress stays a blocklist (no destination allowlist). Deleting a bot deletes its volume; the `shell` preset is refused while the shell is off. The egress network is for a rootful engine: with rootless Podman use `ZIMPOEN_SHELL_NETWORK=none`. Not yet run against real podman/docker, gVisor or nftables.
   `ops/shell-egress.sh` and `ZIMPOEN_SHELL_IMAGE` belong to this shell-sandbox feature; anything else that uses them
   (the coding VM, computer use) depends on it.
 - **Computer use:** builds on the shell sandbox plus a desktop image, viewer/takeover in the PWA, approval per task.
   Image and host run script in `ops/computer-use/` ([docs/computer-use.md](../computer-use.md)): same gVisor flags,
   filtered network required, viewer on 127.0.0.1 only, view-only and takeover passwords per task, one desktop per
-  approved task. Tool, approval action and PWA viewer are not built. Depends on the shell-sandbox feature
+  approved task. Approval: the agent judges which actions are critical and asks; anything delete-related always needs approval, at every trust level, Open included. Tool, approval action and PWA viewer are not built. Depends on the shell-sandbox feature
   (`ops/shell-egress.sh`, `ZIMPOEN_SHELL_IMAGE`), which must land first; the network must also have inter-container
   traffic off.
 
 ## 9. What is left after phase 1
 
-- ~~Broker as a separate systemd unit~~ built: `apps/server/src/broker-main.ts` (`dist/broker.js`), unit
-  `ops/systemd/zimpoen-broker.service` (`User=zimpoen-broker`, `LoadCredentialEncrypted=`, hardening), protocol in
-  `packages/extensions/src/broker/socket.ts` (newline JSON, 64 KiB requests, 8 MiB replies, 5 s to send a request, 8
-  connections). Peer check: Node can't read `SO_PEERCRED`, so access is the socket directory (`/run/zimpoen-broker`,
-  0750, group = broker group, server user a member; startup refuses a world-accessible directory). A real peer-uid check
-  needs a native addon or a different language; open. The server still decides trust levels: the broker trusts any
-  connecting group member to have asked, so approval enforcement lives in the server only (open). Not yet run on a real
-  host with systemd-creds.
+- ~~Broker as a separate systemd unit~~ built, then **dropped** (Karma's decision): credentials run in the server only, so
+  there is no socket, peer check, broker user or `ops/` unit, and no systemd-creds store. Secrets are files under
+  `<data>/secrets/broker/creds`. Tokens are long-lived per project.
 - ~~Web UI for bots and trust levels~~: built (1e, §10).
 - Real Telegram, real whisper.cpp model and real broker credentials were never used: tested against fakes.
 
@@ -212,6 +207,6 @@ interface CredBroker {
 - API: `GET|POST /api/bots`, `DELETE /api/bots/:slug`, `GET /api/settings/trust`, `PUT /api/settings/trust/pa`,
   `PUT /api/settings/trust/projects/:id` (ARCHITECTURE §5.5).
 - `cred_run`'s description lists project ids without levels now: the level can change while the server runs.
-- The CTO's push/merge/deploy go through the same `cred_run`, so they follow the stored project level too (in-process
-  and socket broker alike: the server decides, not the broker). `ZIMPOEN_CTO_TRUST` (the CTO's own hand-over level) is
+- The CTO's push/merge/deploy go through the same `cred_run`, so they follow the stored project level too (the server decides).
+  A trust level change also posts a display-only note in the PA's thread. `ZIMPOEN_CTO_TRUST` (the CTO's own hand-over level) is
   still env-only; not yet in Settings.

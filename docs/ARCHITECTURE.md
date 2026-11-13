@@ -152,14 +152,16 @@ is rewritten so it is never adopted again; durable.sqlite keeps it). Creating or
 approvals flow (actions `spawn_bot`, `retire_bot`), `open` runs and logs. Both tools refuse during a scheduled run (rule
 13), through the `isScheduledRun()` routines use too (`packages/extensions/src/scheduled-run.ts`: daily job ids come from
 `DAILY_JOBS`). `ask_agent` reaches bots
-by id; bots have no `ask_agent`. Deleting a bot aborts its run and clears its memory scope and weekly limit.
+by id; bots have no `ask_agent`. Deleting a bot aborts its run, deletes its shell volume (when `ZIMPOEN_SHELL=on`: if the
+engine fails the bot is kept and the delete can be repeated) and clears its memory scope and weekly limit. The `shell`
+preset is refused while `ZIMPOEN_SHELL=off`, at creation, from the PA and from the Bots page alike.
 The owner can also create and delete bots on the Bots page (`/api/bots`): no approval, same code (`createOwnerBots` in
 `packages/extensions/src/bots/tools.ts`), so the cap, slug, soul and preset checks are the PA's.
 
 **Trust levels.** Stored owner-only in `trust_setting` (`apps/server/src/trust-settings.ts`, a server table like
 Telegram's: no tool can reach it), written only by `PUT /api/settings/trust/...`. Subjects are `pa` and `project:<id>`.
 A stored level overrides the default (`ZIMPOEN_PA_TRUST` for the PA, the policy's `trust` for a project); `null` removes
-it. The bots tools and `cred_run` read the level at each call (`BotsDeps.trustLevel()`, `BrokerDeps.trustOf`), so a
+it. Each real change also leaves a display-only note in the PA's thread. The bots tools and `cred_run` read the level at each call (`BotsDeps.trustLevel()`, `BrokerDeps.trustOf`), so a
 change applies to the next call, and an approved `cred_exec` is checked against the level at approval time.
 
 Code mode runs scripts in a QuickJS sandbox with no network, no files and no model calls. Each script has a time limit
@@ -340,12 +342,9 @@ neither); only `[Voice note transcript] …` reaches the thread. No agent has a 
 
 ### 5.7 Credential broker (phase 1d)
 
-`ZIMPOEN_CRED_BROKER=off|inprocess|socket` (`on` means `inprocess`), default `off`: no tool, no approval action,
-nothing read. `inprocess` runs the broker inside the server (development). `socket` uses the separate `zimpoen-broker`
-process (`apps/server/src/broker-main.ts`, unit `ops/systemd/zimpoen-broker.service`, own user, secrets from
-`systemd-creds`) through `createSocketBroker` (`packages/extensions/src/broker/socket.ts`): one line of JSON per request
-and reply, size and time capped; the server fetches the policy from the broker at start. Access to the socket is its
-0750 directory (Node has no SO_PEERCRED); see docs/OPS.md "Broker". Otherwise the PA gets
+`ZIMPOEN_CRED_BROKER=off|inprocess` (`on` means `inprocess`), default `off`: no tool, no approval action, nothing
+read. The broker runs inside the server: there is no separate broker process, socket or user, and tokens are long-lived,
+one per project (the broker never mints short-lived ones); see docs/OPS.md "Broker". The PA gets
 `cred_run({ project, credId, action, params })` (module `packages/extensions/src/broker/`, server side
 `apps/server/src/broker.ts`). It runs a fixed action from an owner-written policy with a credential the agent never sees;
 there is no `get_secret`.
@@ -357,8 +356,7 @@ there is no `get_secret`.
   their regex in full. A value starting with `-` is refused unless `allowDashParams` (it would become an option). The env
   name may not be reserved (`PATH`, `LANG`, `HOME`, `LD_*`, `GIT_*`, ...).
 - **Secrets:** in process, one file per `secretRef` in `<data>/secrets/broker/creds/` (dir 0700, files 0600, at least 8
-  characters; refused otherwise). In the broker service, `$CREDENTIALS_DIRECTORY/<secretRef>` from
-  `LoadCredentialEncrypted=`.
+  characters; refused otherwise).
 - **Decision:** `decide(trust, sensitivity)`, where `trust` is the owner's level from Settings when set, else the policy's, in `packages/extensions/src/trust.ts` (plan §3). `allow` runs now; `ask`
   proposes an approval (`cred_exec` target) and the server runs it on Approve/YES, after checking the current policy
   again; `deny` refuses.
@@ -369,9 +367,12 @@ there is no `get_secret`.
   reported as "may have run", never run again. Approved runs get the same row keyed `approval:<id>`, so startup recovery
   never repeats one either.
 - **Audit:** append-only JSONL (`ZIMPOEN_CRED_AUDIT`, default `<data>/broker-audit.jsonl`), decisions and runs, no secret
-  values. With `socket`, runs go to the broker's own log (`ZIMPOEN_BROKER_AUDIT`) and the server's file keeps decisions.
+  values.
 - **Scheduled runs:** refused when the current run answers a `routine:`/`daily:` request (or a daily job's `<job>:<date>`),
-  and when no current input can be found.
+  and when no current input can be found. This holds at every trust level, Open included, and for the CTO too.
+- **The CTO's projects:** when the calling agent is the CTO, `project` must be one of its repos (`ZIMPOEN_CTO_REPOS`: the
+  entry itself, or the name part of `owner/name`). Checked at the call and again when an approved `cred_exec` runs.
+  The PA is not limited.
 
 ### 5.8 CTO (phase 3)
 
@@ -388,7 +389,8 @@ herdr-lead (module `packages/extensions/src/cto/`, server side `apps/server/src/
   unless the CTO's trust is `open`.
 - **Hub and spoke:** no `ask_agent`; the PA asks it with `ask_agent cto`. The owner's messages to its thread are refused
   (403), except a bare YES answering one of its approval requests. Push, merge and deploy are `cred_run` broker
-  actions (§5.7).
+  actions (§5.7), limited to the projects of its repos. Its approval cards stay in its own thread; they are not
+  mirrored to the PA's.
 
 ### 5.9 Sandboxed shell (upgrade phase 4)
 
@@ -417,11 +419,16 @@ command per call in a fresh container of the calling agent:
 - **Start-up check:** a probe container with the full flags must run (no `runsc` runtime or no pulled image stops the
   server). With a network, the marker must exist, be root-owned and not group/world writable, name the network, list
   every range above, and its bridge must be the network's. Every problem is listed and the server refuses to start.
-- **Settings:** `ZIMPOEN_SHELL_ENGINE` (`docker` default, or `podman`), `ZIMPOEN_SHELL_BIN` (default `/usr/bin/<engine>`),
+- **Settings:** `ZIMPOEN_SHELL_ENGINE` (`podman` default, rootless; or `docker`), `ZIMPOEN_SHELL_BIN` (default `/usr/bin/<engine>`),
   `ZIMPOEN_SHELL_IMAGE` (default `docker.io/library/debian:stable-slim`; pull it first), `ZIMPOEN_SHELL_NETWORK`,
   `ZIMPOEN_SHELL_EGRESS_MARKER`.
-- **Host access:** the server user needs the engine (docker group or rootless podman); that access is root-equivalent on
-  the host, and the systemd unit's sandboxing may block the engine socket. Not tested on a real host.
+- **Host access:** the engine is rootless Podman run by the server's own user, so no docker group (which would be
+  root-equivalent). The server unit's sandboxing may still block it, and the egress network below is for a rootful engine:
+  rootless Podman's networks live in the user's own namespace, where the host rules of `ops/shell-egress.sh` do not
+  apply, so with rootless Podman keep `ZIMPOEN_SHELL_NETWORK=none` (the default). Not tested on a real host.
+- **Egress:** a blocklist of private, loopback, link-local, tailnet and host ranges (above); no allowlist of
+  destinations.
+- **Deleting a bot** removes its volume (`ContainerRunner.removeVolume`); a missing volume is not an error.
 
 ## 6. Web
 

@@ -38,13 +38,15 @@ unprivileged user; gVisor is the boundary.
 ## Approval per task
 
 - A future `computer_use({ goal })` tool proposes a `pending_actions` row (action `computer_use`); nothing starts until
-  the owner approves it. Proposed: it asks at every trust level, Open included, because the agent will act on live web
-  pages (open question).
+  the owner approves it, at every trust level, Open included (the agent will act on live web pages).
 - The server then calls `run-desktop.sh` with the task id and approval id; the container carries both as labels. One
   desktop per task; a second start for the same task is refused.
 - Refused during scheduled runs (rule 13), like bots and the broker.
-- The approval covers one task. When the agent wants something outside its stated goal (a login, a purchase, a form
-  submit to a third party), it stops and asks again.
+- The approval covers one task. The agent judges which actions are critical (a login, a purchase, a form submit to a
+  third party, anything outside its stated goal) and stops to ask again before them. Anything delete-related (deleting
+  an account, a file, a message, a record, in any site) always needs an approval, at every trust level, Open included.
+  There is no list of critical actions in code: the agent is told this rule, and the owner's takeover and Stop are the
+  backstop.
 
 ## Viewer and takeover
 
