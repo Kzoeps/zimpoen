@@ -167,8 +167,8 @@ export function createEngineRunner(config: ShellSandboxConfig, exec: ExecFn = ex
 			if (create.exitCode !== 0)
 				throw new Error(`Could not create the sandbox volume ${volume}: ${create.output.trim()}`);
 		}
-		// Chowned once per process, whether or not the volume existed: a chown that failed earlier (or a volume the
-		// engine recreated root-owned) is fixed on the next call instead of leaving /workspace unwritable for good.
+		// Chowned once per process, whether or not the volume existed: a chown that failed is retried on the next call.
+		// A volume deleted while the server runs is recreated root-owned by the engine and stays unwritable until restart.
 		const chown = await admin([
 			"run",
 			...hardeningFlags({ ...config, network: "none" }),

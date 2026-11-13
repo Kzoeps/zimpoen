@@ -67,11 +67,23 @@ export async function checkShellHost(config: ShellHostConfig, deps: ShellHostChe
 		exec({ file: config.bin, args, env: ENGINE_ENV, timeoutMs: 120_000, maxBytes: 16 * 1024 });
 	const problems: string[] = [];
 
-	const probe = await run(["run", ...hardeningFlags(config), config.image, "true"]);
+	// What every call needs from the image: `timeout` and `/bin/sh` (and `chown` for the volume).
+	const probe = await run([
+		"run",
+		...hardeningFlags(config),
+		config.image,
+		"timeout",
+		"-s",
+		"KILL",
+		"5",
+		"/bin/sh",
+		"-c",
+		"command -v chown >/dev/null",
+	]);
 	if (probe.exitCode !== 0) {
 		problems.push(
-			`a gVisor probe container did not run (${config.bin} run --runtime=runsc ... ${config.image} true: exit ${probe.exitCode}: ` +
-				`${probe.output.trim().slice(0, 300)}). Install gVisor and register it as the 'runsc' runtime, and pull the image ` +
+			`a gVisor probe container did not run (${config.bin} run --runtime=runsc ... ${config.image} timeout ... /bin/sh -c 'command -v chown': exit ${probe.exitCode}: ` +
+				`${probe.output.trim().slice(0, 300)}). Install gVisor and register it as the 'runsc' runtime, and pull an image that has timeout, /bin/sh and chown ` +
 				`(${config.bin} pull ${config.image}).`,
 		);
 	}

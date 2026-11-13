@@ -194,6 +194,15 @@ describe("host check", () => {
 		};
 		expect(await checkShellHost(CONFIG, { exec, readMarker })).toEqual([]);
 		expect(calls[0]?.args).toContain("--runtime=runsc");
+		expect(calls[0]?.args.slice(-7)).toEqual([
+			"timeout",
+			"-s",
+			"KILL",
+			"5",
+			"/bin/sh",
+			"-c",
+			"command -v chown >/dev/null",
+		]);
 	});
 
 	it("refuses when the runsc runtime is missing", async () => {
